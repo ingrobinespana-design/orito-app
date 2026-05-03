@@ -9,10 +9,11 @@ function Admin({ API }) {
       .then((data) => setPedidos(data));
   };
 
-  useEffect(() => {
+ useEffect(() => {
     cargarPedidos();
     const intervalo = setInterval(cargarPedidos, 10000);
     return () => clearInterval(intervalo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const cambiarEstado = (id, estado) => {
