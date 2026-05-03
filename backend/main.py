@@ -1,3 +1,5 @@
+import os
+PORT = int(os.environ.get("PORT", 8000))
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
