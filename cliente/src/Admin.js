@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 
-function Admin() {
+function Admin({ API }) {
   const [pedidos, setPedidos] = useState([]);
 
   const cargarPedidos = () => {
-    fetch("http://127.0.0.1:8000/pedidos")
+    fetch(`${API}/pedidos`)
       .then((res) => res.json())
       .then((data) => setPedidos(data));
   };
@@ -16,7 +16,7 @@ function Admin() {
   }, []);
 
   const cambiarEstado = (id, estado) => {
-    fetch(`http://127.0.0.1:8000/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" })
+    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" })
       .then(() => cargarPedidos());
   };
 
@@ -29,7 +29,6 @@ function Admin() {
 
   return (
     <div style={{ fontFamily: "sans-serif", maxWidth: "600px", margin: "0 auto", padding: "16px" }}>
-
       <div style={{ background: "#D85A30", borderRadius: "16px", padding: "20px", marginBottom: "20px" }}>
         <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Panel de control</p>
         <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "4px 0 0" }}>Orito App - Admin</p>
@@ -85,7 +84,6 @@ function Admin() {
           </div>
         </div>
       ))}
-
     </div>
   );
 }

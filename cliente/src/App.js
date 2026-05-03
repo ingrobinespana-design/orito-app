@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import Admin from "./Admin";
 
+const API = "https://orito-app-production.up.railway.app";
+
 function App() {
   const [restaurantes, setRestaurantes] = useState([]);
   const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
@@ -9,7 +11,7 @@ function App() {
   const [verAdmin, setVerAdmin] = useState(false);
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/restaurantes")
+    fetch(`${API}/restaurantes`)
       .then((res) => res.json())
       .then((data) => setRestaurantes(data));
   }, []);
@@ -19,7 +21,7 @@ function App() {
       alert("Por favor completa todos los campos");
       return;
     }
-    fetch(`http://127.0.0.1:8000/pedidos?cliente_nombre=${formulario.cliente_nombre}&cliente_direccion=${formulario.cliente_direccion}&cliente_telefono=${formulario.cliente_telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${formulario.plato}&total=${restauranteSeleccionado.domicilio + 10000}`, { method: "POST" })
+    fetch(`${API}/pedidos?cliente_nombre=${formulario.cliente_nombre}&cliente_direccion=${formulario.cliente_direccion}&cliente_telefono=${formulario.cliente_telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${formulario.plato}&total=${restauranteSeleccionado.domicilio + 10000}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
         setPedidoEnviado(true);
@@ -29,7 +31,7 @@ function App() {
       .catch(() => alert("Error al enviar pedido"));
   };
 
-  if (verAdmin) return <Admin />;
+  if (verAdmin) return <Admin API={API} />;
 
   return (
     <div style={{ fontFamily: "sans-serif", maxWidth: "400px", margin: "0 auto", padding: "16px" }}>
