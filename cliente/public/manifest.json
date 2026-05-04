@@ -1,6 +1,6 @@
 {
-  "short_name": "Orito App",
-  "name": "Orito App - Domicilios",
+  "short_name": "Domicilios Orito",
+"name": "Domicilios Orito",
   "description": "Domicilios en Orito, Putumayo",
   "start_url": "/",
   "display": "standalone",
