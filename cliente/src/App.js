@@ -139,15 +139,15 @@ function App() {
           {formulario.metodo_pago === "bancolombia" && (
             <div style={{ background: "#E6F1FB", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
               <p style={{ fontSize: "13px", fontWeight: 500, color: "#185FA5", margin: "0 0 4px" }}>Transfiere por Bancolombia</p>
-              <p style={{ fontSize: "13px", color: "#555", margin: 0 }}>Numero de cuenta: <strong>3156009728</strong></p>
-              <p style={{ fontSize: "12px", color: "#888", margin: "4px 0 0" }}>Envia el comprobante por WhatsApp al mismo numero</p>
+              <p style={{ fontSize: "13px", color: "#555", margin: "0 0 4px" }}>Numero de cuenta: <strong>07985044028</strong></p>
+              <p style={{ fontSize: "12px", color: "#888", margin: 0 }}>Envia el comprobante por WhatsApp al 3156009728</p>
             </div>
           )}
 
           {formulario.metodo_pago === "efectivo" && (
             <div style={{ background: "#EAF3DE", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
               <p style={{ fontSize: "13px", fontWeight: 500, color: "#3B6D11", margin: "0 0 4px" }}>Pago en efectivo</p>
-              <p style={{ fontSize: "12px", color: "#888", margin: 0 }}>Tendras el dinero listo cuando llegue el domiciliario</p>
+              <p style={{ fontSize: "12px", color: "#888", margin: 0 }}>Ten el dinero listo cuando llegue el domiciliario</p>
             </div>
           )}
 
