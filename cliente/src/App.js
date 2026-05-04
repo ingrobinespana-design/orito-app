@@ -27,7 +27,7 @@ function Login({ onLogin }) {
     <div style={{ fontFamily: "sans-serif", maxWidth: "400px", margin: "0 auto", padding: "16px" }}>
       <div style={{ background: "#D85A30", borderRadius: "16px", padding: "20px", marginBottom: "20px" }}>
         <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Bienvenido a</p>
-        <p style={{ color: "#fff", fontSize: "22px", fontWeight: 500, margin: "4px 0 0" }}>Orito App</p>
+        <p style={{ color: "#fff", fontSize: "22px", fontWeight: 500, margin: "4px 0 0" }}>Domicilios Orito</p>
       </div>
       <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "20px" }}>
         <div style={{ display: "flex", marginBottom: "20px", background: "#f5f5f5", borderRadius: "8px", padding: "4px" }}>
@@ -51,7 +51,10 @@ function Login({ onLogin }) {
 function App() {
   const [restaurantes, setRestaurantes] = useState([]);
   const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
-  const [formulario, setFormulario] = useState({ cliente_direccion: "", plato: "", metodo_pago: "efectivo" });
+  const [platos, setPlatos] = useState([]);
+  const [carrito, setCarrito] = useState([]);
+  const [direccion, setDireccion] = useState("");
+  const [metodoPago, setMetodoPago] = useState("efectivo");
   const [pedidoEnviado, setPedidoEnviado] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verAdmin, setVerAdmin] = useState(false);
@@ -64,17 +67,49 @@ function App() {
     }
   }, [usuario]);
 
-  const hacerPedido = () => {
-    if (!formulario.cliente_direccion || !formulario.plato) {
-      alert("Por favor completa todos los campos");
-      return;
+  const seleccionarRestaurante = (r) => {
+    setRestauranteSeleccionado(r);
+    setCarrito([]);
+    fetch(`${API}/restaurantes/${r.id}/platos`)
+      .then((res) => res.json())
+      .then((data) => setPlatos(data));
+  };
+
+  const agregarAlCarrito = (plato) => {
+    const existe = carrito.find(c => c.id === plato.id);
+    if (existe) {
+      setCarrito(carrito.map(c => c.id === plato.id ? { ...c, cantidad: c.cantidad + 1 } : c));
+    } else {
+      setCarrito([...carrito, { ...plato, cantidad: 1 }]);
     }
-    fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${formulario.cliente_direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${formulario.plato}&total=${restauranteSeleccionado.domicilio + 10000}&metodo_pago=${formulario.metodo_pago}`, { method: "POST" })
+  };
+
+  const quitarDelCarrito = (plato) => {
+    const existe = carrito.find(c => c.id === plato.id);
+    if (existe && existe.cantidad > 1) {
+      setCarrito(carrito.map(c => c.id === plato.id ? { ...c, cantidad: c.cantidad - 1 } : c));
+    } else {
+      setCarrito(carrito.filter(c => c.id !== plato.id));
+    }
+  };
+
+  const totalCarrito = () => carrito.reduce((acc, c) => acc + c.precio * c.cantidad, 0);
+
+  const hacerPedido = () => {
+    if (!direccion) { alert("Por favor ingresa tu direccion"); return; }
+    if (carrito.length === 0) { alert("Agrega al menos un plato"); return; }
+
+    const platosTexto = carrito.map(c => `${c.cantidad}x ${c.nombre}`).join(", ");
+    const total = totalCarrito() + restauranteSeleccionado.domicilio;
+
+    fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${platosTexto}&total=${total}&metodo_pago=${metodoPago}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
         setPedidoEnviado(true);
         setRestauranteSeleccionado(null);
-        setFormulario({ cliente_direccion: "", plato: "", metodo_pago: "efectivo" });
+        setCarrito([]);
+        setDireccion("");
+        setMetodoPago("efectivo");
       })
       .catch(() => alert("Error al enviar pedido"));
   };
@@ -88,9 +123,7 @@ function App() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
         <span style={{ fontSize: "13px", color: "#888" }}>Hola, {usuario.nombre}</span>
         <div style={{ display: "flex", gap: "12px" }}>
-          {usuario.rol === "admin" && (
-            <span onClick={() => setVerAdmin(true)} style={{ fontSize: "12px", color: "#D85A30", cursor: "pointer" }}>Admin</span>
-          )}
+          {usuario.rol === "admin" && <span onClick={() => setVerAdmin(true)} style={{ fontSize: "12px", color: "#D85A30", cursor: "pointer" }}>Admin</span>}
           <span onClick={() => setUsuario(null)} style={{ fontSize: "12px", color: "#888", cursor: "pointer" }}>Salir</span>
         </div>
       </div>
@@ -111,66 +144,104 @@ function App() {
       )}
 
       {restauranteSeleccionado ? (
-        <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+            <button onClick={() => setRestauranteSeleccionado(null)} style={{ background: "none", border: "0.5px solid #ddd", borderRadius: "8px", padding: "8px 12px", cursor: "pointer" }}>Volver</button>
             <h3 style={{ margin: 0 }}>{restauranteSeleccionado.nombre}</h3>
-            <button onClick={() => setRestauranteSeleccionado(null)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer" }}>X</button>
           </div>
-          <input placeholder="Tu direccion" value={formulario.cliente_direccion} onChange={(e) => setFormulario({ ...formulario, cliente_direccion: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }} />
-          <input placeholder="Que quieres pedir?" value={formulario.plato} onChange={(e) => setFormulario({ ...formulario, plato: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "16px", boxSizing: "border-box", fontSize: "13px" }} />
 
-          <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px" }}>Metodo de pago:</p>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-            {["efectivo", "nequi", "bancolombia"].map((m) => (
-              <button key={m} onClick={() => setFormulario({ ...formulario, metodo_pago: m })} style={{ flex: 1, padding: "8px", border: `1px solid ${formulario.metodo_pago === m ? "#D85A30" : "#ddd"}`, borderRadius: "8px", background: formulario.metodo_pago === m ? "#FAECE7" : "#fff", color: formulario.metodo_pago === m ? "#D85A30" : "#888", cursor: "pointer", fontSize: "12px", fontWeight: formulario.metodo_pago === m ? 500 : 400 }}>
-                {m === "efectivo" ? "Efectivo" : m === "nequi" ? "Nequi" : "Bancolombia"}
+          {platos.length === 0 && <p style={{ color: "#888", textAlign: "center", padding: "20px" }}>Este restaurante no tiene platos aun</p>}
+
+          {platos.map((p) => (
+            <div key={p.id} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontWeight: 500, margin: 0 }}>{p.nombre}</p>
+                  {p.descripcion && <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{p.descripcion}</p>}
+                  <p style={{ fontSize: "14px", color: "#D85A30", fontWeight: 500, margin: "4px 0 0" }}>${p.precio.toLocaleString()}</p>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <button onClick={() => quitarDelCarrito(p)} style={{ width: "28px", height: "28px", borderRadius: "50%", border: "0.5px solid #ddd", background: "#fff", cursor: "pointer", fontSize: "16px" }}>-</button>
+                  <span style={{ fontSize: "14px", fontWeight: 500, minWidth: "16px", textAlign: "center" }}>{carrito.find(c => c.id === p.id)?.cantidad || 0}</span>
+                  <button onClick={() => agregarAlCarrito(p)} style={{ width: "28px", height: "28px", borderRadius: "50%", border: "none", background: "#D85A30", color: "#fff", cursor: "pointer", fontSize: "16px" }}>+</button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {carrito.length > 0 && (
+            <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "16px", marginTop: "16px" }}>
+              <h4 style={{ margin: "0 0 12px" }}>Tu pedido</h4>
+              {carrito.map((c) => (
+                <div key={c.id} style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "13px" }}>{c.cantidad}x {c.nombre}</span>
+                  <span style={{ fontSize: "13px", fontWeight: 500 }}>${(c.precio * c.cantidad).toLocaleString()}</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", paddingTop: "8px", borderTop: "0.5px solid #eee" }}>
+                <span style={{ fontSize: "13px", color: "#888" }}>Domicilio</span>
+                <span style={{ fontSize: "13px" }}>${restauranteSeleccionado.domicilio.toLocaleString()}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
+                <span style={{ fontSize: "14px", fontWeight: 500 }}>Total</span>
+                <span style={{ fontSize: "14px", fontWeight: 500, color: "#D85A30" }}>${(totalCarrito() + restauranteSeleccionado.domicilio).toLocaleString()}</span>
+              </div>
+
+              <input placeholder="Tu direccion de entrega" value={direccion} onChange={(e) => setDireccion(e.target.value)} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "12px", boxSizing: "border-box", fontSize: "13px" }} />
+
+              <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px" }}>Metodo de pago:</p>
+              <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                {["efectivo", "nequi", "bancolombia"].map((m) => (
+                  <button key={m} onClick={() => setMetodoPago(m)} style={{ flex: 1, padding: "8px", border: `1px solid ${metodoPago === m ? "#D85A30" : "#ddd"}`, borderRadius: "8px", background: metodoPago === m ? "#FAECE7" : "#fff", color: metodoPago === m ? "#D85A30" : "#888", cursor: "pointer", fontSize: "11px", fontWeight: metodoPago === m ? 500 : 400 }}>
+                    {m === "efectivo" ? "Efectivo" : m === "nequi" ? "Nequi" : "Bancolombia"}
+                  </button>
+                ))}
+              </div>
+
+              {metodoPago === "nequi" && (
+                <div style={{ background: "#FAECE7", borderRadius: "8px", padding: "10px", marginBottom: "12px" }}>
+                  <p style={{ fontSize: "12px", fontWeight: 500, color: "#D85A30", margin: "0 0 4px" }}>Transfiere por Nequi</p>
+                  <p style={{ fontSize: "12px", color: "#555", margin: 0 }}>Numero: <strong>3156009728</strong></p>
+                  <p style={{ fontSize: "11px", color: "#888", margin: "4px 0 0" }}>Envia comprobante por WhatsApp</p>
+                </div>
+              )}
+
+              {metodoPago === "bancolombia" && (
+                <div style={{ background: "#E6F1FB", borderRadius: "8px", padding: "10px", marginBottom: "12px" }}>
+                  <p style={{ fontSize: "12px", fontWeight: 500, color: "#185FA5", margin: "0 0 4px" }}>Transfiere por Bancolombia</p>
+                  <p style={{ fontSize: "12px", color: "#555", margin: "0 0 2px" }}>Cuenta: <strong>07985044028</strong></p>
+                  <p style={{ fontSize: "11px", color: "#888", margin: 0 }}>Envia comprobante al 3156009728</p>
+                </div>
+              )}
+
+              {metodoPago === "efectivo" && (
+                <div style={{ background: "#EAF3DE", borderRadius: "8px", padding: "10px", marginBottom: "12px" }}>
+                  <p style={{ fontSize: "12px", fontWeight: 500, color: "#3B6D11", margin: "0 0 4px" }}>Pago en efectivo</p>
+                  <p style={{ fontSize: "11px", color: "#888", margin: 0 }}>Ten el dinero listo cuando llegue el domiciliario</p>
+                </div>
+              )}
+
+              <button onClick={hacerPedido} style={{ width: "100%", padding: "12px", background: "#D85A30", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}>
+                Confirmar pedido - ${(totalCarrito() + restauranteSeleccionado.domicilio).toLocaleString()}
               </button>
-            ))}
-          </div>
-
-          {formulario.metodo_pago === "nequi" && (
-            <div style={{ background: "#FAECE7", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 500, color: "#D85A30", margin: "0 0 4px" }}>Transfiere por Nequi</p>
-              <p style={{ fontSize: "13px", color: "#555", margin: 0 }}>Numero: <strong>3156009728</strong></p>
-              <p style={{ fontSize: "12px", color: "#888", margin: "4px 0 0" }}>Envia el comprobante por WhatsApp al mismo numero</p>
             </div>
           )}
-
-          {formulario.metodo_pago === "bancolombia" && (
-            <div style={{ background: "#E6F1FB", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 500, color: "#185FA5", margin: "0 0 4px" }}>Transfiere por Bancolombia</p>
-              <p style={{ fontSize: "13px", color: "#555", margin: "0 0 4px" }}>Numero de cuenta: <strong>07985044028</strong></p>
-              <p style={{ fontSize: "12px", color: "#888", margin: 0 }}>Envia el comprobante por WhatsApp al 3156009728</p>
-            </div>
-          )}
-
-          {formulario.metodo_pago === "efectivo" && (
-            <div style={{ background: "#EAF3DE", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 500, color: "#3B6D11", margin: "0 0 4px" }}>Pago en efectivo</p>
-              <p style={{ fontSize: "12px", color: "#888", margin: 0 }}>Ten el dinero listo cuando llegue el domiciliario</p>
-            </div>
-          )}
-
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "13px", color: "#888" }}>Domicilio: ${restauranteSeleccionado.domicilio.toLocaleString()}</span>
-            <button onClick={hacerPedido} style={{ background: "#D85A30", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", cursor: "pointer", fontWeight: 500 }}>Pedir ahora</button>
-          </div>
         </div>
       ) : (
         <>
           <h3 style={{ margin: "0 0 12px" }}>Restaurantes</h3>
           {restaurantes.map((r) => (
-            <div key={r.id} onClick={() => setRestauranteSeleccionado(r)} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px", cursor: "pointer" }}>
+            <div key={r.id} onClick={() => seleccionarRestaurante(r)} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px", cursor: "pointer" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
                 <div>
                   <p style={{ fontWeight: 500, margin: 0 }}>{r.nombre}</p>
                   <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{r.categoria}</p>
                 </div>
-                <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>estrella {r.calificacion}</span>
+                <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>⭐ {r.calificacion}</span>
               </div>
               <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-                <span style={{ fontSize: "12px", color: "#888" }}>{r.tiempo}</span>
-                <span style={{ fontSize: "12px", color: "#888" }}>${r.domicilio.toLocaleString()}</span>
+                <span style={{ fontSize: "12px", color: "#888" }}>🕐 {r.tiempo}</span>
+                <span style={{ fontSize: "12px", color: "#888" }}>🛵 ${r.domicilio.toLocaleString()}</span>
               </div>
             </div>
           ))}
