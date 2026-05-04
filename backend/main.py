@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato
 from passlib.context import CryptContext
 
 app = FastAPI(title="Orito App - API")
@@ -59,9 +59,30 @@ def crear_restaurante(nombre: str, categoria: str, calificacion: float, tiempo: 
     db.refresh(restaurante)
     return restaurante
 
+@app.get("/restaurantes/{restaurante_id}/platos")
+def obtener_platos(restaurante_id: int, db: Session = Depends(get_db)):
+    return db.query(Plato).filter(Plato.restaurante_id == restaurante_id, Plato.disponible == "si").all()
+
+@app.post("/platos")
+def crear_plato(restaurante_id: int, nombre: str, descripcion: str, precio: int, db: Session = Depends(get_db)):
+    plato = Plato(restaurante_id=restaurante_id, nombre=nombre, descripcion=descripcion, precio=precio)
+    db.add(plato)
+    db.commit()
+    db.refresh(plato)
+    return plato
+
+@app.put("/platos/{plato_id}/disponible")
+def cambiar_disponible(plato_id: int, disponible: str, db: Session = Depends(get_db)):
+    plato = db.query(Plato).filter(Plato.id == plato_id).first()
+    if not plato:
+        raise HTTPException(status_code=404, detail="Plato no encontrado")
+    plato.disponible = disponible
+    db.commit()
+    return plato
+
 @app.post("/pedidos")
-def crear_pedido(cliente_nombre: str, cliente_direccion: str, cliente_telefono: str, restaurante_id: int, plato: str, total: int, db: Session = Depends(get_db)):
-    pedido = Pedido(cliente_nombre=cliente_nombre, cliente_direccion=cliente_direccion, cliente_telefono=cliente_telefono, restaurante_id=restaurante_id, plato=plato, total=total)
+def crear_pedido(cliente_nombre: str, cliente_direccion: str, cliente_telefono: str, restaurante_id: int, plato: str, total: int, metodo_pago: str = "efectivo", db: Session = Depends(get_db)):
+    pedido = Pedido(cliente_nombre=cliente_nombre, cliente_direccion=cliente_direccion, cliente_telefono=cliente_telefono, restaurante_id=restaurante_id, plato=plato, total=total, metodo_pago=metodo_pago)
     db.add(pedido)
     db.commit()
     db.refresh(pedido)

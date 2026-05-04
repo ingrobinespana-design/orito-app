@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -14,7 +14,6 @@ Base = declarative_base()
 
 class Usuario(Base):
     __tablename__ = "usuarios"
-
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     telefono = Column(String, unique=True)
@@ -23,7 +22,6 @@ class Usuario(Base):
 
 class Restaurante(Base):
     __tablename__ = "restaurantes"
-
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     categoria = Column(String)
@@ -31,9 +29,17 @@ class Restaurante(Base):
     tiempo = Column(String)
     domicilio = Column(Integer)
 
+class Plato(Base):
+    __tablename__ = "platos"
+    id = Column(Integer, primary_key=True, index=True)
+    restaurante_id = Column(Integer, ForeignKey("restaurantes.id"))
+    nombre = Column(String)
+    descripcion = Column(Text)
+    precio = Column(Integer)
+    disponible = Column(String, default="si")
+
 class Pedido(Base):
     __tablename__ = "pedidos"
-
     id = Column(Integer, primary_key=True, index=True)
     cliente_nombre = Column(String)
     cliente_direccion = Column(String)
@@ -42,6 +48,7 @@ class Pedido(Base):
     plato = Column(String)
     total = Column(Integer)
     estado = Column(String, default="pendiente")
+    metodo_pago = Column(String, default="efectivo")
     fecha = Column(DateTime, default=datetime.now)
 
 def crear_tablas():
