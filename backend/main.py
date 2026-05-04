@@ -77,3 +77,12 @@ def actualizar_estado(pedido_id: int, estado: str, db: Session = Depends(get_db)
     pedido.estado = estado
     db.commit()
     return pedido
+
+@app.put("/usuarios/{telefono}/rol")
+def cambiar_rol(telefono: str, rol: str, db: Session = Depends(get_db)):
+    usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    usuario.rol = rol
+    db.commit()
+    return {"nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol}
