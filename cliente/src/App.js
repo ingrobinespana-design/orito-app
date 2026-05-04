@@ -51,7 +51,7 @@ function Login({ onLogin }) {
 function App() {
   const [restaurantes, setRestaurantes] = useState([]);
   const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
-  const [formulario, setFormulario] = useState({ cliente_direccion: "", plato: "" });
+  const [formulario, setFormulario] = useState({ cliente_direccion: "", plato: "", metodo_pago: "efectivo" });
   const [pedidoEnviado, setPedidoEnviado] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verAdmin, setVerAdmin] = useState(false);
@@ -69,12 +69,12 @@ function App() {
       alert("Por favor completa todos los campos");
       return;
     }
-    fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${formulario.cliente_direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${formulario.plato}&total=${restauranteSeleccionado.domicilio + 10000}`, { method: "POST" })
+    fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${formulario.cliente_direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${formulario.plato}&total=${restauranteSeleccionado.domicilio + 10000}&metodo_pago=${formulario.metodo_pago}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
         setPedidoEnviado(true);
         setRestauranteSeleccionado(null);
-        setFormulario({ cliente_direccion: "", plato: "" });
+        setFormulario({ cliente_direccion: "", plato: "", metodo_pago: "efectivo" });
       })
       .catch(() => alert("Error al enviar pedido"));
   };
@@ -94,12 +94,14 @@ function App() {
           <span onClick={() => setUsuario(null)} style={{ fontSize: "12px", color: "#888", cursor: "pointer" }}>Salir</span>
         </div>
       </div>
+
       <div style={{ background: "#D85A30", borderRadius: "16px", padding: "20px", marginBottom: "20px" }}>
         <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Entregar en</p>
         <p style={{ color: "#fff", fontWeight: 500, margin: "4px 0 12px" }}>Orito, Putumayo</p>
         <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "0 0 12px" }}>Que quieres hoy?</p>
         <input placeholder="Buscar restaurante o plato..." style={{ width: "100%", padding: "8px 12px", borderRadius: "10px", border: "none", fontSize: "13px", boxSizing: "border-box" }} />
       </div>
+
       {pedidoEnviado && (
         <div style={{ background: "#EAF3DE", border: "0.5px solid #3B6D11", borderRadius: "12px", padding: "14px", marginBottom: "16px", textAlign: "center" }}>
           <p style={{ color: "#3B6D11", fontWeight: 500, margin: 0 }}>Pedido enviado exitosamente</p>
@@ -107,6 +109,7 @@ function App() {
           <button onClick={() => setPedidoEnviado(false)} style={{ background: "#3B6D11", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", cursor: "pointer" }}>Hacer otro pedido</button>
         </div>
       )}
+
       {restauranteSeleccionado ? (
         <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -115,6 +118,39 @@ function App() {
           </div>
           <input placeholder="Tu direccion" value={formulario.cliente_direccion} onChange={(e) => setFormulario({ ...formulario, cliente_direccion: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }} />
           <input placeholder="Que quieres pedir?" value={formulario.plato} onChange={(e) => setFormulario({ ...formulario, plato: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "16px", boxSizing: "border-box", fontSize: "13px" }} />
+
+          <p style={{ fontSize: "13px", fontWeight: 500, margin: "0 0 8px" }}>Metodo de pago:</p>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+            {["efectivo", "nequi", "bancolombia"].map((m) => (
+              <button key={m} onClick={() => setFormulario({ ...formulario, metodo_pago: m })} style={{ flex: 1, padding: "8px", border: `1px solid ${formulario.metodo_pago === m ? "#D85A30" : "#ddd"}`, borderRadius: "8px", background: formulario.metodo_pago === m ? "#FAECE7" : "#fff", color: formulario.metodo_pago === m ? "#D85A30" : "#888", cursor: "pointer", fontSize: "12px", fontWeight: formulario.metodo_pago === m ? 500 : 400 }}>
+                {m === "efectivo" ? "Efectivo" : m === "nequi" ? "Nequi" : "Bancolombia"}
+              </button>
+            ))}
+          </div>
+
+          {formulario.metodo_pago === "nequi" && (
+            <div style={{ background: "#FAECE7", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 500, color: "#D85A30", margin: "0 0 4px" }}>Transfiere por Nequi</p>
+              <p style={{ fontSize: "13px", color: "#555", margin: 0 }}>Numero: <strong>3156009728</strong></p>
+              <p style={{ fontSize: "12px", color: "#888", margin: "4px 0 0" }}>Envia el comprobante por WhatsApp al mismo numero</p>
+            </div>
+          )}
+
+          {formulario.metodo_pago === "bancolombia" && (
+            <div style={{ background: "#E6F1FB", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 500, color: "#185FA5", margin: "0 0 4px" }}>Transfiere por Bancolombia</p>
+              <p style={{ fontSize: "13px", color: "#555", margin: 0 }}>Numero de cuenta: <strong>3156009728</strong></p>
+              <p style={{ fontSize: "12px", color: "#888", margin: "4px 0 0" }}>Envia el comprobante por WhatsApp al mismo numero</p>
+            </div>
+          )}
+
+          {formulario.metodo_pago === "efectivo" && (
+            <div style={{ background: "#EAF3DE", borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 500, color: "#3B6D11", margin: "0 0 4px" }}>Pago en efectivo</p>
+              <p style={{ fontSize: "12px", color: "#888", margin: 0 }}>Tendras el dinero listo cuando llegue el domiciliario</p>
+            </div>
+          )}
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: "13px", color: "#888" }}>Domicilio: ${restauranteSeleccionado.domicilio.toLocaleString()}</span>
             <button onClick={hacerPedido} style={{ background: "#D85A30", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", cursor: "pointer", fontWeight: 500 }}>Pedir ahora</button>
