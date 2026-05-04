@@ -11,6 +11,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+class Usuario(Base):
+    __tablename__ = "usuarios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String)
+    telefono = Column(String, unique=True)
+    password = Column(String)
+    rol = Column(String, default="cliente")
+
 class Restaurante(Base):
     __tablename__ = "restaurantes"
 
