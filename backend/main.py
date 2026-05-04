@@ -86,7 +86,8 @@ def cambiar_rol(telefono: str, rol: str, db: Session = Depends(get_db)):
     usuario.rol = rol
     db.commit()
     return {"nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol}
-    @app.get("/usuarios")
+
+@app.get("/usuarios")
 def obtener_usuarios(db: Session = Depends(get_db)):
     usuarios = db.query(Usuario).all()
     return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol} for u in usuarios]
