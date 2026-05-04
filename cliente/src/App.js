@@ -98,11 +98,9 @@ function App() {
   const hacerPedido = () => {
     if (!direccion) { alert("Por favor ingresa tu direccion"); return; }
     if (carrito.length === 0) { alert("Agrega al menos un plato"); return; }
-
     const platosTexto = carrito.map(c => `${c.cantidad}x ${c.nombre}`).join(", ");
     const total = totalCarrito() + restauranteSeleccionado.domicilio;
-
-    fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${platosTexto}&total=${total}&metodo_pago=${metodoPago}`, { method: "POST" })
+    fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${encodeURIComponent(platosTexto)}&total=${total}&metodo_pago=${metodoPago}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
         setPedidoEnviado(true);
@@ -123,7 +121,7 @@ function App() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
         <span style={{ fontSize: "13px", color: "#888" }}>Hola, {usuario.nombre}</span>
         <div style={{ display: "flex", gap: "12px" }}>
-          {usuario.rol === "admin" && <span onClick={() => setVerAdmin(true)} style={{ fontSize: "12px", color: "#D85A30", cursor: "pointer" }}>Admin</span>}
+          {usuario.rol === "admin" && <span onClick={() => setVerAdmin(true)} style={{ fontSize: "12px", color: "#D85A30", cursor: "pointer" }}>Administracion</span>}
           <span onClick={() => setUsuario(null)} style={{ fontSize: "12px", color: "#888", cursor: "pointer" }}>Salir</span>
         </div>
       </div>
@@ -237,7 +235,7 @@ function App() {
                   <p style={{ fontWeight: 500, margin: 0 }}>{r.nombre}</p>
                   <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{r.categoria}</p>
                 </div>
-                <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>⭐ {r.calificacion}</span>
+                <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>estrella {r.calificacion}</span>
               </div>
               <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
                 <span style={{ fontSize: "12px", color: "#888" }}>🕐 {r.tiempo}</span>
@@ -251,4 +249,4 @@ function App() {
   );
 }
 
-export default App; 
+export default App;
