@@ -26,7 +26,7 @@ def get_db():
 
 @app.get("/")
 def inicio():
-    return {"mensaje": "Bienvenido a Orito App 🛵"}
+    return {"mensaje": "Bienvenido a Orito App"}
 
 @app.post("/registro")
 def registrar_usuario(nombre: str, telefono: str, password: str, db: Session = Depends(get_db)):
@@ -38,14 +38,14 @@ def registrar_usuario(nombre: str, telefono: str, password: str, db: Session = D
     db.add(usuario)
     db.commit()
     db.refresh(usuario)
-    return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol}
+    return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol, "restaurante_id": usuario.restaurante_id}
 
 @app.post("/login")
 def login(telefono: str, password: str, db: Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not usuario or not pwd_context.verify(password, usuario.password):
         raise HTTPException(status_code=400, detail="Telefono o contraseña incorrectos")
-    return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol}
+    return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol, "restaurante_id": usuario.restaurante_id}
 
 @app.get("/restaurantes")
 def obtener_restaurantes(db: Session = Depends(get_db)):
@@ -80,6 +80,14 @@ def cambiar_disponible(plato_id: int, disponible: str, db: Session = Depends(get
     db.commit()
     return plato
 
+@app.get("/pedidos/restaurante/{restaurante_id}")
+def obtener_pedidos_restaurante(restaurante_id: int, db: Session = Depends(get_db)):
+    return db.query(Pedido).filter(Pedido.restaurante_id == restaurante_id).all()
+
+@app.get("/pedidos")
+def obtener_pedidos(db: Session = Depends(get_db)):
+    return db.query(Pedido).all()
+
 @app.post("/pedidos")
 def crear_pedido(cliente_nombre: str, cliente_direccion: str, cliente_telefono: str, restaurante_id: int, plato: str, total: int, metodo_pago: str = "efectivo", db: Session = Depends(get_db)):
     pedido = Pedido(cliente_nombre=cliente_nombre, cliente_direccion=cliente_direccion, cliente_telefono=cliente_telefono, restaurante_id=restaurante_id, plato=plato, total=total, metodo_pago=metodo_pago)
@@ -88,10 +96,6 @@ def crear_pedido(cliente_nombre: str, cliente_direccion: str, cliente_telefono: 
     db.refresh(pedido)
     return pedido
 
-@app.get("/pedidos")
-def obtener_pedidos(db: Session = Depends(get_db)):
-    return db.query(Pedido).all()
-
 @app.put("/pedidos/{pedido_id}/estado")
 def actualizar_estado(pedido_id: int, estado: str, db: Session = Depends(get_db)):
     pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
@@ -99,16 +103,33 @@ def actualizar_estado(pedido_id: int, estado: str, db: Session = Depends(get_db)
     db.commit()
     return pedido
 
+@app.put("/pedidos/{pedido_id}/asignar")
+def asignar_domiciliario(pedido_id: int, domiciliario_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    pedido.domiciliario_id = domiciliario_id
+    pedido.estado = "asignado"
+    db.commit()
+    return pedido
+
 @app.put("/usuarios/{telefono}/rol")
-def cambiar_rol(telefono: str, rol: str, db: Session = Depends(get_db)):
+def cambiar_rol(telefono: str, rol: str, restaurante_id: int = None, db: Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     usuario.rol = rol
+    if restaurante_id:
+        usuario.restaurante_id = restaurante_id
     db.commit()
-    return {"nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol}
+    return {"nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol, "restaurante_id": usuario.restaurante_id}
 
 @app.get("/usuarios")
 def obtener_usuarios(db: Session = Depends(get_db)):
     usuarios = db.query(Usuario).all()
-    return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol} for u in usuarios]
+    return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol, "restaurante_id": u.restaurante_id} for u in usuarios]
+
+@app.get("/domiciliarios")
+def obtener_domiciliarios(db: Session = Depends(get_db)):
+    domiciliarios = db.query(Usuario).filter(Usuario.rol == "domiciliario").all()
+    return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono} for u in domiciliarios]
