@@ -60,7 +60,7 @@ function Admin({ API }) {
       setMensaje("Por favor completa nombre y precio");
       return;
     }
-    fetch(`${API}/platos?restaurante_id=${restauranteSeleccionado.id}&nombre=${nuevoPlato.nombre}&descripcion=${nuevoPlato.descripcion || ""}&precio=${nuevoPlato.precio}`, { method: "POST" })
+    fetch(`${API}/platos?restaurante_id=${restauranteSeleccionado.id}&nombre=${encodeURIComponent(nuevoPlato.nombre)}&descripcion=${encodeURIComponent(nuevoPlato.descripcion || "")}&precio=${nuevoPlato.precio}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
         setMensaje("Plato agregado exitosamente");
@@ -81,7 +81,7 @@ function Admin({ API }) {
 
       <div style={{ background: "#D85A30", borderRadius: "16px", padding: "20px", marginBottom: "20px" }}>
         <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Panel de control</p>
-        <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "4px 0 0" }}>Orito App - Admin</p>
+        <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "4px 0 0" }}>Domicilios Orito - Admin</p>
       </div>
 
       <div style={{ display: "flex", marginBottom: "20px", background: "#f5f5f5", borderRadius: "8px", padding: "4px" }}>
