@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import Admin from "./Admin";
 import Domiciliario from "./Domiciliario";
+import Restaurante from "./Restaurante";
 
 const API = "https://orito-app-production.up.railway.app";
 
@@ -114,6 +115,7 @@ function App() {
 
   if (!usuario) return <Login onLogin={setUsuario} />;
   if (usuario.rol === "domiciliario") return <Domiciliario API={API} usuario={usuario} onSalir={() => setUsuario(null)} />;
+  if (usuario.rol === "restaurante") return <Restaurante API={API} usuario={usuario} onSalir={() => setUsuario(null)} />;
   if (verAdmin) return <Admin API={API} />;
 
   return (
