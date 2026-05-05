@@ -3,11 +3,14 @@ import { useState, useEffect } from "react";
 function Admin({ API }) {
   const [pedidos, setPedidos] = useState([]);
   const [restaurantes, setRestaurantes] = useState([]);
+  const [domiciliarios, setDomiciliarios] = useState([]);
   const [platos, setPlatos] = useState([]);
+  const [usuarios, setUsuarios] = useState([]);
   const [vista, setVista] = useState("pedidos");
   const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
   const [nuevoRestaurante, setNuevoRestaurante] = useState({ nombre: "", categoria: "", calificacion: "", tiempo: "", domicilio: "" });
   const [nuevoPlato, setNuevoPlato] = useState({ nombre: "", descripcion: "", precio: "" });
+  const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
   const [mensaje, setMensaje] = useState("");
 
   const cargarPedidos = () => {
@@ -22,6 +25,18 @@ function Admin({ API }) {
       .then((data) => setRestaurantes(data));
   };
 
+  const cargarDomiciliarios = () => {
+    fetch(`${API}/domiciliarios`)
+      .then((res) => res.json())
+      .then((data) => setDomiciliarios(data));
+  };
+
+  const cargarUsuarios = () => {
+    fetch(`${API}/usuarios`)
+      .then((res) => res.json())
+      .then((data) => setUsuarios(data));
+  };
+
   const cargarPlatos = (restauranteId) => {
     fetch(`${API}/restaurantes/${restauranteId}/platos`)
       .then((res) => res.json())
@@ -31,6 +46,8 @@ function Admin({ API }) {
   useEffect(() => {
     cargarPedidos();
     cargarRestaurantes();
+    cargarDomiciliarios();
+    cargarUsuarios();
     const intervalo = setInterval(cargarPedidos, 10000);
     return () => clearInterval(intervalo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -41,12 +58,17 @@ function Admin({ API }) {
       .then(() => cargarPedidos());
   };
 
+  const asignarDomiciliario = (pedidoId, domiciliarioId) => {
+    fetch(`${API}/pedidos/${pedidoId}/asignar?domiciliario_id=${domiciliarioId}`, { method: "PUT" })
+      .then(() => cargarPedidos());
+  };
+
   const agregarRestaurante = () => {
     if (!nuevoRestaurante.nombre || !nuevoRestaurante.categoria) {
       setMensaje("Por favor completa nombre y categoria");
       return;
     }
-    fetch(`${API}/restaurantes?nombre=${nuevoRestaurante.nombre}&categoria=${nuevoRestaurante.categoria}&calificacion=${nuevoRestaurante.calificacion || 5.0}&tiempo=${nuevoRestaurante.tiempo || "30-40 min"}&domicilio=${nuevoRestaurante.domicilio || 3000}`, { method: "POST" })
+    fetch(`${API}/restaurantes?nombre=${encodeURIComponent(nuevoRestaurante.nombre)}&categoria=${encodeURIComponent(nuevoRestaurante.categoria)}&calificacion=${nuevoRestaurante.calificacion || 5.0}&tiempo=${encodeURIComponent(nuevoRestaurante.tiempo || "30-40 min")}&domicilio=${nuevoRestaurante.domicilio || 3000}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
         setMensaje("Restaurante agregado exitosamente");
@@ -69,8 +91,33 @@ function Admin({ API }) {
       });
   };
 
+  const crearUsuario = () => {
+    if (!nuevoUsuario.nombre || !nuevoUsuario.telefono || !nuevoUsuario.password) {
+      setMensaje("Por favor completa todos los campos");
+      return;
+    }
+    fetch(`${API}/registro?nombre=${encodeURIComponent(nuevoUsuario.nombre)}&telefono=${nuevoUsuario.telefono}&password=${nuevoUsuario.password}`, { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.detail) { setMensaje(data.detail); return; }
+        const url = nuevoUsuario.rol === "restaurante"
+          ? `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}&restaurante_id=${nuevoUsuario.restaurante_id}`
+          : `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}`;
+        fetch(url, { method: "PUT" })
+          .then(() => {
+            setMensaje(`Usuario ${nuevoUsuario.rol} creado exitosamente`);
+            setNuevoUsuario({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
+            cargarUsuarios();
+            cargarDomiciliarios();
+          });
+      });
+  };
+
   const colorEstado = (estado) => {
     if (estado === "pendiente") return { background: "#FAEEDA", color: "#854F0B" };
+    if (estado === "preparando") return { background: "#E6F1FB", color: "#185FA5" };
+    if (estado === "listo") return { background: "#EAF3DE", color: "#3B6D11" };
+    if (estado === "asignado") return { background: "#F1EFE8", color: "#5F5E5A" };
     if (estado === "en camino") return { background: "#E6F1FB", color: "#185FA5" };
     if (estado === "entregado") return { background: "#EAF3DE", color: "#3B6D11" };
     return {};
@@ -84,9 +131,10 @@ function Admin({ API }) {
         <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "4px 0 0" }}>Domicilios Orito - Admin</p>
       </div>
 
-      <div style={{ display: "flex", marginBottom: "20px", background: "#f5f5f5", borderRadius: "8px", padding: "4px" }}>
-        <button onClick={() => { setVista("pedidos"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "8px", border: "none", borderRadius: "6px", background: vista === "pedidos" ? "#fff" : "transparent", cursor: "pointer", fontWeight: vista === "pedidos" ? 500 : 400 }}>Pedidos</button>
-        <button onClick={() => { setVista("restaurantes"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "8px", border: "none", borderRadius: "6px", background: vista === "restaurantes" ? "#fff" : "transparent", cursor: "pointer", fontWeight: vista === "restaurantes" ? 500 : 400 }}>Restaurantes</button>
+      <div style={{ display: "flex", marginBottom: "20px", background: "#f5f5f5", borderRadius: "8px", padding: "4px", gap: "4px" }}>
+        <button onClick={() => { setVista("pedidos"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "8px", border: "none", borderRadius: "6px", background: vista === "pedidos" ? "#fff" : "transparent", cursor: "pointer", fontWeight: vista === "pedidos" ? 500 : 400, fontSize: "12px" }}>Pedidos</button>
+        <button onClick={() => { setVista("restaurantes"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "8px", border: "none", borderRadius: "6px", background: vista === "restaurantes" ? "#fff" : "transparent", cursor: "pointer", fontWeight: vista === "restaurantes" ? 500 : 400, fontSize: "12px" }}>Restaurantes</button>
+        <button onClick={() => { setVista("usuarios"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "8px", border: "none", borderRadius: "6px", background: vista === "usuarios" ? "#fff" : "transparent", cursor: "pointer", fontWeight: vista === "usuarios" ? 500 : 400, fontSize: "12px" }}>Usuarios</button>
       </div>
 
       {vista === "pedidos" && (
@@ -97,8 +145,8 @@ function Admin({ API }) {
               <p style={{ fontSize: "24px", fontWeight: 500, color: "#854F0B", margin: 0 }}>{pedidos.filter(p => p.estado === "pendiente").length}</p>
             </div>
             <div style={{ background: "#E6F1FB", borderRadius: "12px", padding: "16px" }}>
-              <p style={{ fontSize: "12px", color: "#185FA5", margin: "0 0 4px" }}>En camino</p>
-              <p style={{ fontSize: "24px", fontWeight: 500, color: "#185FA5", margin: 0 }}>{pedidos.filter(p => p.estado === "en camino").length}</p>
+              <p style={{ fontSize: "12px", color: "#185FA5", margin: "0 0 4px" }}>En proceso</p>
+              <p style={{ fontSize: "24px", fontWeight: 500, color: "#185FA5", margin: 0 }}>{pedidos.filter(p => ["preparando", "listo", "asignado", "en camino"].includes(p.estado)).length}</p>
             </div>
             <div style={{ background: "#EAF3DE", borderRadius: "12px", padding: "16px" }}>
               <p style={{ fontSize: "12px", color: "#3B6D11", margin: "0 0 4px" }}>Entregados</p>
@@ -116,7 +164,7 @@ function Admin({ API }) {
             <div key={p.id} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "10px" }}>
                 <div>
-                  <p style={{ fontWeight: 500, margin: 0 }}>{p.cliente_nombre}</p>
+                  <p style={{ fontWeight: 500, margin: 0 }}>Pedido #{p.id} — {p.cliente_nombre}</p>
                   <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>📍 {p.cliente_direccion}</p>
                   <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>📞 {p.cliente_telefono}</p>
                   <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>🍽️ {p.plato}</p>
@@ -124,10 +172,25 @@ function Admin({ API }) {
                 </div>
                 <span style={{ ...colorEstado(p.estado), fontSize: "11px", padding: "4px 10px", borderRadius: "8px", fontWeight: 500 }}>{p.estado}</span>
               </div>
+
+              {p.estado === "listo" && domiciliarios.length > 0 && (
+                <div style={{ marginBottom: "10px" }}>
+                  <p style={{ fontSize: "12px", fontWeight: 500, margin: "0 0 6px" }}>Asignar domiciliario:</p>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    {domiciliarios.map((d) => (
+                      <button key={d.id} onClick={() => asignarDomiciliario(p.id, d.id)} style={{ background: "#185FA5", color: "#fff", border: "none", borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "12px" }}>
+                        🛵 {d.nombre}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: "8px" }}>
-                {p.estado === "pendiente" && <button onClick={() => cambiarEstado(p.id, "en camino")} style={{ background: "#185FA5", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 14px", cursor: "pointer", fontSize: "12px" }}>Enviar</button>}
+                {p.estado === "pendiente" && <button onClick={() => cambiarEstado(p.id, "preparando")} style={{ background: "#185FA5", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 14px", cursor: "pointer", fontSize: "12px" }}>Confirmar</button>}
+                {p.estado === "asignado" && <button onClick={() => cambiarEstado(p.id, "en camino")} style={{ background: "#D85A30", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 14px", cursor: "pointer", fontSize: "12px" }}>En camino</button>}
                 {p.estado === "en camino" && <button onClick={() => cambiarEstado(p.id, "entregado")} style={{ background: "#3B6D11", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 14px", cursor: "pointer", fontSize: "12px" }}>Entregado</button>}
-                {p.estado === "entregado" && <span style={{ fontSize: "12px", color: "#3B6D11" }}>Completado</span>}
+                {p.estado === "entregado" && <span style={{ fontSize: "12px", color: "#3B6D11" }}>Completado ✓</span>}
               </div>
             </div>
           ))}
@@ -183,12 +246,47 @@ function Admin({ API }) {
           {platos.length === 0 && <p style={{ color: "#888", textAlign: "center", padding: "20px" }}>No hay platos aun</p>}
           {platos.map((p) => (
             <div key={p.id} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px" }}>
+              <p style={{ fontWeight: 500, margin: 0 }}>{p.nombre}</p>
+              {p.descripcion && <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{p.descripcion}</p>}
+              <p style={{ fontSize: "13px", color: "#D85A30", fontWeight: 500, margin: "4px 0" }}>${p.precio.toLocaleString()}</p>
+            </div>
+          ))}
+        </>
+      )}
+
+      {vista === "usuarios" && (
+        <>
+          <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "16px", marginBottom: "20px" }}>
+            <h3 style={{ margin: "0 0 16px" }}>Crear usuario</h3>
+            <input placeholder="Nombre" value={nuevoUsuario.nombre} onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, nombre: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }} />
+            <input placeholder="Telefono" value={nuevoUsuario.telefono} onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, telefono: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }} />
+            <input placeholder="Contrasena" value={nuevoUsuario.password} onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, password: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }} />
+            <select value={nuevoUsuario.rol} onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, rol: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }}>
+              <option value="domiciliario">Domiciliario</option>
+              <option value="restaurante">Restaurante</option>
+              <option value="admin">Admin</option>
+            </select>
+            {nuevoUsuario.rol === "restaurante" && (
+              <select value={nuevoUsuario.restaurante_id} onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "0.5px solid #ddd", marginBottom: "10px", boxSizing: "border-box", fontSize: "13px" }}>
+                <option value="">Selecciona el restaurante</option>
+                {restaurantes.map((r) => (
+                  <option key={r.id} value={r.id}>{r.nombre}</option>
+                ))}
+              </select>
+            )}
+            {mensaje && <p style={{ color: "#3B6D11", fontSize: "12px", margin: "0 0 12px" }}>{mensaje}</p>}
+            <button onClick={crearUsuario} style={{ width: "100%", padding: "12px", background: "#D85A30", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 500 }}>Crear usuario</button>
+          </div>
+
+          <h3 style={{ margin: "0 0 12px" }}>Usuarios ({usuarios.length})</h3>
+          {usuarios.map((u) => (
+            <div key={u.id} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "10px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <p style={{ fontWeight: 500, margin: 0 }}>{p.nombre}</p>
-                  {p.descripcion && <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{p.descripcion}</p>}
-                  <p style={{ fontSize: "13px", color: "#D85A30", fontWeight: 500, margin: "4px 0" }}>${p.precio.toLocaleString()}</p>
+                  <p style={{ fontWeight: 500, margin: 0 }}>{u.nombre}</p>
+                  <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>📞 {u.telefono}</p>
                 </div>
+                <span style={{ background: u.rol === "admin" ? "#FAEEDA" : u.rol === "domiciliario" ? "#E6F1FB" : u.rol === "restaurante" ? "#EAF3DE" : "#f5f5f5", color: u.rol === "admin" ? "#854F0B" : u.rol === "domiciliario" ? "#185FA5" : u.rol === "restaurante" ? "#3B6D11" : "#888", fontSize: "11px", padding: "4px 10px", borderRadius: "8px", fontWeight: 500 }}>{u.rol}</span>
               </div>
             </div>
           ))}
