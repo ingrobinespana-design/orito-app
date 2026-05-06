@@ -49,8 +49,65 @@ function Login({ onLogin }) {
   );
 }
 
+function SeguimientoPedido({ pedido, restaurantes, domiciliarios }) {
+  const restaurante = restaurantes[pedido.restaurante_id];
+  const domiciliario = pedido.domiciliario_id ? domiciliarios[pedido.domiciliario_id] : null;
+
+  const pasos = [
+    { estado: "pendiente", label: "Pedido recibido", icon: "📋" },
+    { estado: "aceptado", label: "Restaurante aceptó", icon: "✅" },
+    { estado: "preparando", label: "Preparando tu pedido", icon: "👨‍🍳" },
+    { estado: "listo", label: "Listo para recoger", icon: "📦" },
+    { estado: "asignado", label: "Domiciliario asignado", icon: "🛵" },
+    { estado: "en camino", label: "En camino a tu puerta", icon: "🚀" },
+    { estado: "entregado", label: "Entregado", icon: "🎉" },
+  ];
+
+  const ordenEstados = ["pendiente", "aceptado", "preparando", "listo", "asignado", "en camino", "entregado"];
+  const indiceActual = ordenEstados.indexOf(pedido.estado);
+
+  return (
+    <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "16px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "12px" }}>
+        <div>
+          <p style={{ fontWeight: 500, margin: 0 }}>Pedido #{pedido.id}</p>
+          {restaurante && <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>🍽️ {restaurante.nombre}</p>}
+          <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{pedido.plato}</p>
+          <p style={{ fontSize: "13px", fontWeight: 500, color: "#D85A30", margin: "4px 0" }}>${pedido.total.toLocaleString()}</p>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: "12px" }}>
+        {pasos.map((paso, index) => {
+          const completado = index <= indiceActual;
+          const actual = index === indiceActual;
+          return (
+            <div key={paso.estado} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+              <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: completado ? "#D85A30" : "#f5f5f5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", flexShrink: 0 }}>
+                {completado ? paso.icon : "○"}
+              </div>
+              <span style={{ fontSize: "13px", fontWeight: actual ? 500 : 400, color: completado ? "#333" : "#aaa" }}>{paso.label}</span>
+              {actual && <span style={{ background: "#FAECE7", color: "#D85A30", fontSize: "10px", padding: "2px 8px", borderRadius: "8px", fontWeight: 500 }}>Ahora</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {domiciliario && (pedido.estado === "asignado" || pedido.estado === "en camino") && (
+        <div style={{ background: "#EAF3DE", borderRadius: "8px", padding: "12px" }}>
+          <p style={{ fontSize: "12px", fontWeight: 500, color: "#3B6D11", margin: "0 0 4px" }}>Tu domiciliario</p>
+          <p style={{ fontSize: "13px", fontWeight: 500, margin: 0 }}>{domiciliario.nombre}</p>
+          <p style={{ fontSize: "12px", color: "#3B6D11", margin: "4px 0 0" }}>📞 {domiciliario.telefono}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [restaurantes, setRestaurantes] = useState([]);
+  const [restaurantesMap, setRestaurantesMap] = useState({});
+  const [domiciliariosMap, setDomiciliariosMap] = useState({});
   const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
   const [platos, setPlatos] = useState([]);
   const [carrito, setCarrito] = useState([]);
@@ -59,14 +116,45 @@ function App() {
   const [pedidoEnviado, setPedidoEnviado] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verAdmin, setVerAdmin] = useState(false);
+  const [vista, setVista] = useState("inicio");
+  const [misPedidos, setMisPedidos] = useState([]);
 
   useEffect(() => {
     if (usuario) {
       fetch(`${API}/restaurantes`)
         .then((res) => res.json())
-        .then((data) => setRestaurantes(data));
+        .then((data) => {
+          setRestaurantes(data);
+          const mapa = {};
+          data.forEach(r => { mapa[r.id] = r; });
+          setRestaurantesMap(mapa);
+        });
+      fetch(`${API}/domiciliarios`)
+        .then((res) => res.json())
+        .then((data) => {
+          const mapa = {};
+          data.forEach(d => { mapa[d.id] = d; });
+          setDomiciliariosMap(mapa);
+        });
     }
   }, [usuario]);
+
+  const cargarMisPedidos = () => {
+    fetch(`${API}/pedidos`)
+      .then((res) => res.json())
+      .then((data) => {
+        setMisPedidos(data.filter(p => p.cliente_telefono === usuario.telefono));
+      });
+  };
+
+  useEffect(() => {
+    if (usuario && vista === "pedidos") {
+      cargarMisPedidos();
+      const intervalo = setInterval(cargarMisPedidos, 8000);
+      return () => clearInterval(intervalo);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuario, vista]);
 
   const seleccionarRestaurante = (r) => {
     setRestauranteSeleccionado(r);
@@ -109,6 +197,8 @@ function App() {
         setCarrito([]);
         setDireccion("");
         setMetodoPago("efectivo");
+        setVista("pedidos");
+        cargarMisPedidos();
       })
       .catch(() => alert("Error al enviar pedido"));
   };
@@ -119,7 +209,7 @@ function App() {
   if (verAdmin) return <Admin API={API} />;
 
   return (
-    <div style={{ fontFamily: "sans-serif", maxWidth: "400px", margin: "0 auto", padding: "16px" }}>
+    <div style={{ fontFamily: "sans-serif", maxWidth: "400px", margin: "0 auto", padding: "16px", paddingBottom: "80px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
         <span style={{ fontSize: "13px", color: "#888" }}>Hola, {usuario.nombre}</span>
         <div style={{ display: "flex", gap: "12px" }}>
@@ -128,22 +218,35 @@ function App() {
         </div>
       </div>
 
-      <div style={{ background: "#D85A30", borderRadius: "16px", padding: "20px", marginBottom: "20px" }}>
-        <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Entregar en</p>
-        <p style={{ color: "#fff", fontWeight: 500, margin: "4px 0 12px" }}>Orito, Putumayo</p>
-        <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "0 0 12px" }}>Que quieres hoy?</p>
-        <input placeholder="Buscar restaurante o plato..." style={{ width: "100%", padding: "8px 12px", borderRadius: "10px", border: "none", fontSize: "13px", boxSizing: "border-box" }} />
-      </div>
+      {vista === "inicio" && !restauranteSeleccionado && (
+        <>
+          <div style={{ background: "#D85A30", borderRadius: "16px", padding: "20px", marginBottom: "20px" }}>
+            <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Entregar en</p>
+            <p style={{ color: "#fff", fontWeight: 500, margin: "4px 0 12px" }}>Orito, Putumayo</p>
+            <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "0 0 12px" }}>Que quieres hoy?</p>
+            <input placeholder="Buscar restaurante o plato..." style={{ width: "100%", padding: "8px 12px", borderRadius: "10px", border: "none", fontSize: "13px", boxSizing: "border-box" }} />
+          </div>
 
-      {pedidoEnviado && (
-        <div style={{ background: "#EAF3DE", border: "0.5px solid #3B6D11", borderRadius: "12px", padding: "14px", marginBottom: "16px", textAlign: "center" }}>
-          <p style={{ color: "#3B6D11", fontWeight: 500, margin: 0 }}>Pedido enviado exitosamente</p>
-          <p style={{ color: "#639922", fontSize: "13px", margin: "4px 0 8px" }}>Tu domicilio esta en camino</p>
-          <button onClick={() => setPedidoEnviado(false)} style={{ background: "#3B6D11", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", cursor: "pointer" }}>Hacer otro pedido</button>
-        </div>
+          <h3 style={{ margin: "0 0 12px" }}>Restaurantes</h3>
+          {restaurantes.map((r) => (
+            <div key={r.id} onClick={() => seleccionarRestaurante(r)} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px", cursor: "pointer" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                <div>
+                  <p style={{ fontWeight: 500, margin: 0 }}>{r.nombre}</p>
+                  <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{r.categoria}</p>
+                </div>
+                <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>⭐ {r.calificacion}</span>
+              </div>
+              <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+                <span style={{ fontSize: "12px", color: "#888" }}>🕐 {r.tiempo}</span>
+                <span style={{ fontSize: "12px", color: "#888" }}>🛵 ${r.domicilio.toLocaleString()}</span>
+              </div>
+            </div>
+          ))}
+        </>
       )}
 
-      {restauranteSeleccionado ? (
+      {vista === "inicio" && restauranteSeleccionado && (
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
             <button onClick={() => setRestauranteSeleccionado(null)} style={{ background: "none", border: "0.5px solid #ddd", borderRadius: "8px", padding: "8px 12px", cursor: "pointer" }}>Volver</button>
@@ -227,26 +330,34 @@ function App() {
             </div>
           )}
         </div>
-      ) : (
-        <>
-          <h3 style={{ margin: "0 0 12px" }}>Restaurantes</h3>
-          {restaurantes.map((r) => (
-            <div key={r.id} onClick={() => seleccionarRestaurante(r)} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px", cursor: "pointer" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-                <div>
-                  <p style={{ fontWeight: 500, margin: 0 }}>{r.nombre}</p>
-                  <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{r.categoria}</p>
-                </div>
-                <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>estrella {r.calificacion}</span>
-              </div>
-              <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-                <span style={{ fontSize: "12px", color: "#888" }}>🕐 {r.tiempo}</span>
-                <span style={{ fontSize: "12px", color: "#888" }}>🛵 ${r.domicilio.toLocaleString()}</span>
-              </div>
-            </div>
-          ))}
-        </>
       )}
+
+      {vista === "pedidos" && (
+        <div>
+          <h3 style={{ margin: "0 0 16px" }}>Mis pedidos</h3>
+          {misPedidos.length === 0 && (
+            <div style={{ textAlign: "center", padding: "40px", color: "#888" }}>
+              <p style={{ fontSize: "32px" }}>📋</p>
+              <p>No tienes pedidos aun</p>
+            </div>
+          )}
+          {misPedidos.map((p) => (
+            <SeguimientoPedido key={p.id} pedido={p} restaurantes={restaurantesMap} domiciliarios={domiciliariosMap} />
+          ))}
+        </div>
+      )}
+
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "0.5px solid #ddd", display: "flex", maxWidth: "400px", margin: "0 auto" }}>
+        <button onClick={() => { setVista("inicio"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "14px", border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
+          <span style={{ fontSize: "20px" }}>🏠</span>
+          <span style={{ fontSize: "10px", color: vista === "inicio" ? "#D85A30" : "#888", fontWeight: vista === "inicio" ? 500 : 400 }}>Inicio</span>
+        </button>
+        <button onClick={() => { setVista("pedidos"); cargarMisPedidos(); }} style={{ flex: 1, padding: "14px", border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
+          <span style={{ fontSize: "20px" }}>📦</span>
+          <span style={{ fontSize: "10px", color: vista === "pedidos" ? "#D85A30" : "#888", fontWeight: vista === "pedidos" ? 500 : 400 }}>Mis pedidos</span>
+        </button>
+      </div>
+
     </div>
   );
 }
