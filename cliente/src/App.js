@@ -68,13 +68,11 @@ function SeguimientoPedido({ pedido, restaurantes, domiciliarios }) {
 
   return (
     <div style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "16px", marginBottom: "16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "12px" }}>
-        <div>
-          <p style={{ fontWeight: 500, margin: 0 }}>Pedido #{pedido.id}</p>
-          {restaurante && <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>🍽️ {restaurante.nombre}</p>}
-          <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{pedido.plato}</p>
-          <p style={{ fontSize: "13px", fontWeight: 500, color: "#D85A30", margin: "4px 0" }}>${pedido.total.toLocaleString()}</p>
-        </div>
+      <div style={{ marginBottom: "12px" }}>
+        <p style={{ fontWeight: 500, margin: 0 }}>Pedido #{pedido.id}</p>
+        {restaurante && <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>🍽️ {restaurante.nombre}</p>}
+        <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{pedido.plato}</p>
+        <p style={{ fontSize: "13px", fontWeight: 500, color: "#D85A30", margin: "4px 0" }}>${pedido.total.toLocaleString()}</p>
       </div>
 
       <div style={{ marginBottom: "12px" }}>
@@ -108,6 +106,7 @@ function App() {
   const [restaurantes, setRestaurantes] = useState([]);
   const [restaurantesMap, setRestaurantesMap] = useState({});
   const [domiciliariosMap, setDomiciliariosMap] = useState({});
+  const [todosLosPlatos, setTodosLosPlatos] = useState([]);
   const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
   const [platos, setPlatos] = useState([]);
   const [carrito, setCarrito] = useState([]);
@@ -128,6 +127,11 @@ function App() {
           const mapa = {};
           data.forEach(r => { mapa[r.id] = r; });
           setRestaurantesMap(mapa);
+          Promise.all(data.map(r =>
+            fetch(`${API}/restaurantes/${r.id}/platos`)
+              .then(res => res.json())
+              .then(platos => platos.map(p => ({ ...p, restaurante_id: r.id })))
+          )).then(resultados => setTodosLosPlatos(resultados.flat()));
         });
       fetch(`${API}/domiciliarios`)
         .then((res) => res.json())
@@ -202,9 +206,16 @@ function App() {
       .catch(() => alert("Error al enviar pedido"));
   };
 
+  const restaurantesConPlato = busqueda
+    ? [...new Set(todosLosPlatos
+        .filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+        .map(p => p.restaurante_id))]
+    : [];
+
   const restaurantesFiltrados = restaurantes.filter(r =>
     r.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    r.categoria.toLowerCase().includes(busqueda.toLowerCase())
+    r.categoria.toLowerCase().includes(busqueda.toLowerCase()) ||
+    restaurantesConPlato.includes(r.id)
   );
 
   if (!usuario) return <Login onLogin={setUsuario} />;
@@ -229,7 +240,7 @@ function App() {
             <p style={{ color: "#fff", fontWeight: 500, margin: "4px 0 12px" }}>Orito, Putumayo</p>
             <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "0 0 12px" }}>Que quieres hoy?</p>
             <input
-              placeholder="Buscar restaurante o categoria..."
+              placeholder="Buscar restaurante, categoria o plato..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               style={{ width: "100%", padding: "8px 12px", borderRadius: "10px", border: "none", fontSize: "13px", boxSizing: "border-box" }}
@@ -241,7 +252,7 @@ function App() {
           </h3>
 
           {restaurantesFiltrados.length === 0 && (
-            <p style={{ color: "#888", textAlign: "center", padding: "20px" }}>No se encontraron restaurantes</p>
+            <p style={{ color: "#888", textAlign: "center", padding: "20px" }}>No se encontraron resultados</p>
           )}
 
           {restaurantesFiltrados.map((r) => (
@@ -250,6 +261,9 @@ function App() {
                 <div>
                   <p style={{ fontWeight: 500, margin: 0 }}>{r.nombre}</p>
                   <p style={{ fontSize: "12px", color: "#888", margin: "4px 0" }}>{r.categoria}</p>
+                  {restaurantesConPlato.includes(r.id) && busqueda && (
+                    <p style={{ fontSize: "11px", color: "#D85A30", margin: "4px 0" }}>Tiene "{busqueda}" en su menu</p>
+                  )}
                 </div>
                 <span style={{ background: "#EAF3DE", color: "#3B6D11", fontSize: "12px", padding: "2px 8px", borderRadius: "8px" }}>⭐ {r.calificacion}</span>
               </div>
