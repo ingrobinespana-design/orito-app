@@ -113,12 +113,11 @@ function App() {
   const [carrito, setCarrito] = useState([]);
   const [direccion, setDireccion] = useState("");
   const [metodoPago, setMetodoPago] = useState("efectivo");
-  // eslint-disable-next-line no-unused-vars
-const [pedidoEnviado, setPedidoEnviado] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verAdmin, setVerAdmin] = useState(false);
   const [vista, setVista] = useState("inicio");
   const [misPedidos, setMisPedidos] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
 
   useEffect(() => {
     if (usuario) {
@@ -193,7 +192,6 @@ const [pedidoEnviado, setPedidoEnviado] = useState(false);
     fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restauranteSeleccionado.id}&plato=${encodeURIComponent(platosTexto)}&total=${total}&metodo_pago=${metodoPago}`, { method: "POST" })
       .then((res) => res.json())
       .then(() => {
-        setPedidoEnviado(true);
         setRestauranteSeleccionado(null);
         setCarrito([]);
         setDireccion("");
@@ -203,6 +201,11 @@ const [pedidoEnviado, setPedidoEnviado] = useState(false);
       })
       .catch(() => alert("Error al enviar pedido"));
   };
+
+  const restaurantesFiltrados = restaurantes.filter(r =>
+    r.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+    r.categoria.toLowerCase().includes(busqueda.toLowerCase())
+  );
 
   if (!usuario) return <Login onLogin={setUsuario} />;
   if (usuario.rol === "domiciliario") return <Domiciliario API={API} usuario={usuario} onSalir={() => setUsuario(null)} />;
@@ -225,11 +228,23 @@ const [pedidoEnviado, setPedidoEnviado] = useState(false);
             <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px", margin: 0 }}>Entregar en</p>
             <p style={{ color: "#fff", fontWeight: 500, margin: "4px 0 12px" }}>Orito, Putumayo</p>
             <p style={{ color: "#fff", fontSize: "20px", fontWeight: 500, margin: "0 0 12px" }}>Que quieres hoy?</p>
-            <input placeholder="Buscar restaurante o plato..." style={{ width: "100%", padding: "8px 12px", borderRadius: "10px", border: "none", fontSize: "13px", boxSizing: "border-box" }} />
+            <input
+              placeholder="Buscar restaurante o categoria..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "10px", border: "none", fontSize: "13px", boxSizing: "border-box" }}
+            />
           </div>
 
-          <h3 style={{ margin: "0 0 12px" }}>Restaurantes</h3>
-          {restaurantes.map((r) => (
+          <h3 style={{ margin: "0 0 12px" }}>
+            {busqueda ? `Resultados para "${busqueda}"` : "Restaurantes"}
+          </h3>
+
+          {restaurantesFiltrados.length === 0 && (
+            <p style={{ color: "#888", textAlign: "center", padding: "20px" }}>No se encontraron restaurantes</p>
+          )}
+
+          {restaurantesFiltrados.map((r) => (
             <div key={r.id} onClick={() => seleccionarRestaurante(r)} style={{ border: "0.5px solid #ddd", borderRadius: "12px", padding: "14px", marginBottom: "12px", cursor: "pointer" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
                 <div>
@@ -348,7 +363,7 @@ const [pedidoEnviado, setPedidoEnviado] = useState(false);
         </div>
       )}
 
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "0.5px solid #ddd", display: "flex", maxWidth: "400px", margin: "0 auto" }}>
+      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "400px", background: "#fff", borderTop: "0.5px solid #ddd", display: "flex" }}>
         <button onClick={() => { setVista("inicio"); setRestauranteSeleccionado(null); }} style={{ flex: 1, padding: "14px", border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
           <span style={{ fontSize: "20px" }}>🏠</span>
           <span style={{ fontSize: "10px", color: vista === "inicio" ? "#D85A30" : "#888", fontWeight: vista === "inicio" ? 500 : 400 }}>Inicio</span>
@@ -358,7 +373,6 @@ const [pedidoEnviado, setPedidoEnviado] = useState(false);
           <span style={{ fontSize: "10px", color: vista === "pedidos" ? "#D85A30" : "#888", fontWeight: vista === "pedidos" ? 500 : 400 }}>Mis pedidos</span>
         </button>
       </div>
-
     </div>
   );
 }
