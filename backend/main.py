@@ -99,7 +99,24 @@ def crear_pedido(cliente_nombre: str, cliente_direccion: str, cliente_telefono: 
 @app.put("/pedidos/{pedido_id}/estado")
 def actualizar_estado(pedido_id: int, estado: str, db: Session = Depends(get_db)):
     pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
     pedido.estado = estado
+    
+    if estado == "listo":
+        domiciliarios = db.query(Usuario).filter(Usuario.rol == "domiciliario").all()
+        if domiciliarios:
+            pedidos_activos = {}
+            for domi in domiciliarios:
+                activos = db.query(Pedido).filter(
+                    Pedido.domiciliario_id == domi.id,
+                    Pedido.estado.in_(["asignado", "en camino"])
+                ).count()
+                pedidos_activos[domi.id] = activos
+            domi_asignado = min(pedidos_activos, key=pedidos_activos.get)
+            pedido.domiciliario_id = domi_asignado
+            pedido.estado = "asignado"
+    
     db.commit()
     return pedido
 
