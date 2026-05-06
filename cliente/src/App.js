@@ -113,7 +113,7 @@ function App() {
   const [carrito, setCarrito] = useState([]);
   const [direccion, setDireccion] = useState("");
   const [metodoPago, setMetodoPago] = useState("efectivo");
-  const [pedidoEnviado, setPedidoEnviado] = useState(false);
+  const [, setPedidoEnviado] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verAdmin, setVerAdmin] = useState(false);
   const [vista, setVista] = useState("inicio");
