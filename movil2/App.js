@@ -388,20 +388,239 @@ function MisPedidosScreen({ navigation, route }) {
 
 function AdminScreen({ navigation, route }) {
   const { usuario } = route.params;
+  const [pedidos, setPedidos] = useState([]);
+  const [restaurantes, setRestaurantes] = useState([]);
+  const [domiciliarios, setDomiciliarios] = useState([]);
+  const [usuarios, setUsuarios] = useState([]);
+  const [vista, setVista] = useState("pedidos");
+  const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
+  const [mensaje, setMensaje] = useState("");
+
+  const cargarPedidos = () => {
+    fetch(`${API}/pedidos`)
+      .then((res) => res.json())
+      .then((data) => setPedidos(data));
+  };
+
+  const cargarRestaurantes = () => {
+    fetch(`${API}/restaurantes`)
+      .then((res) => res.json())
+      .then((data) => setRestaurantes(data));
+  };
+
+  const cargarDomiciliarios = () => {
+    fetch(`${API}/domiciliarios`)
+      .then((res) => res.json())
+      .then((data) => setDomiciliarios(data));
+  };
+
+  const cargarUsuarios = () => {
+    fetch(`${API}/usuarios`)
+      .then((res) => res.json())
+      .then((data) => setUsuarios(data));
+  };
+
+  useEffect(() => {
+    cargarPedidos();
+    cargarRestaurantes();
+    cargarDomiciliarios();
+    cargarUsuarios();
+    const intervalo = setInterval(cargarPedidos, 10000);
+    return () => clearInterval(intervalo);
+  }, []);
+
+  const cambiarEstado = (id, estado) => {
+    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" })
+      .then(() => cargarPedidos());
+  };
+
+  const crearUsuario = () => {
+    if (!nuevoUsuario.nombre || !nuevoUsuario.telefono || !nuevoUsuario.password) {
+      setMensaje("Por favor completa todos los campos");
+      return;
+    }
+    fetch(`${API}/registro?nombre=${encodeURIComponent(nuevoUsuario.nombre)}&telefono=${nuevoUsuario.telefono}&password=${nuevoUsuario.password}`, { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.detail) { setMensaje(data.detail); return; }
+        const url = nuevoUsuario.rol === "restaurante"
+          ? `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}&restaurante_id=${nuevoUsuario.restaurante_id}`
+          : `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}`;
+        fetch(url, { method: "PUT" })
+          .then(() => {
+            setMensaje("Usuario creado exitosamente");
+            setNuevoUsuario({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
+            cargarUsuarios();
+            cargarDomiciliarios();
+          });
+      });
+  };
+
+  const colorEstado = (estado) => {
+    if (estado === "pendiente") return { bg: "#FAEEDA", text: "#854F0B" };
+    if (estado === "preparando" || estado === "aceptado") return { bg: "#E6F1FB", text: "#185FA5" };
+    if (estado === "listo") return { bg: "#EAF3DE", text: "#3B6D11" };
+    if (estado === "asignado" || estado === "en camino") return { bg: "#FAECE7", text: "#D85A30" };
+    if (estado === "entregado") return { bg: "#EAF3DE", text: "#3B6D11" };
+    return { bg: "#f5f5f5", text: "#888" };
+  };
+
+  const roles = ["domiciliario", "restaurante", "admin"];
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={[styles.header, { backgroundColor: "#854F0B" }]}>
-          <Text style={styles.headerSub}>Panel de</Text>
-          <Text style={styles.headerTitle}>Administracion</Text>
-        </View>
-        <View style={styles.card}>
-          <Text style={{ fontSize: 16, color: "#333", textAlign: "center", padding: 20 }}>Hola admin {usuario.nombre}</Text>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#888" }]} onPress={() => navigation.replace("Login")}>
-            <Text style={styles.buttonText}>Salir</Text>
+      <View style={[styles.header, { backgroundColor: "#333" }]}>
+        <Text style={styles.headerSub}>Panel de</Text>
+        <Text style={styles.headerTitle}>Administracion</Text>
+      </View>
+
+      <View style={{ flexDirection: "row", backgroundColor: "#f5f5f5", margin: 16, borderRadius: 10, padding: 4 }}>
+        {["pedidos", "usuarios"].map((v) => (
+          <TouchableOpacity
+            key={v}
+            style={{ flex: 1, padding: 10, borderRadius: 8, backgroundColor: vista === v ? "#fff" : "transparent", alignItems: "center" }}
+            onPress={() => setVista(v)}
+          >
+            <Text style={{ fontSize: 13, fontWeight: vista === v ? "600" : "400", color: vista === v ? "#333" : "#888" }}>
+              {v === "pedidos" ? "Pedidos" : "Usuarios"}
+            </Text>
           </TouchableOpacity>
-        </View>
-      </ScrollView>
+        ))}
+      </View>
+
+      {vista === "pedidos" && (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
+          <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
+            <View style={{ flex: 1, backgroundColor: "#FAEEDA", borderRadius: 12, padding: 12, alignItems: "center" }}>
+              <Text style={{ fontSize: 11, color: "#854F0B" }}>Pendientes</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#854F0B" }}>{pedidos.filter(p => p.estado === "pendiente").length}</Text>
+            </View>
+            <View style={{ flex: 1, backgroundColor: "#E6F1FB", borderRadius: 12, padding: 12, alignItems: "center" }}>
+              <Text style={{ fontSize: 11, color: "#185FA5" }}>En proceso</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => ["aceptado", "preparando", "listo", "asignado", "en camino"].includes(p.estado)).length}</Text>
+            </View>
+            <View style={{ flex: 1, backgroundColor: "#EAF3DE", borderRadius: 12, padding: 12, alignItems: "center" }}>
+              <Text style={{ fontSize: 11, color: "#3B6D11" }}>Entregados</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#3B6D11" }}>{pedidos.filter(p => p.estado === "entregado").length}</Text>
+            </View>
+          </View>
+
+          {pedidos.length === 0 && (
+            <View style={{ alignItems: "center", padding: 40 }}>
+              <Text style={{ fontSize: 40 }}>📋</Text>
+              <Text style={{ color: "#888", marginTop: 8 }}>No hay pedidos aun</Text>
+            </View>
+          )}
+
+          {pedidos.map((p) => (
+            <View key={p.id} style={[styles.card, { marginBottom: 12 }]}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                <Text style={{ fontWeight: "600" }}>#{p.id} — {p.cliente_nombre}</Text>
+                <View style={{ backgroundColor: colorEstado(p.estado).bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                  <Text style={{ fontSize: 11, color: colorEstado(p.estado).text, fontWeight: "600" }}>{p.estado}</Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 12, color: "#888" }}>📍 {p.cliente_direccion}</Text>
+              <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🍽️ {p.plato}</Text>
+              <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>💰 ${p.total.toLocaleString()} - {p.metodo_pago}</Text>
+
+              {p.estado === "listo" && domiciliarios.length > 0 && (
+                <View style={{ marginTop: 10 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "600", marginBottom: 6 }}>Asignar domiciliario:</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {domiciliarios.map((d) => (
+                        <TouchableOpacity
+                          key={d.id}
+                          style={{ backgroundColor: "#185FA5", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                          onPress={() => {
+                            fetch(`${API}/pedidos/${p.id}/asignar?domiciliario_id=${d.id}`, { method: "PUT" })
+                              .then(() => cargarPedidos());
+                          }}
+                        >
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "600" }}>🛵 {d.nombre}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </ScrollView>
+                </View>
+              )}
+
+              <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
+                {p.estado === "en camino" && (
+                  <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#3B6D11" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
+                    <Text style={styles.buttonText}>Entregado</Text>
+                  </TouchableOpacity>
+                )}
+                {p.estado === "entregado" && (
+                  <Text style={{ color: "#3B6D11", fontWeight: "600" }}>Completado ✓</Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {vista === "usuarios" && (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
+          <View style={[styles.card, { marginBottom: 16 }]}>
+            <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 12 }}>Crear usuario</Text>
+            <TextInput placeholder="Nombre" value={nuevoUsuario.nombre} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, nombre: t })} style={styles.input} />
+            <TextInput placeholder="Telefono" value={nuevoUsuario.telefono} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, telefono: t })} style={styles.input} keyboardType="phone-pad" />
+            <TextInput placeholder="Contrasena" value={nuevoUsuario.password} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, password: t })} style={styles.input} />
+
+            <Text style={{ fontSize: 13, fontWeight: "600", marginBottom: 8 }}>Rol:</Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              {roles.map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FAECE7" : "#fff", alignItems: "center" }}
+                  onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}
+                >
+                  <Text style={{ fontSize: 11, color: nuevoUsuario.rol === r ? "#D85A30" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {nuevoUsuario.rol === "restaurante" && (
+              <>
+                <Text style={{ fontSize: 13, fontWeight: "600", marginBottom: 8 }}>Restaurante:</Text>
+                {restaurantes.map((r) => (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FAECE7" : "#fff", marginBottom: 8 }}
+                    onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}
+                  >
+                    <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#333" }}>{r.nombre}</Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {mensaje ? <Text style={{ color: "#3B6D11", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
+            <TouchableOpacity style={styles.button} onPress={crearUsuario}>
+              <Text style={styles.buttonText}>Crear usuario</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 12 }}>Usuarios ({usuarios.length})</Text>
+          {usuarios.map((u) => (
+            <View key={u.id} style={[styles.card, { marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <View>
+                <Text style={{ fontWeight: "600" }}>{u.nombre}</Text>
+                <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📞 {u.telefono}</Text>
+              </View>
+              <View style={{ backgroundColor: u.rol === "admin" ? "#FAEEDA" : u.rol === "domiciliario" ? "#E6F1FB" : u.rol === "restaurante" ? "#EAF3DE" : "#f5f5f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontSize: 11, color: u.rol === "admin" ? "#854F0B" : u.rol === "domiciliario" ? "#185FA5" : u.rol === "restaurante" ? "#3B6D11" : "#888", fontWeight: "600" }}>{u.rol}</Text>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
+        <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
