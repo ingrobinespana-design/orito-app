@@ -1,8 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato
 from passlib.context import CryptContext
+import cloudinary
+import cloudinary.uploader
+
+cloudinary.config(
+    cloud_name="dfrxbfsdy",
+    api_key="956687681189219",
+    api_secret="4E1asTVaJOVlV_nqD8SJAIQcju0"
+)
 
 app = FastAPI(title="Orito App - API")
 
@@ -71,6 +79,48 @@ def crear_plato(restaurante_id: int, nombre: str, descripcion: str, precio: int,
     db.refresh(plato)
     return plato
 
+@app.post("/platos/imagen/{plato_id}")
+async def subir_imagen_plato(plato_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    plato = db.query(Plato).filter(Plato.id == plato_id).first()
+    if not plato:
+        raise HTTPException(status_code=404, detail="Plato no encontrado")
+    contenido = await file.read()
+    resultado = cloudinary.uploader.upload(
+        contenido,
+        folder="orito-app/platos",
+        public_id=f"plato_{plato_id}",
+        overwrite=True
+    )
+    plato.imagen_url = resultado["secure_url"]
+    db.commit()
+    return {"url": resultado["secure_url"]}
+
+@app.post("/restaurantes/imagen/{restaurante_id}")
+async def subir_imagen_restaurante(restaurante_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    restaurante = db.query(Restaurante).filter(Restaurante.id == restaurante_id).first()
+    if not restaurante:
+        raise HTTPException(status_code=404, detail="Restaurante no encontrado")
+    contenido = await file.read()
+    resultado = cloudinary.uploader.upload(
+        contenido,
+        folder="orito-app/restaurantes",
+        public_id=f"restaurante_{restaurante_id}",
+        overwrite=True
+    )
+    restaurante.imagen_url = resultado["secure_url"]
+    db.commit()
+    return {"url": resultado["secure_url"]}
+
+@app.post("/menu/leer")
+async def leer_menu_foto(file: UploadFile = File(...)):
+    contenido = await file.read()
+    resultado = cloudinary.uploader.upload(
+        contenido,
+        folder="orito-app/menus",
+        overwrite=False
+    )
+    return {"url": resultado["secure_url"], "mensaje": "Imagen subida correctamente"}
+
 @app.put("/platos/{plato_id}/disponible")
 def cambiar_disponible(plato_id: int, disponible: str, db: Session = Depends(get_db)):
     plato = db.query(Plato).filter(Plato.id == plato_id).first()
@@ -102,7 +152,6 @@ def actualizar_estado(pedido_id: int, estado: str, db: Session = Depends(get_db)
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
     pedido.estado = estado
-    
     if estado == "listo":
         domiciliarios = db.query(Usuario).filter(Usuario.rol == "domiciliario").all()
         if domiciliarios:
@@ -116,7 +165,6 @@ def actualizar_estado(pedido_id: int, estado: str, db: Session = Depends(get_db)
             domi_asignado = min(pedidos_activos, key=pedidos_activos.get)
             pedido.domiciliario_id = domi_asignado
             pedido.estado = "asignado"
-    
     db.commit()
     return pedido
 
