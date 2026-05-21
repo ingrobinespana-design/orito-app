@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 
 const API = "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
@@ -24,7 +25,6 @@ function LoginScreen({ navigation }) {
       .then((data) => {
         setCargando(false);
         if (data.detail) { setError(data.detail); return; }
-        console.log("Usuario logueado:", JSON.stringify(data));
         if (data.rol === "admin") navigation.replace("Admin", { usuario: data });
         else if (data.rol === "domiciliario") navigation.replace("Domiciliario", { usuario: data });
         else if (data.rol === "restaurante") navigation.replace("Restaurante", { usuario: data });
@@ -105,6 +105,13 @@ function InicioScreen({ navigation, route }) {
             style={styles.restauranteCard}
             onPress={() => navigation.navigate("Menu", { restaurante: r, usuario })}
           >
+            {r.imagen_url ? (
+              <Image source={{ uri: r.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10, marginRight: 12 }} />
+            ) : (
+              <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
+                <Text style={{ fontSize: 24 }}>🍽️</Text>
+              </View>
+            )}
             <View style={{ flex: 1 }}>
               <Text style={styles.restauranteNombre}>{r.nombre}</Text>
               <Text style={styles.restauranteCategoria}>{r.categoria}</Text>
@@ -119,10 +126,7 @@ function InicioScreen({ navigation, route }) {
           </TouchableOpacity>
         ))}
       </ScrollView>
-      <TouchableOpacity
-        style={{ position: "absolute", top: 50, right: 16 }}
-        onPress={() => navigation.replace("Login")}
-      >
+      <TouchableOpacity style={{ position: "absolute", top: 50, right: 16 }} onPress={() => navigation.replace("Login")}>
         <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>Salir</Text>
       </TouchableOpacity>
     </SafeAreaView>
@@ -178,6 +182,13 @@ function MenuScreen({ navigation, route }) {
         )}
         {platos.map((p) => (
           <View key={p.id} style={styles.platoCard}>
+            {p.imagen_url ? (
+              <Image source={{ uri: p.imagen_url }} style={{ width: 70, height: 70, borderRadius: 10, marginRight: 12 }} />
+            ) : (
+              <View style={{ width: 70, height: 70, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
+                <Text style={{ fontSize: 28 }}>🍽️</Text>
+              </View>
+            )}
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{p.nombre}</Text>
               {p.descripcion ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{p.descripcion}</Text> : null}
@@ -199,10 +210,7 @@ function MenuScreen({ navigation, route }) {
       </ScrollView>
 
       {carrito.length > 0 && (
-        <TouchableOpacity
-          style={styles.botonCarrito}
-          onPress={() => navigation.navigate("Pedido", { carrito, restaurante, usuario })}
-        >
+        <TouchableOpacity style={styles.botonCarrito} onPress={() => navigation.navigate("Pedido", { carrito, restaurante, usuario })}>
           <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 15 }}>
             Ver pedido — ${totalCarrito().toLocaleString()}
           </Text>
@@ -222,16 +230,13 @@ function PedidoScreen({ navigation, route }) {
   const total = totalCarrito() + restaurante.domicilio;
 
   const hacerPedido = () => {
-    if (!direccion) { alert("Por favor ingresa tu direccion"); return; }
+    if (!direccion) { Alert.alert("Error", "Por favor ingresa tu direccion"); return; }
     setCargando(true);
     const platosTexto = carrito.map(c => `${c.cantidad}x ${c.nombre}`).join(", ");
     fetch(`${API}/pedidos?cliente_nombre=${usuario.nombre}&cliente_direccion=${direccion}&cliente_telefono=${usuario.telefono}&restaurante_id=${restaurante.id}&plato=${encodeURIComponent(platosTexto)}&total=${total}&metodo_pago=${metodoPago}`, { method: "POST" })
       .then((res) => res.json())
-      .then(() => {
-        setCargando(false);
-        navigation.replace("MisPedidos", { usuario });
-      })
-      .catch(() => { setCargando(false); alert("Error al enviar pedido"); });
+      .then(() => { setCargando(false); navigation.replace("MisPedidos", { usuario }); })
+      .catch(() => { setCargando(false); Alert.alert("Error", "Error al enviar pedido"); });
   };
 
   return (
@@ -270,18 +275,13 @@ function PedidoScreen({ navigation, route }) {
           <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 12 }}>Metodo de pago</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {["efectivo", "nequi", "bancolombia"].map((m) => (
-              <TouchableOpacity
-                key={m}
-                style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: metodoPago === m ? "#D85A30" : "#ddd", backgroundColor: metodoPago === m ? "#FAECE7" : "#fff", alignItems: "center" }}
-                onPress={() => setMetodoPago(m)}
-              >
+              <TouchableOpacity key={m} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: metodoPago === m ? "#D85A30" : "#ddd", backgroundColor: metodoPago === m ? "#FAECE7" : "#fff", alignItems: "center" }} onPress={() => setMetodoPago(m)}>
                 <Text style={{ fontSize: 11, color: metodoPago === m ? "#D85A30" : "#888", fontWeight: metodoPago === m ? "600" : "400" }}>
                   {m === "efectivo" ? "Efectivo" : m === "nequi" ? "Nequi" : "Bancolombia"}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
-
           {metodoPago === "nequi" && (
             <View style={{ backgroundColor: "#FAECE7", borderRadius: 8, padding: 10, marginTop: 10 }}>
               <Text style={{ fontSize: 12, fontWeight: "600", color: "#D85A30" }}>Transfiere por Nequi</Text>
@@ -392,33 +392,29 @@ function AdminScreen({ navigation, route }) {
   const [restaurantes, setRestaurantes] = useState([]);
   const [domiciliarios, setDomiciliarios] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [platos, setPlatos] = useState([]);
   const [vista, setVista] = useState("pedidos");
+  const [restauranteSeleccionado, setRestauranteSeleccionado] = useState(null);
+  const [nuevoPlato, setNuevoPlato] = useState({ nombre: "", descripcion: "", precio: "" });
   const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
   const [mensaje, setMensaje] = useState("");
+  const [subiendo, setSubiendo] = useState(false);
 
   const cargarPedidos = () => {
-    fetch(`${API}/pedidos`)
-      .then((res) => res.json())
-      .then((data) => setPedidos(data));
-  };
+    fetch(`${API}/pedidos`).then(r => r.json()).then(data => { if (Array.isArray(data)) setPedidos(data); });
+};
 
-  const cargarRestaurantes = () => {
-    fetch(`${API}/restaurantes`)
-      .then((res) => res.json())
-      .then((data) => setRestaurantes(data));
-  };
+const cargarRestaurantes = () => {
+    fetch(`${API}/restaurantes`).then(r => r.json()).then(data => { if (Array.isArray(data)) setRestaurantes(data); });
+};
 
-  const cargarDomiciliarios = () => {
-    fetch(`${API}/domiciliarios`)
-      .then((res) => res.json())
-      .then((data) => setDomiciliarios(data));
-  };
+const cargarDomiciliarios = () => {
+    fetch(`${API}/domiciliarios`).then(r => r.json()).then(data => { if (Array.isArray(data)) setDomiciliarios(data); });
+};
 
-  const cargarUsuarios = () => {
-    fetch(`${API}/usuarios`)
-      .then((res) => res.json())
-      .then((data) => setUsuarios(data));
-  };
+const cargarUsuarios = () => {
+    fetch(`${API}/usuarios`).then(r => r.json()).then(data => { if (Array.isArray(data)) setUsuarios(data); });
+};
 
   useEffect(() => {
     cargarPedidos();
@@ -430,29 +426,75 @@ function AdminScreen({ navigation, route }) {
   }, []);
 
   const cambiarEstado = (id, estado) => {
-    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" })
-      .then(() => cargarPedidos());
+    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" }).then(() => cargarPedidos());
+  };
+
+  const agregarPlato = () => {
+    if (!nuevoPlato.nombre || !nuevoPlato.precio) { setMensaje("Completa nombre y precio"); return; }
+    fetch(`${API}/platos?restaurante_id=${restauranteSeleccionado.id}&nombre=${encodeURIComponent(nuevoPlato.nombre)}&descripcion=${encodeURIComponent(nuevoPlato.descripcion || "")}&precio=${nuevoPlato.precio}`, { method: "POST" })
+      .then(r => r.json())
+      .then(() => {
+        setMensaje("Plato agregado");
+        setNuevoPlato({ nombre: "", descripcion: "", precio: "" });
+        cargarPlatos(restauranteSeleccionado.id);
+      });
+  };
+
+  const subirFotoPlato = async (platoId) => {
+    const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permiso.granted) { Alert.alert("Permiso requerido", "Necesitamos acceso a tu galeria"); return; }
+    const resultado = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!resultado.canceled) {
+      setSubiendo(true);
+      const formData = new FormData();
+      formData.append("file", { uri: resultado.assets[0].uri, type: "image/jpeg", name: `plato_${platoId}.jpg` });
+      fetch(`${API}/platos/imagen/${platoId}`, { method: "POST", body: formData, headers: { "Content-Type": "multipart/form-data" } })
+        .then(r => r.json())
+        .then(() => { setSubiendo(false); setMensaje("Foto subida exitosamente"); cargarPlatos(restauranteSeleccionado.id); })
+        .catch(() => { setSubiendo(false); Alert.alert("Error", "No se pudo subir la foto"); });
+    }
+  };
+
+  const subirFotoRestaurante = async (restauranteId) => {
+    const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permiso.granted) { Alert.alert("Permiso requerido", "Necesitamos acceso a tu galeria"); return; }
+    const resultado = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+    if (!resultado.canceled) {
+      setSubiendo(true);
+      const formData = new FormData();
+      formData.append("file", { uri: resultado.assets[0].uri, type: "image/jpeg", name: `restaurante_${restauranteId}.jpg` });
+      fetch(`${API}/restaurantes/imagen/${restauranteId}`, { method: "POST", body: formData, headers: { "Content-Type": "multipart/form-data" } })
+        .then(r => r.json())
+        .then(() => { setSubiendo(false); setMensaje("Foto subida exitosamente"); cargarRestaurantes(); })
+        .catch(() => { setSubiendo(false); Alert.alert("Error", "No se pudo subir la foto"); });
+    }
   };
 
   const crearUsuario = () => {
-    if (!nuevoUsuario.nombre || !nuevoUsuario.telefono || !nuevoUsuario.password) {
-      setMensaje("Por favor completa todos los campos");
-      return;
-    }
+    if (!nuevoUsuario.nombre || !nuevoUsuario.telefono || !nuevoUsuario.password) { setMensaje("Completa todos los campos"); return; }
     fetch(`${API}/registro?nombre=${encodeURIComponent(nuevoUsuario.nombre)}&telefono=${nuevoUsuario.telefono}&password=${nuevoUsuario.password}`, { method: "POST" })
-      .then((res) => res.json())
+      .then(r => r.json())
       .then((data) => {
         if (data.detail) { setMensaje(data.detail); return; }
         const url = nuevoUsuario.rol === "restaurante"
           ? `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}&restaurante_id=${nuevoUsuario.restaurante_id}`
           : `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}`;
-        fetch(url, { method: "PUT" })
-          .then(() => {
-            setMensaje("Usuario creado exitosamente");
-            setNuevoUsuario({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
-            cargarUsuarios();
-            cargarDomiciliarios();
-          });
+        fetch(url, { method: "PUT" }).then(() => {
+          setMensaje("Usuario creado exitosamente");
+          setNuevoUsuario({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
+          cargarUsuarios();
+          cargarDomiciliarios();
+        });
       });
   };
 
@@ -465,8 +507,6 @@ function AdminScreen({ navigation, route }) {
     return { bg: "#f5f5f5", text: "#888" };
   };
 
-  const roles = ["domiciliario", "restaurante", "admin"];
-
   return (
     <SafeAreaView style={styles.container}>
       <View style={[styles.header, { backgroundColor: "#333" }]}>
@@ -475,14 +515,10 @@ function AdminScreen({ navigation, route }) {
       </View>
 
       <View style={{ flexDirection: "row", backgroundColor: "#f5f5f5", margin: 16, borderRadius: 10, padding: 4 }}>
-        {["pedidos", "usuarios"].map((v) => (
-          <TouchableOpacity
-            key={v}
-            style={{ flex: 1, padding: 10, borderRadius: 8, backgroundColor: vista === v ? "#fff" : "transparent", alignItems: "center" }}
-            onPress={() => setVista(v)}
-          >
-            <Text style={{ fontSize: 13, fontWeight: vista === v ? "600" : "400", color: vista === v ? "#333" : "#888" }}>
-              {v === "pedidos" ? "Pedidos" : "Usuarios"}
+        {["pedidos", "restaurantes", "usuarios"].map((v) => (
+          <TouchableOpacity key={v} style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: vista === v ? "#fff" : "transparent", alignItems: "center" }} onPress={() => { setVista(v); setRestauranteSeleccionado(null); }}>
+            <Text style={{ fontSize: 11, fontWeight: vista === v ? "600" : "400", color: vista === v ? "#333" : "#888" }}>
+              {v === "pedidos" ? "Pedidos" : v === "restaurantes" ? "Restaurantes" : "Usuarios"}
             </Text>
           </TouchableOpacity>
         ))}
@@ -505,13 +541,6 @@ function AdminScreen({ navigation, route }) {
             </View>
           </View>
 
-          {pedidos.length === 0 && (
-            <View style={{ alignItems: "center", padding: 40 }}>
-              <Text style={{ fontSize: 40 }}>📋</Text>
-              <Text style={{ color: "#888", marginTop: 8 }}>No hay pedidos aun</Text>
-            </View>
-          )}
-
           {pedidos.map((p) => (
             <View key={p.id} style={[styles.card, { marginBottom: 12 }]}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
@@ -523,21 +552,14 @@ function AdminScreen({ navigation, route }) {
               <Text style={{ fontSize: 12, color: "#888" }}>📍 {p.cliente_direccion}</Text>
               <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🍽️ {p.plato}</Text>
               <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>💰 ${p.total.toLocaleString()} - {p.metodo_pago}</Text>
-
               {p.estado === "listo" && domiciliarios.length > 0 && (
                 <View style={{ marginTop: 10 }}>
                   <Text style={{ fontSize: 12, fontWeight: "600", marginBottom: 6 }}>Asignar domiciliario:</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     <View style={{ flexDirection: "row", gap: 8 }}>
                       {domiciliarios.map((d) => (
-                        <TouchableOpacity
-                          key={d.id}
-                          style={{ backgroundColor: "#185FA5", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
-                          onPress={() => {
-                            fetch(`${API}/pedidos/${p.id}/asignar?domiciliario_id=${d.id}`, { method: "PUT" })
-                              .then(() => cargarPedidos());
-                          }}
-                        >
+                        <TouchableOpacity key={d.id} style={{ backgroundColor: "#185FA5", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                          onPress={() => { fetch(`${API}/pedidos/${p.id}/asignar?domiciliario_id=${d.id}`, { method: "PUT" }).then(() => cargarPedidos()); }}>
                           <Text style={{ color: "#fff", fontSize: 12, fontWeight: "600" }}>🛵 {d.nombre}</Text>
                         </TouchableOpacity>
                       ))}
@@ -545,16 +567,82 @@ function AdminScreen({ navigation, route }) {
                   </ScrollView>
                 </View>
               )}
+              {p.estado === "en camino" && (
+                <TouchableOpacity style={[styles.button, { marginTop: 10, backgroundColor: "#3B6D11" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
+                  <Text style={styles.buttonText}>Entregado</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      )}
 
-              <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
-                {p.estado === "en camino" && (
-                  <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#3B6D11" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
-                    <Text style={styles.buttonText}>Entregado</Text>
-                  </TouchableOpacity>
+      {vista === "restaurantes" && !restauranteSeleccionado && (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
+          {restaurantes.map((r) => (
+            <View key={r.id} style={[styles.card, { marginBottom: 12 }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                {r.imagen_url ? (
+                  <Image source={{ uri: r.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10 }} />
+                ) : (
+                  <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ fontSize: 24 }}>🍽️</Text>
+                  </View>
                 )}
-                {p.estado === "entregado" && (
-                  <Text style={{ color: "#3B6D11", fontWeight: "600" }}>Completado ✓</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "600", fontSize: 14 }}>{r.nombre}</Text>
+                  <Text style={{ fontSize: 12, color: "#888" }}>{r.categoria}</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#185FA5" }]} onPress={() => { setRestauranteSeleccionado(r); cargarPlatos(r.id); }}>
+                  <Text style={styles.buttonText}>Ver menu</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#3B6D11" }]} onPress={() => subirFotoRestaurante(r.id)}>
+                  <Text style={styles.buttonText}>📷 Foto</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {vista === "restaurantes" && restauranteSeleccionado && (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
+          <TouchableOpacity style={{ marginBottom: 12 }} onPress={() => { setRestauranteSeleccionado(null); setMensaje(""); }}>
+            <Text style={{ color: "#D85A30", fontWeight: "600" }}>← Volver</Text>
+          </TouchableOpacity>
+          <Text style={{ fontWeight: "600", fontSize: 16, marginBottom: 12 }}>{restauranteSeleccionado.nombre}</Text>
+
+          <View style={[styles.card, { marginBottom: 16 }]}>
+            <Text style={{ fontWeight: "600", fontSize: 14, marginBottom: 12 }}>Agregar plato</Text>
+            <TextInput placeholder="Nombre del plato" value={nuevoPlato.nombre} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, nombre: t })} style={styles.input} />
+            <TextInput placeholder="Descripcion (opcional)" value={nuevoPlato.descripcion} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, descripcion: t })} style={styles.input} />
+            <TextInput placeholder="Precio (ej: 15000)" value={nuevoPlato.precio} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, precio: t })} style={styles.input} keyboardType="numeric" />
+            {mensaje ? <Text style={{ color: "#3B6D11", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
+            <TouchableOpacity style={styles.button} onPress={agregarPlato}>
+              <Text style={styles.buttonText}>Agregar plato</Text>
+            </TouchableOpacity>
+          </View>
+
+          {subiendo && <ActivityIndicator color="#D85A30" style={{ marginBottom: 12 }} />}
+
+          <Text style={{ fontWeight: "600", fontSize: 14, marginBottom: 12 }}>Platos ({platos.length})</Text>
+          {platos.map((p) => (
+            <View key={p.id} style={[styles.card, { marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 10 }]}>
+              <TouchableOpacity onPress={() => subirFotoPlato(p.id)}>
+                {p.imagen_url ? (
+                  <Image source={{ uri: p.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10 }} />
+                ) : (
+                  <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ fontSize: 10, color: "#D85A30", textAlign: "center" }}>📷{"\n"}Subir</Text>
+                  </View>
                 )}
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "600" }}>{p.nombre}</Text>
+                {p.descripcion ? <Text style={{ fontSize: 12, color: "#888" }}>{p.descripcion}</Text> : null}
+                <Text style={{ fontSize: 13, color: "#D85A30", fontWeight: "600" }}>${p.precio.toLocaleString()}</Text>
               </View>
             </View>
           ))}
@@ -568,42 +656,23 @@ function AdminScreen({ navigation, route }) {
             <TextInput placeholder="Nombre" value={nuevoUsuario.nombre} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, nombre: t })} style={styles.input} />
             <TextInput placeholder="Telefono" value={nuevoUsuario.telefono} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, telefono: t })} style={styles.input} keyboardType="phone-pad" />
             <TextInput placeholder="Contrasena" value={nuevoUsuario.password} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, password: t })} style={styles.input} />
-
-            <Text style={{ fontSize: 13, fontWeight: "600", marginBottom: 8 }}>Rol:</Text>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-              {roles.map((r) => (
-                <TouchableOpacity
-                  key={r}
-                  style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FAECE7" : "#fff", alignItems: "center" }}
-                  onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}
-                >
-                  <Text style={{ fontSize: 11, color: nuevoUsuario.rol === r ? "#D85A30" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
+              {["domiciliario", "restaurante", "admin"].map((r) => (
+                <TouchableOpacity key={r} style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FAECE7" : "#fff", alignItems: "center" }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}>
+                  <Text style={{ fontSize: 10, color: nuevoUsuario.rol === r ? "#D85A30" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-
-            {nuevoUsuario.rol === "restaurante" && (
-              <>
-                <Text style={{ fontSize: 13, fontWeight: "600", marginBottom: 8 }}>Restaurante:</Text>
-                {restaurantes.map((r) => (
-                  <TouchableOpacity
-                    key={r.id}
-                    style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FAECE7" : "#fff", marginBottom: 8 }}
-                    onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}
-                  >
-                    <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#333" }}>{r.nombre}</Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-
+            {nuevoUsuario.rol === "restaurante" && restaurantes.map((r) => (
+              <TouchableOpacity key={r.id} style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FAECE7" : "#fff", marginBottom: 8 }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}>
+                <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#333" }}>{r.nombre}</Text>
+              </TouchableOpacity>
+            ))}
             {mensaje ? <Text style={{ color: "#3B6D11", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
             <TouchableOpacity style={styles.button} onPress={crearUsuario}>
               <Text style={styles.buttonText}>Crear usuario</Text>
             </TouchableOpacity>
           </View>
-
-          <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 12 }}>Usuarios ({usuarios.length})</Text>
           {usuarios.map((u) => (
             <View key={u.id} style={[styles.card, { marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
               <View>
@@ -631,21 +700,17 @@ function DomiciliarioScreen({ navigation, route }) {
   const [restaurantes, setRestaurantes] = useState({});
 
   const cargarRestaurantes = () => {
-    fetch(`${API}/restaurantes`)
-      .then((res) => res.json())
-      .then((data) => {
-        const mapa = {};
-        data.forEach(r => { mapa[r.id] = r; });
-        setRestaurantes(mapa);
-      });
+    fetch(`${API}/restaurantes`).then(r => r.json()).then((data) => {
+      const mapa = {};
+      data.forEach(r => { mapa[r.id] = r; });
+      setRestaurantes(mapa);
+    });
   };
 
   const cargarPedidos = () => {
-    fetch(`${API}/pedidos`)
-      .then((res) => res.json())
-      .then((data) => setPedidos(data.filter(p =>
-        p.domiciliario_id === usuario.id && p.estado !== "entregado"
-      )));
+    fetch(`${API}/pedidos`).then(r => r.json()).then((data) =>
+      setPedidos(data.filter(p => p.domiciliario_id === usuario.id && p.estado !== "entregado"))
+    );
   };
 
   useEffect(() => {
@@ -656,8 +721,7 @@ function DomiciliarioScreen({ navigation, route }) {
   }, []);
 
   const cambiarEstado = (id, estado) => {
-    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" })
-      .then(() => cargarPedidos());
+    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" }).then(() => cargarPedidos());
   };
 
   return (
@@ -666,7 +730,6 @@ function DomiciliarioScreen({ navigation, route }) {
         <Text style={styles.headerSub}>Hola, {usuario.nombre} 🛵</Text>
         <Text style={styles.headerTitle}>Mis Entregas</Text>
       </View>
-
       <View style={{ flexDirection: "row", padding: 16, gap: 12 }}>
         <View style={{ flex: 1, backgroundColor: "#FAEEDA", borderRadius: 12, padding: 12, alignItems: "center" }}>
           <Text style={{ fontSize: 11, color: "#854F0B" }}>Por recoger</Text>
@@ -677,7 +740,6 @@ function DomiciliarioScreen({ navigation, route }) {
           <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => p.estado === "en camino").length}</Text>
         </View>
       </View>
-
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
         {pedidos.length === 0 && (
           <View style={{ alignItems: "center", padding: 40 }}>
@@ -731,13 +793,9 @@ function RestauranteScreen({ navigation, route }) {
   const [pedidos, setPedidos] = useState([]);
 
   const cargarPedidos = () => {
-    console.log("restaurante_id:", usuario.restaurante_id);
     fetch(`${API}/pedidos/restaurante/${usuario.restaurante_id}`)
-      .then((res) => res.json())
-      .then((data) => {
-        console.log("pedidos:", JSON.stringify(data));
-        setPedidos(data.filter(p => p.estado !== "entregado"));
-      });
+      .then(r => r.json())
+      .then((data) => setPedidos(data.filter(p => p.estado !== "entregado")));
   };
 
   useEffect(() => {
@@ -747,8 +805,7 @@ function RestauranteScreen({ navigation, route }) {
   }, []);
 
   const cambiarEstado = (id, estado) => {
-    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" })
-      .then(() => cargarPedidos());
+    fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" }).then(() => cargarPedidos());
   };
 
   const colorEstado = (estado) => {
@@ -766,7 +823,6 @@ function RestauranteScreen({ navigation, route }) {
         <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
         <Text style={styles.headerTitle}>Mi Restaurante</Text>
       </View>
-
       <View style={{ flexDirection: "row", padding: 16, gap: 10 }}>
         <View style={{ flex: 1, backgroundColor: "#FAEEDA", borderRadius: 12, padding: 12, alignItems: "center" }}>
           <Text style={{ fontSize: 11, color: "#854F0B" }}>Nuevos</Text>
@@ -781,7 +837,6 @@ function RestauranteScreen({ navigation, route }) {
           <Text style={{ fontSize: 22, fontWeight: "bold", color: "#3B6D11" }}>{pedidos.filter(p => p.estado === "listo").length}</Text>
         </View>
       </View>
-
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
         {pedidos.length === 0 && (
           <View style={{ alignItems: "center", padding: 40 }}>
