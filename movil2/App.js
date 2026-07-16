@@ -98,7 +98,7 @@ function InicioScreen({ navigation, route }) {
             {r.imagen_url ? (
               <Image source={{ uri: r.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10, marginRight: 12 }} />
             ) : (
-              <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
+              <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FDEEDC", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
                 <Text style={{ fontSize: 24 }}>🍽️</Text>
               </View>
             )}
@@ -174,14 +174,14 @@ function MenuScreen({ navigation, route }) {
             {p.imagen_url ? (
               <Image source={{ uri: p.imagen_url }} style={{ width: 70, height: 70, borderRadius: 10, marginRight: 12 }} />
             ) : (
-              <View style={{ width: 70, height: 70, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
+              <View style={{ width: 70, height: 70, borderRadius: 10, backgroundColor: "#FDEEDC", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
                 <Text style={{ fontSize: 28 }}>🍽️</Text>
               </View>
             )}
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{p.nombre}</Text>
               {p.descripcion ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{p.descripcion}</Text> : null}
-              <Text style={{ fontSize: 15, fontWeight: "600", color: "#D85A30", marginTop: 4 }}>${p.precio.toLocaleString()}</Text>
+              <Text style={{ fontSize: 15, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>${p.precio.toLocaleString()}</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <TouchableOpacity style={styles.btnCantidad} onPress={() => quitarDelCarrito(p)}>
@@ -190,7 +190,7 @@ function MenuScreen({ navigation, route }) {
               <Text style={{ fontSize: 15, fontWeight: "600", minWidth: 20, textAlign: "center" }}>
                 {carrito.find(c => c.id === p.id)?.cantidad || 0}
               </Text>
-              <TouchableOpacity style={[styles.btnCantidad, { backgroundColor: "#D85A30" }]} onPress={() => agregarAlCarrito(p)}>
+              <TouchableOpacity style={[styles.btnCantidad, { backgroundColor: "#E8821C" }]} onPress={() => agregarAlCarrito(p)}>
                 <Text style={{ fontSize: 18, color: "#fff" }}>+</Text>
               </TouchableOpacity>
             </View>
@@ -248,7 +248,7 @@ function PedidoScreen({ navigation, route }) {
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
             <Text style={{ fontSize: 15, fontWeight: "600" }}>Total</Text>
-            <Text style={{ fontSize: 15, fontWeight: "600", color: "#D85A30" }}>${total.toLocaleString()}</Text>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#E8821C" }}>${total.toLocaleString()}</Text>
           </View>
         </View>
         <View style={[styles.card, { marginTop: 12 }]}>
@@ -259,16 +259,16 @@ function PedidoScreen({ navigation, route }) {
           <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 12 }}>Metodo de pago</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {["efectivo", "nequi", "bancolombia"].map((m) => (
-              <TouchableOpacity key={m} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: metodoPago === m ? "#D85A30" : "#ddd", backgroundColor: metodoPago === m ? "#FAECE7" : "#fff", alignItems: "center" }} onPress={() => setMetodoPago(m)}>
-                <Text style={{ fontSize: 11, color: metodoPago === m ? "#D85A30" : "#888", fontWeight: metodoPago === m ? "600" : "400" }}>
+              <TouchableOpacity key={m} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: metodoPago === m ? "#E8821C" : "#ddd", backgroundColor: metodoPago === m ? "#FDEEDC" : "#fff", alignItems: "center" }} onPress={() => setMetodoPago(m)}>
+                <Text style={{ fontSize: 11, color: metodoPago === m ? "#E8821C" : "#888", fontWeight: metodoPago === m ? "600" : "400" }}>
                   {m === "efectivo" ? "Efectivo" : m === "nequi" ? "Nequi" : "Bancolombia"}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
           {metodoPago === "nequi" && (
-            <View style={{ backgroundColor: "#FAECE7", borderRadius: 8, padding: 10, marginTop: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: "#D85A30" }}>Transfiere por Nequi</Text>
+            <View style={{ backgroundColor: "#FDEEDC", borderRadius: 8, padding: 10, marginTop: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#E8821C" }}>Transfiere por Nequi</Text>
               <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Numero: 3156009728</Text>
             </View>
           )}
@@ -280,7 +280,7 @@ function PedidoScreen({ navigation, route }) {
           )}
           {metodoPago === "efectivo" && (
             <View style={{ backgroundColor: "#EAF3DE", borderRadius: 8, padding: 10, marginTop: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: "#3B6D11" }}>Pago en efectivo</Text>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#2E7D32" }}>Pago en efectivo</Text>
               <Text style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Ten el dinero listo cuando llegue el domiciliario</Text>
             </View>
           )}
@@ -330,10 +330,10 @@ function MisPedidosScreen({ navigation, route }) {
           <View key={p.id} style={[styles.card, { marginBottom: 12 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={{ fontWeight: "600" }}>Pedido #{p.id}</Text>
-              <Text style={{ color: "#D85A30", fontWeight: "600", fontSize: 12 }}>{p.estado.toUpperCase()}</Text>
+              <Text style={{ color: "#E8821C", fontWeight: "600", fontSize: 12 }}>{p.estado.toUpperCase()}</Text>
             </View>
             <Text style={{ fontSize: 13, color: "#888" }}>{p.plato}</Text>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#D85A30", marginTop: 4 }}>${p.total.toLocaleString()}</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>${p.total.toLocaleString()}</Text>
             <View style={{ marginTop: 12 }}>
               {ordenEstados.map((estado, index) => {
                 const indiceActual = ordenEstados.indexOf(p.estado);
@@ -341,13 +341,13 @@ function MisPedidosScreen({ navigation, route }) {
                 const actual = index === indiceActual;
                 return (
                   <View key={estado} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: completado ? "#D85A30" : "#f0f0f0", alignItems: "center", justifyContent: "center" }}>
+                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: completado ? "#E8821C" : "#f0f0f0", alignItems: "center", justifyContent: "center" }}>
                       <Text style={{ fontSize: 12 }}>{completado ? iconos[index] : "○"}</Text>
                     </View>
                     <Text style={{ fontSize: 12, color: completado ? "#333" : "#bbb", fontWeight: actual ? "600" : "400" }}>{labels[index]}</Text>
                     {actual && (
-                      <View style={{ backgroundColor: "#FAECE7", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
-                        <Text style={{ fontSize: 10, color: "#D85A30", fontWeight: "600" }}>Ahora</Text>
+                      <View style={{ backgroundColor: "#FDEEDC", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                        <Text style={{ fontSize: 10, color: "#E8821C", fontWeight: "600" }}>Ahora</Text>
                       </View>
                     )}
                   </View>
@@ -358,7 +358,7 @@ function MisPedidosScreen({ navigation, route }) {
         ))}
       </ScrollView>
       <TouchableOpacity
-        style={{ position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#D85A30", borderRadius: 12, padding: 14, alignItems: "center" }}
+        style={{ position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#E8821C", borderRadius: 12, padding: 14, alignItems: "center" }}
         onPress={() => navigation.replace("Inicio", { usuario })}
       >
         <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 15 }}>Hacer otro pedido</Text>
@@ -412,6 +412,26 @@ function AdminScreen({ navigation, route }) {
 
   const cambiarEstado = (id, estado) => {
     fetch(`${API}/pedidos/${id}/estado?estado=${estado}`, { method: "PUT" }).then(() => cargarPedidos());
+  };
+
+  const eliminarRestaurante = (restaurante) => {
+    Alert.alert(
+      "Eliminar restaurante",
+      `Seguro que quieres eliminar "${restaurante.nombre}"? Se borraran tambien todos sus platos.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: () => {
+            fetch(`${API}/restaurantes/${restaurante.id}`, { method: "DELETE" })
+              .then(r => r.json())
+              .then(() => cargarRestaurantes())
+              .catch(() => Alert.alert("Error", "No se pudo eliminar el restaurante"));
+          },
+        },
+      ]
+    );
   };
 
   const agregarPlato = () => {
@@ -486,20 +506,20 @@ function AdminScreen({ navigation, route }) {
   const colorEstado = (estado) => {
     if (estado === "pendiente") return { bg: "#FAEEDA", text: "#854F0B" };
     if (estado === "preparando" || estado === "aceptado") return { bg: "#E6F1FB", text: "#185FA5" };
-    if (estado === "listo") return { bg: "#EAF3DE", text: "#3B6D11" };
-    if (estado === "asignado" || estado === "en camino") return { bg: "#FAECE7", text: "#D85A30" };
-    if (estado === "entregado") return { bg: "#EAF3DE", text: "#3B6D11" };
-    return { bg: "#f5f5f5", text: "#888" };
+    if (estado === "listo") return { bg: "#EAF3DE", text: "#2E7D32" };
+    if (estado === "asignado" || estado === "en camino") return { bg: "#FDEEDC", text: "#E8821C" };
+    if (estado === "entregado") return { bg: "#EAF3DE", text: "#2E7D32" };
+    return { bg: "#F6F1E6", text: "#888" };
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#333" }]}>
+      <View style={[styles.header, { backgroundColor: "#1E3B22" }]}>
         <Text style={styles.headerSub}>Panel de</Text>
         <Text style={styles.headerTitle}>Administracion</Text>
       </View>
 
-      <View style={{ flexDirection: "row", backgroundColor: "#f5f5f5", margin: 16, borderRadius: 10, padding: 4 }}>
+      <View style={{ flexDirection: "row", backgroundColor: "#F6F1E6", margin: 16, borderRadius: 10, padding: 4 }}>
         {["pedidos", "restaurantes", "usuarios"].map((v) => (
           <TouchableOpacity key={v} style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: vista === v ? "#fff" : "transparent", alignItems: "center" }} onPress={() => { setVista(v); setRestauranteSeleccionado(null); }}>
             <Text style={{ fontSize: 11, fontWeight: vista === v ? "600" : "400", color: vista === v ? "#333" : "#888" }}>
@@ -521,8 +541,8 @@ function AdminScreen({ navigation, route }) {
               <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => ["aceptado", "preparando", "listo", "asignado", "en camino"].includes(p.estado)).length}</Text>
             </View>
             <View style={{ flex: 1, backgroundColor: "#EAF3DE", borderRadius: 12, padding: 12, alignItems: "center" }}>
-              <Text style={{ fontSize: 11, color: "#3B6D11" }}>Entregados</Text>
-              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#3B6D11" }}>{pedidos.filter(p => p.estado === "entregado").length}</Text>
+              <Text style={{ fontSize: 11, color: "#2E7D32" }}>Entregados</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#2E7D32" }}>{pedidos.filter(p => p.estado === "entregado").length}</Text>
             </View>
           </View>
           {pedidos.map((p) => (
@@ -552,7 +572,7 @@ function AdminScreen({ navigation, route }) {
                 </View>
               )}
               {p.estado === "en camino" && (
-                <TouchableOpacity style={[styles.button, { marginTop: 10, backgroundColor: "#3B6D11" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
+                <TouchableOpacity style={[styles.button, { marginTop: 10, backgroundColor: "#2E7D32" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
                   <Text style={styles.buttonText}>Entregado</Text>
                 </TouchableOpacity>
               )}
@@ -569,7 +589,7 @@ function AdminScreen({ navigation, route }) {
                 {r.imagen_url ? (
                   <Image source={{ uri: r.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10 }} />
                 ) : (
-                  <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center" }}>
+                  <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FDEEDC", alignItems: "center", justifyContent: "center" }}>
                     <Text style={{ fontSize: 24 }}>🍽️</Text>
                   </View>
                 )}
@@ -582,8 +602,11 @@ function AdminScreen({ navigation, route }) {
                 <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#185FA5" }]} onPress={() => { setRestauranteSeleccionado(r); cargarPlatos(r.id); }}>
                   <Text style={styles.buttonText}>Ver menu</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#3B6D11" }]} onPress={() => subirFotoRestaurante(r.id)}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={() => subirFotoRestaurante(r.id)}>
                   <Text style={styles.buttonText}>📷 Foto</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#C62828" }]} onPress={() => eliminarRestaurante(r)}>
+                  <Text style={styles.buttonText}>🗑️ Eliminar</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -594,7 +617,7 @@ function AdminScreen({ navigation, route }) {
       {vista === "restaurantes" && restauranteSeleccionado && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
           <TouchableOpacity style={{ marginBottom: 12 }} onPress={() => { setRestauranteSeleccionado(null); setMensaje(""); }}>
-            <Text style={{ color: "#D85A30", fontWeight: "600" }}>← Volver</Text>
+            <Text style={{ color: "#E8821C", fontWeight: "600" }}>← Volver</Text>
           </TouchableOpacity>
           <Text style={{ fontWeight: "600", fontSize: 16, marginBottom: 12 }}>{restauranteSeleccionado.nombre}</Text>
           <View style={[styles.card, { marginBottom: 16 }]}>
@@ -602,12 +625,12 @@ function AdminScreen({ navigation, route }) {
             <TextInput placeholder="Nombre del plato" value={nuevoPlato.nombre} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, nombre: t })} style={styles.input} />
             <TextInput placeholder="Descripcion (opcional)" value={nuevoPlato.descripcion} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, descripcion: t })} style={styles.input} />
             <TextInput placeholder="Precio (ej: 15000)" value={nuevoPlato.precio} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, precio: t })} style={styles.input} keyboardType="numeric" />
-            {mensaje ? <Text style={{ color: "#3B6D11", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
+            {mensaje ? <Text style={{ color: "#2E7D32", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
             <TouchableOpacity style={styles.button} onPress={agregarPlato}>
               <Text style={styles.buttonText}>Agregar plato</Text>
             </TouchableOpacity>
           </View>
-          {subiendo && <ActivityIndicator color="#D85A30" style={{ marginBottom: 12 }} />}
+          {subiendo && <ActivityIndicator color="#E8821C" style={{ marginBottom: 12 }} />}
           <Text style={{ fontWeight: "600", fontSize: 14, marginBottom: 12 }}>Platos ({platos.length})</Text>
           {platos.map((p) => (
             <View key={p.id} style={[styles.card, { marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 10 }]}>
@@ -615,15 +638,15 @@ function AdminScreen({ navigation, route }) {
                 {p.imagen_url ? (
                   <Image source={{ uri: p.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10 }} />
                 ) : (
-                  <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FAECE7", alignItems: "center", justifyContent: "center" }}>
-                    <Text style={{ fontSize: 10, color: "#D85A30", textAlign: "center" }}>📷{"\n"}Subir</Text>
+                  <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FDEEDC", alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ fontSize: 10, color: "#E8821C", textAlign: "center" }}>📷{"\n"}Subir</Text>
                   </View>
                 )}
               </TouchableOpacity>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: "600" }}>{p.nombre}</Text>
                 {p.descripcion ? <Text style={{ fontSize: 12, color: "#888" }}>{p.descripcion}</Text> : null}
-                <Text style={{ fontSize: 13, color: "#D85A30", fontWeight: "600" }}>${p.precio.toLocaleString()}</Text>
+                <Text style={{ fontSize: 13, color: "#E8821C", fontWeight: "600" }}>${p.precio.toLocaleString()}</Text>
               </View>
             </View>
           ))}
@@ -639,17 +662,17 @@ function AdminScreen({ navigation, route }) {
             <TextInput placeholder="Contrasena" value={nuevoUsuario.password} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, password: t })} style={styles.input} />
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
               {["domiciliario", "restaurante", "admin"].map((r) => (
-                <TouchableOpacity key={r} style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FAECE7" : "#fff", alignItems: "center" }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}>
-                  <Text style={{ fontSize: 10, color: nuevoUsuario.rol === r ? "#D85A30" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
+                <TouchableOpacity key={r} style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#E8821C" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FDEEDC" : "#fff", alignItems: "center" }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}>
+                  <Text style={{ fontSize: 10, color: nuevoUsuario.rol === r ? "#E8821C" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             {nuevoUsuario.rol === "restaurante" && restaurantes.map((r) => (
-              <TouchableOpacity key={r.id} style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FAECE7" : "#fff", marginBottom: 8 }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}>
-                <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#D85A30" : "#333" }}>{r.nombre}</Text>
+              <TouchableOpacity key={r.id} style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#E8821C" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FDEEDC" : "#fff", marginBottom: 8 }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}>
+                <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#E8821C" : "#333" }}>{r.nombre}</Text>
               </TouchableOpacity>
             ))}
-            {mensaje ? <Text style={{ color: "#3B6D11", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
+            {mensaje ? <Text style={{ color: "#2E7D32", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
             <TouchableOpacity style={styles.button} onPress={crearUsuario}>
               <Text style={styles.buttonText}>Crear usuario</Text>
             </TouchableOpacity>
@@ -660,8 +683,8 @@ function AdminScreen({ navigation, route }) {
                 <Text style={{ fontWeight: "600" }}>{u.nombre}</Text>
                 <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📞 {u.telefono}</Text>
               </View>
-              <View style={{ backgroundColor: u.rol === "admin" ? "#FAEEDA" : u.rol === "domiciliario" ? "#E6F1FB" : u.rol === "restaurante" ? "#EAF3DE" : "#f5f5f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontSize: 11, color: u.rol === "admin" ? "#854F0B" : u.rol === "domiciliario" ? "#185FA5" : u.rol === "restaurante" ? "#3B6D11" : "#888", fontWeight: "600" }}>{u.rol}</Text>
+              <View style={{ backgroundColor: u.rol === "admin" ? "#FAEEDA" : u.rol === "domiciliario" ? "#E6F1FB" : u.rol === "restaurante" ? "#EAF3DE" : "#F6F1E6", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontSize: 11, color: u.rol === "admin" ? "#854F0B" : u.rol === "domiciliario" ? "#185FA5" : u.rol === "restaurante" ? "#2E7D32" : "#888", fontWeight: "600" }}>{u.rol}</Text>
               </View>
             </View>
           ))}
@@ -709,7 +732,7 @@ function DomiciliarioScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#D85A30" }]}>
+      <View style={[styles.header, { backgroundColor: "#E8821C" }]}>
         <Text style={styles.headerSub}>Hola, {usuario.nombre} 🛵</Text>
         <Text style={styles.headerTitle}>Mis Entregas</Text>
       </View>
@@ -739,24 +762,24 @@ function DomiciliarioScreen({ navigation, route }) {
               </View>
             </View>
             {restaurantes[p.restaurante_id] && (
-              <View style={{ backgroundColor: "#FAECE7", borderRadius: 8, padding: 10, marginBottom: 10 }}>
-                <Text style={{ fontSize: 12, fontWeight: "600", color: "#D85A30" }}>Recoger en:</Text>
+              <View style={{ backgroundColor: "#FDEEDC", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                <Text style={{ fontSize: 12, fontWeight: "600", color: "#E8821C" }}>Recoger en:</Text>
                 <Text style={{ fontSize: 14, fontWeight: "600", marginTop: 2 }}>{restaurantes[p.restaurante_id].nombre}</Text>
               </View>
             )}
             <Text style={{ fontSize: 13, color: "#888" }}>👤 {p.cliente_nombre}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {p.cliente_direccion}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📞 {p.cliente_telefono}</Text>
-            <Text style={{ fontSize: 13, fontWeight: "600", color: "#D85A30", marginTop: 4 }}>🍽️ {p.plato}</Text>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>🍽️ {p.plato}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>💰 ${p.total.toLocaleString()} - {p.metodo_pago}</Text>
             <View style={{ marginTop: 12 }}>
               {p.estado === "asignado" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#D85A30" }]} onPress={() => cambiarEstado(p.id, "en camino")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#E8821C" }]} onPress={() => cambiarEstado(p.id, "en camino")}>
                   <Text style={styles.buttonText}>Ya recogi — En camino</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "en camino" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#3B6D11" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
                   <Text style={styles.buttonText}>Pedido entregado</Text>
                 </TouchableOpacity>
               )}
@@ -795,14 +818,14 @@ function RestauranteScreen({ navigation, route }) {
     if (estado === "pendiente") return { bg: "#FAEEDA", text: "#854F0B" };
     if (estado === "aceptado") return { bg: "#E6F1FB", text: "#185FA5" };
     if (estado === "preparando") return { bg: "#E6F1FB", text: "#185FA5" };
-    if (estado === "listo") return { bg: "#EAF3DE", text: "#3B6D11" };
+    if (estado === "listo") return { bg: "#EAF3DE", text: "#2E7D32" };
     if (estado === "asignado") return { bg: "#F1EFE8", text: "#5F5E5A" };
-    return { bg: "#f5f5f5", text: "#888" };
+    return { bg: "#F6F1E6", text: "#888" };
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#185FA5" }]}>
+      <View style={[styles.header, { backgroundColor: "#1B5E20" }]}>
         <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
         <Text style={styles.headerTitle}>Mi Restaurante</Text>
       </View>
@@ -816,8 +839,8 @@ function RestauranteScreen({ navigation, route }) {
           <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => p.estado === "preparando").length}</Text>
         </View>
         <View style={{ flex: 1, backgroundColor: "#EAF3DE", borderRadius: 12, padding: 12, alignItems: "center" }}>
-          <Text style={{ fontSize: 11, color: "#3B6D11" }}>Listos</Text>
-          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#3B6D11" }}>{pedidos.filter(p => p.estado === "listo").length}</Text>
+          <Text style={{ fontSize: 11, color: "#2E7D32" }}>Listos</Text>
+          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#2E7D32" }}>{pedidos.filter(p => p.estado === "listo").length}</Text>
         </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
@@ -828,7 +851,7 @@ function RestauranteScreen({ navigation, route }) {
           </View>
         )}
         {pedidos.map((p) => (
-          <View key={p.id} style={[styles.card, { marginBottom: 12, borderWidth: p.estado === "pendiente" ? 1.5 : 0.5, borderColor: p.estado === "pendiente" ? "#D85A30" : "#eee" }]}>
+          <View key={p.id} style={[styles.card, { marginBottom: 12, borderWidth: p.estado === "pendiente" ? 1.5 : 0.5, borderColor: p.estado === "pendiente" ? "#E8821C" : "#eee" }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={{ fontWeight: "600" }}>Pedido #{p.id}</Text>
               <View style={{ backgroundColor: colorEstado(p.estado).bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
@@ -837,7 +860,7 @@ function RestauranteScreen({ navigation, route }) {
             </View>
             <Text style={{ fontSize: 13, color: "#888" }}>👤 {p.cliente_nombre}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {p.cliente_direccion}</Text>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#D85A30", marginTop: 4 }}>🍽️ {p.plato}</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>🍽️ {p.plato}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>💰 ${p.total.toLocaleString()} - {p.metodo_pago}</Text>
             <View style={{ marginTop: 12 }}>
               {p.estado === "pendiente" && (
@@ -846,18 +869,18 @@ function RestauranteScreen({ navigation, route }) {
                 </TouchableOpacity>
               )}
               {p.estado === "aceptado" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#D85A30" }]} onPress={() => cambiarEstado(p.id, "preparando")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#E8821C" }]} onPress={() => cambiarEstado(p.id, "preparando")}>
                   <Text style={styles.buttonText}>Empezar a preparar</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "preparando" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#3B6D11" }]} onPress={() => cambiarEstado(p.id, "listo")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32" }]} onPress={() => cambiarEstado(p.id, "listo")}>
                   <Text style={styles.buttonText}>Marcar como listo</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "listo" && (
                 <View style={{ backgroundColor: "#EAF3DE", borderRadius: 8, padding: 12 }}>
-                  <Text style={{ color: "#3B6D11", fontWeight: "600", textAlign: "center" }}>Esperando domiciliario...</Text>
+                  <Text style={{ color: "#2E7D32", fontWeight: "600", textAlign: "center" }}>Esperando domiciliario...</Text>
                 </View>
               )}
               {p.estado === "asignado" && (
@@ -879,7 +902,7 @@ function RestauranteScreen({ navigation, route }) {
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
+      <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Inicio" component={InicioScreen} />
         <Stack.Screen name="Menu" component={MenuScreen} />
@@ -894,20 +917,20 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  container: { flex: 1, backgroundColor: "#F6F1E6" },
   scroll: { padding: 16 },
-  header: { backgroundColor: "#D85A30", padding: 20, paddingTop: 50 },
+  header: { backgroundColor: "#2E7D32", padding: 20, paddingTop: 50 },
   headerSub: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
   headerTitle: { color: "#fff", fontSize: 24, fontWeight: "bold", marginTop: 4 },
   card: { backgroundColor: "#fff", borderRadius: 16, padding: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 },
-  tabs: { flexDirection: "row", backgroundColor: "#f5f5f5", borderRadius: 8, padding: 4, marginBottom: 20 },
+  tabs: { flexDirection: "row", backgroundColor: "#F6F1E6", borderRadius: 8, padding: 4, marginBottom: 20 },
   tab: { flex: 1, padding: 8, borderRadius: 6, alignItems: "center" },
   tabActive: { backgroundColor: "#fff" },
   tabText: { color: "#888", fontSize: 14 },
   tabTextActive: { color: "#333", fontWeight: "500" },
   input: { borderWidth: 0.5, borderColor: "#ddd", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 14, backgroundColor: "#fff" },
   error: { color: "red", fontSize: 12, marginBottom: 12 },
-  button: { backgroundColor: "#D85A30", borderRadius: 8, padding: 14, alignItems: "center" },
+  button: { backgroundColor: "#E8821C", borderRadius: 8, padding: 14, alignItems: "center" },
   buttonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   searchInput: { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12, color: "#fff" },
   restauranteCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
@@ -915,8 +938,8 @@ const styles = StyleSheet.create({
   restauranteCategoria: { fontSize: 12, color: "#888", marginTop: 2 },
   restauranteInfo: { fontSize: 12, color: "#888" },
   calificacionBadge: { backgroundColor: "#EAF3DE", borderRadius: 8, padding: 6 },
-  calificacionText: { fontSize: 12, color: "#3B6D11", fontWeight: "500" },
+  calificacionText: { fontSize: 12, color: "#2E7D32", fontWeight: "500" },
   platoCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
   btnCantidad: { width: 28, height: 28, borderRadius: 14, borderWidth: 0.5, borderColor: "#ddd", alignItems: "center", justifyContent: "center" },
-  botonCarrito: { position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#D85A30", borderRadius: 12, padding: 16, alignItems: "center", elevation: 4 },
+  botonCarrito: { position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#E8821C", borderRadius: 12, padding: 16, alignItems: "center", elevation: 4 },
 });

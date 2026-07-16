@@ -67,6 +67,16 @@ def crear_restaurante(nombre: str, categoria: str, calificacion: float, tiempo: 
     db.refresh(restaurante)
     return restaurante
 
+@app.delete("/restaurantes/{restaurante_id}")
+def eliminar_restaurante(restaurante_id: int, db: Session = Depends(get_db)):
+    restaurante = db.query(Restaurante).filter(Restaurante.id == restaurante_id).first()
+    if not restaurante:
+        raise HTTPException(status_code=404, detail="Restaurante no encontrado")
+    db.query(Plato).filter(Plato.restaurante_id == restaurante_id).delete()
+    db.delete(restaurante)
+    db.commit()
+    return {"mensaje": f"Restaurante {restaurante.nombre} eliminado"}
+
 @app.get("/restaurantes/{restaurante_id}/platos")
 def obtener_platos(restaurante_id: int, db: Session = Depends(get_db)):
     return db.query(Plato).filter(Plato.restaurante_id == restaurante_id, Plato.disponible == "si").all()
