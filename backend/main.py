@@ -3,13 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato
 from passlib.context import CryptContext
+from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
+import os
+
+load_dotenv()
 
 cloudinary.config(
-    cloud_name="dfrxbfsdy",
-    api_key="956687681189219",
-    api_secret="4E1asTVaJOVlV_nqD8SJAIQcju0"
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET")
 )
 
 app = FastAPI(title="Orito App - API")

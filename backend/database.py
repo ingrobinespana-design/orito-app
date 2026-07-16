@@ -1,8 +1,11 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./orito.db")
 
@@ -29,6 +32,7 @@ class Restaurante(Base):
     calificacion = Column(Float)
     tiempo = Column(String)
     domicilio = Column(Integer)
+    imagen_url = Column(String, nullable=True)
 
 class Plato(Base):
     __tablename__ = "platos"
@@ -38,6 +42,7 @@ class Plato(Base):
     descripcion = Column(Text)
     precio = Column(Integer)
     disponible = Column(String, default="si")
+    imagen_url = Column(String, nullable=True)
 
 class Pedido(Base):
     __tablename__ = "pedidos"
@@ -55,3 +60,10 @@ class Pedido(Base):
 
 def crear_tablas():
     Base.metadata.create_all(bind=engine)
+    # las tablas ya creadas en produccion no reciben columnas nuevas de create_all
+    for tabla in ("restaurantes", "platos"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN imagen_url VARCHAR"))
+        except Exception:
+            pass

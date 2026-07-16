@@ -1,0 +1,13 @@
+# secretos - NUNCA subir
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.db
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
