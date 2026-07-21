@@ -1225,6 +1225,8 @@ function PedirCarreraScreen({ navigation, route }) {
   const [destinoCoords, setDestinoCoords] = useState(null);
   const [estimado, setEstimado] = useState(null);   // {distancia_km, tarifa_sugerida}
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
+  const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
+  const [contraofertas, setContraofertas] = useState([]);
   const [cargando, setCargando] = useState(false);
 
   useEffect(() => {
@@ -1239,17 +1241,23 @@ function PedirCarreraScreen({ navigation, route }) {
     }).catch(() => {});
   }, []);
 
-  // cuando hay origen y destino en el mapa, estima distancia y tarifa
+  // cuando hay origen, destino y vehiculo, estima distancia y tarifa sugerida
   useEffect(() => {
-    if (!muni || !muni.usa_gps || !origenCoords || !destinoCoords) { setEstimado(null); return; }
+    if (!muni || !muni.usa_gps || !origenCoords || !destinoCoords || !vehiculo) { setEstimado(null); return; }
     const p = new URLSearchParams({
-      municipio: muni.nombre,
+      municipio: muni.nombre, vehiculo,
       origen_lat: origenCoords.lat, origen_lon: origenCoords.lon,
       destino_lat: destinoCoords.lat, destino_lon: destinoCoords.lon,
     });
     fetch(`${API}/tarifa?${p.toString()}`).then(r => r.json())
-      .then(d => { if (d && !d.detail) setEstimado(d); }).catch(() => {});
-  }, [origenCoords, destinoCoords, muni]);
+      .then(d => {
+        if (d && !d.detail) {
+          setEstimado(d);
+          // precarga la oferta con la sugerencia para que el cliente arranque de ahi
+          if (d.tarifa_sugerida && !oferta) setOferta(String(d.tarifa_sugerida));
+        }
+      }).catch(() => {});
+  }, [origenCoords, destinoCoords, muni, vehiculo]);
 
   const centroMapa = (punto) => {
     if (punto === "origen" && origenCoords) return origenCoords;
@@ -1300,6 +1308,8 @@ function PedirCarreraScreen({ navigation, route }) {
     };
     if (origenCoords) { datos.origen_lat = origenCoords.lat; datos.origen_lon = origenCoords.lon; }
     if (destinoCoords) { datos.destino_lat = destinoCoords.lat; datos.destino_lon = destinoCoords.lon; }
+    const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
+    if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
     const p = new URLSearchParams(datos);
     fetch(`${API}/carreras?${p.toString()}`, { method: "POST" })
       .then(r => r.json())
@@ -1316,9 +1326,28 @@ function PedirCarreraScreen({ navigation, route }) {
   const cancelar = () => {
     confirmar("Cancelar carrera", "Seguro que quieres cancelar?",
       () => fetch(`${API}/carreras/${carrera.id}/estado?estado=cancelada`, { method: "PUT" })
-        .then(() => setCarrera(null))
+        .then(() => { setCarrera(null); setContraofertas([]); })
         .catch(() => avisar("Error", "No se pudo cancelar")),
       "Si, cancelar");
+  };
+
+  // mientras la carrera busca, se traen las contraofertas de los conductores
+  useEffect(() => {
+    if (!carrera || carrera.estado !== "buscando") { setContraofertas([]); return; }
+    const traer = () => fetch(`${API}/carreras/${carrera.id}/ofertas`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setContraofertas(d); }).catch(() => {});
+    traer();
+    const t = setInterval(traer, 5000);
+    return () => clearInterval(t);
+  }, [carrera]);
+
+  const aceptarContraoferta = (of) => {
+    confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}?`,
+      () => fetch(`${API}/carreras/${carrera.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" })
+        .then(r => r.json())
+        .then(d => { if (d.detail) { avisar("No se pudo", d.detail); } else { setCarrera(d); setContraofertas([]); } })
+        .catch(() => avisar("Error", "No hay conexion")),
+      "Aceptar");
   };
 
   // --- ya tiene una carrera en curso: se le hace seguimiento
@@ -1332,12 +1361,39 @@ function PedirCarreraScreen({ navigation, route }) {
         </View>
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           {buscando ? (
-            <View style={[styles.card, { alignItems: "center", paddingVertical: 30 }]}>
-              <ActivityIndicator size="large" color="#185FA5" />
-              <Text style={{ color: "#888", marginTop: 12, textAlign: "center" }}>
-                Avisamos a los transportadores disponibles.{"\n"}No cierres la app.
-              </Text>
-            </View>
+            <>
+              <View style={[styles.card, { alignItems: "center", paddingVertical: 24 }]}>
+                <ActivityIndicator size="large" color="#185FA5" />
+                <Text style={{ color: "#888", marginTop: 12, textAlign: "center" }}>
+                  {carrera.tarifa_ofrecida
+                    ? `Ofreciste $${carrera.tarifa_ofrecida.toLocaleString()}. Esperando que un conductor acepte o te proponga otro precio.`
+                    : "Avisamos a los transportadores disponibles."}
+                  {"\n"}No cierres la app.
+                </Text>
+              </View>
+
+              {contraofertas.length > 0 && (
+                <>
+                  <Text style={styles.seccionTitulo}>Precios que te proponen</Text>
+                  {contraofertas.map((of) => (
+                    <View key={of.id} style={[styles.card, { marginBottom: 10 }]}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: "600", fontSize: 15 }}>{of.conductor_nombre}</Text>
+                          <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
+                            {of.conductor_tipo === "moto" ? "🏍️" : "🚗"} {of.conductor_placa || ""}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 20, fontWeight: "bold", color: "#185FA5" }}>${of.monto.toLocaleString()}</Text>
+                      </View>
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 10, padding: 10 }]} onPress={() => aceptarContraoferta(of)}>
+                        <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar a este precio</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </>
+              )}
+            </>
           ) : (
             <View style={[styles.card, { marginBottom: 12 }]}>
               <Text style={{ fontSize: 12, color: "#888" }}>Tu transportador</Text>
@@ -1462,17 +1518,28 @@ function PedirCarreraScreen({ navigation, route }) {
                 <View style={styles.estimado}>
                   <Text style={{ fontSize: 13, color: "#555" }}>Distancia: {estimado.distancia_km} km</Text>
                   {estimado.tarifa_sugerida ? (
-                    <>
-                      <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5", marginTop: 2 }}>
-                        aprox ${estimado.tarifa_sugerida.toLocaleString()}
-                      </Text>
-                      <Text style={{ fontSize: 11, color: "#888" }}>Es una sugerencia, el precio lo acuerdas con el conductor</Text>
-                    </>
+                    <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                      La gente suele pagar ~${estimado.tarifa_sugerida.toLocaleString()}
+                    </Text>
                   ) : null}
                 </View>
               )}
             </>
           )}
+
+          <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
+          <Text style={styles.etiqueta}>CUANTO OFRECES PAGAR</Text>
+          <View style={styles.ofertaFila}>
+            <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>$</Text>
+            <TextInput
+              value={oferta}
+              onChangeText={(t) => setOferta(t.replace(/\D/g, ""))}
+              placeholder="0"
+              keyboardType="number-pad"
+              style={styles.ofertaInput}
+            />
+          </View>
+          <Text style={styles.ayuda}>Un conductor puede aceptar tu precio o proponerte otro, y tu eliges</Text>
         </View>
 
         <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
@@ -1556,6 +1623,27 @@ function ConductorScreen({ navigation, route }) {
     fetch(`${API}/carreras/${c.id}/estado?estado=${estado}`, { method: "PUT" }).then(cargar).catch(() => {});
   };
 
+  // --- negociacion del lado del conductor
+  const [contraofertando, setContraofertando] = useState(null);
+  const [montoOferta, setMontoOferta] = useState("");
+
+  const contraofertar = () => {
+    const monto = parseInt((montoOferta || "").replace(/\D/g, ""), 10);
+    if (!monto) { avisar("Falta el precio", "Escribe cuanto quieres cobrar"); return; }
+    const id = contraofertando.id;
+    setContraofertando(null); setMontoOferta("");
+    fetch(`${API}/carreras/${id}/ofertas?conductor_id=${usuario.id}&monto=${monto}`, { method: "POST" })
+      .then(async (r) => {
+        const d = await r.json();
+        if (r.status === 409) { avisar("Muy tarde", "Esa carrera ya no esta disponible."); cargar(); return; }
+        if (r.status === 402) { avisar("Suscripcion vencida", d.detail); return; }
+        if (d.detail) { avisar("No se pudo", d.detail); return; }
+        avisar("Oferta enviada", "El cliente vera tu precio y decide.");
+        cargar();
+      })
+      .catch(() => avisar("Error", "No hay conexion."));
+  };
+
   const tarjeta = (c, propia) => (
     <View key={c.id} style={[styles.card, { marginBottom: 12 }]}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -1583,14 +1671,32 @@ function ConductorScreen({ navigation, route }) {
         </Text>
       ) : null}
 
+      {!propia && c.tarifa_ofrecida ? (
+        <View style={styles.ofertaCliente}>
+          <Text style={{ fontSize: 12, color: "#555" }}>El cliente ofrece</Text>
+          <Text style={{ fontSize: 24, fontWeight: "bold", color: "#2E7D32" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
+        </View>
+      ) : null}
+
       <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
       <Text style={{ fontSize: 13, color: "#888" }}>👤 {c.cliente_nombre}</Text>
       <Text style={{ fontSize: 15, fontWeight: "600", color: "#185FA5", marginTop: 2 }}>📞 {c.cliente_telefono}</Text>
 
       {!propia && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 12 }]} onPress={() => aceptar(c)}>
-          <Text style={styles.buttonText}>Tomar esta carrera</Text>
-        </TouchableOpacity>
+        c.tarifa_ofrecida ? (
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={() => aceptar(c)}>
+              <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar ${c.tarifa_ofrecida.toLocaleString()}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#185FA5" }]} onPress={() => { setMontoOferta(String(c.tarifa_ofrecida)); setContraofertando(c); }}>
+              <Text style={{ color: "#185FA5", fontWeight: "600", fontSize: 14 }}>Proponer otro</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 12 }]} onPress={() => aceptar(c)}>
+            <Text style={styles.buttonText}>Tomar esta carrera</Text>
+          </TouchableOpacity>
+        )
       )}
       {propia && c.estado === "aceptada" && (
         <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5", marginTop: 12 }]} onPress={() => cambiarEstado(c, "en_camino")}>
@@ -1679,6 +1785,32 @@ function ConductorScreen({ navigation, route }) {
               </TouchableOpacity>
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={confirmarCobro}>
                 <Text style={styles.buttonText}>Guardar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!contraofertando} transparent animationType="fade" onRequestClose={() => setContraofertando(null)}>
+        <View style={styles.fondoModal}>
+          <View style={styles.ventanaModal}>
+            <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Proponer tu precio</Text>
+            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
+              {contraofertando && contraofertando.tarifa_ofrecida
+                ? `El cliente ofrece $${contraofertando.tarifa_ofrecida.toLocaleString()}. Cuanto quieres cobrar?`
+                : "Cuanto quieres cobrar?"}
+            </Text>
+            <View style={styles.ofertaFila}>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>$</Text>
+              <TextInput value={montoOferta} onChangeText={(t) => setMontoOferta(t.replace(/\D/g, ""))}
+                placeholder="0" keyboardType="number-pad" style={styles.ofertaInput} autoFocus />
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setContraofertando(null)}>
+                <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#185FA5" }]} onPress={contraofertar}>
+                <Text style={styles.buttonText}>Enviar</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1907,6 +2039,9 @@ const styles = StyleSheet.create({
   botonMapa: { borderWidth: 1, borderColor: "#185FA5", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F4F9FE" },
   botonMapaOk: { borderColor: "#2E7D32", backgroundColor: "#EAF6EC" },
   estimado: { backgroundColor: "#F4F9FE", borderRadius: 10, padding: 14, marginTop: 6, alignItems: "center" },
+  ofertaFila: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#185FA5", borderRadius: 10, paddingHorizontal: 12, backgroundColor: "#F4F9FE" },
+  ofertaInput: { flex: 1, fontSize: 22, fontWeight: "bold", color: "#185FA5", padding: 12 },
+  ofertaCliente: { backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginTop: 10, alignItems: "center" },
   opcion: { flex: 1, paddingVertical: 10, paddingHorizontal: 6, borderRadius: 8, borderWidth: 1, borderColor: "#ddd", alignItems: "center", backgroundColor: "#fff" },
   opcionActiva: { backgroundColor: "#E6F1FB", borderColor: "#185FA5" },
   opcionTexto: { fontSize: 13, color: "#888" },

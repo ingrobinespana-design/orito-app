@@ -87,6 +87,36 @@ class Lugar(Base):
     zona = Column(String, default="urbano")
     activo = Column(String, default="si")
 
+class Tarifa(Base):
+    """Tarifa sugerida por municipio Y tipo de vehiculo: la moto cobra distinto
+    que el carro. Es solo una SUGERENCIA para orientar la oferta del cliente."""
+    __tablename__ = "tarifas"
+    id = Column(Integer, primary_key=True, index=True)
+    municipio = Column(String)
+    vehiculo = Column(String)   # "moto" o "carro"
+    base = Column(Integer, default=0)
+    valor_km = Column(Integer, default=0)
+    minima = Column(Integer, default=0)
+
+# (municipio, vehiculo, base, valor_km, minima). Ajustados a los precios reales
+# de la zona: a 4 km moto ~7.000 y carro ~10.000. Editables desde el panel.
+TARIFAS_INICIALES = [
+    ("Orito", "carro", 5000, 1250, 6000),
+    ("Puerto Asis", "moto", 3000, 1000, 4000),
+    ("Puerto Asis", "carro", 5000, 1250, 6000),
+]
+
+class Oferta(Base):
+    """Contraoferta de un conductor a una carrera. El cliente ofrece un precio;
+    el conductor puede tomarla a ese precio o proponer otro, y el cliente elige."""
+    __tablename__ = "ofertas"
+    id = Column(Integer, primary_key=True, index=True)
+    carrera_id = Column(Integer, ForeignKey("carreras.id"))
+    conductor_id = Column(Integer, ForeignKey("usuarios.id"))
+    monto = Column(Integer)
+    estado = Column(String, default="pendiente")   # pendiente / aceptada / descartada
+    fecha = Column(DateTime, default=datetime.now)
+
 class Config(Base):
     """Ajustes que el dueño cambia desde el panel sin tocar codigo."""
     __tablename__ = "config"
@@ -123,6 +153,8 @@ class Carrera(Base):
     # que pidio el cliente: "moto" o "carro". Se respeta estricto — el que pide
     # carro puede ir con maletas o con la familia, una moto no le sirve.
     vehiculo_pedido = Column(String)
+    # lo que el cliente ofrece pagar (modelo tipo inDrive: se negocia)
+    tarifa_ofrecida = Column(Integer, nullable=True)
     # buscando -> aceptada -> en_camino -> finalizada  (o cancelada en cualquier punto)
     estado = Column(String, default="buscando")
     # "rural" si origen o destino es vereda: el conductor lo ve antes de aceptar
@@ -272,7 +304,7 @@ def crear_tablas():
     for columna in ("zona VARCHAR DEFAULT 'urbano'", "municipio VARCHAR DEFAULT 'Orito'",
                     "vehiculo_pedido VARCHAR", "origen_lat FLOAT", "origen_lon FLOAT",
                     "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
-                    "tarifa_sugerida INTEGER"):
+                    "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))
@@ -311,6 +343,12 @@ def crear_tablas():
                     if n not in existentes_m]
         if nuevos_m:
             db.add_all(nuevos_m)
+        # tarifas por municipio+vehiculo que falten
+        existentes_t = {(t.municipio, t.vehiculo) for t in db.query(Tarifa).all()}
+        nuevas_t = [Tarifa(municipio=mu, vehiculo=ve, base=b, valor_km=vk, minima=mi)
+                    for mu, ve, b, vk, mi in TARIFAS_INICIALES if (mu, ve) not in existentes_t]
+        if nuevas_t:
+            db.add_all(nuevas_t)
         db.commit()
     finally:
         db.close()

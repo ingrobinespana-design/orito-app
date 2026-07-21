@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -102,19 +102,51 @@ def obtener_municipios(db: Session = Depends(get_db)):
     return [municipio_dict(m, db)
             for m in db.query(Municipio).filter(Municipio.activo == "si").order_by(Municipio.nombre).all()]
 
+def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
+    """Sugerencia segun el pueblo, el vehiculo y los km. Solo orienta la oferta
+    del cliente; el precio de verdad lo negocian las partes."""
+    if km is None or not vehiculo:
+        return None
+    t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
+    if not t:
+        return None
+    return tarifas.calcular_tarifa(km, t.base, t.valor_km, t.minima)
+
 @app.get("/tarifa")
-def estimar_tarifa(municipio: str, origen_lat: float, origen_lon: float,
+def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon: float,
                    destino_lat: float, destino_lon: float, db: Session = Depends(get_db)):
-    """Lo que la app muestra ANTES de pedir: 'son como 3.2 km, aprox $8.000'."""
+    """Lo que la app muestra para orientar la oferta: 'son ~3.2 km, en carro la
+    gente suele pagar ~$8.000'. El cliente ofrece lo que quiera desde ahi."""
     m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
     if not m:
         raise HTTPException(status_code=404, detail="Municipio no encontrado")
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     return {
         "distancia_km": km,
-        "tarifa_sugerida": tarifas.calcular_tarifa(km, m.tarifa_base, m.valor_km, m.tarifa_minima),
+        "tarifa_sugerida": tarifa_sugerida(municipio, vehiculo, km, db),
         "es_sugerencia": True,
     }
+
+@app.get("/tarifas")
+def listar_tarifas(db: Session = Depends(get_db)):
+    return [{"id": t.id, "municipio": t.municipio, "vehiculo": t.vehiculo,
+             "base": t.base, "valor_km": t.valor_km, "minima": t.minima}
+            for t in db.query(Tarifa).order_by(Tarifa.municipio, Tarifa.vehiculo).all()]
+
+@app.put("/tarifas/{tarifa_id}")
+def actualizar_tarifa(tarifa_id: int, base: int = None, valor_km: int = None,
+                      minima: int = None, db: Session = Depends(get_db)):
+    t = db.query(Tarifa).filter(Tarifa.id == tarifa_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tarifa no encontrada")
+    for campo, valor in (("base", base), ("valor_km", valor_km), ("minima", minima)):
+        if valor is not None:
+            if valor < 0:
+                raise HTTPException(status_code=400, detail=f"{campo} no puede ser negativo")
+            setattr(t, campo, valor)
+    db.commit()
+    return {"id": t.id, "municipio": t.municipio, "vehiculo": t.vehiculo,
+            "base": t.base, "valor_km": t.valor_km, "minima": t.minima}
 
 @app.put("/municipios/{nombre}")
 def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
@@ -350,6 +382,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "destino_lon": c.destino_lon,
         "distancia_km": c.distancia_km,
         "tarifa_sugerida": c.tarifa_sugerida,
+        "tarifa_ofrecida": c.tarifa_ofrecida,
         "tarifa": c.tarifa,
         "notas": c.notas,
         "fecha": c.fecha,
@@ -473,11 +506,12 @@ def avisar_carrera_nueva(carrera_id: int):
         if not conductores:
             return
         aviso_zona = " (fuera del pueblo)" if carrera.zona == "rural" else ""
+        oferta = f" · ofrece ${carrera.tarifa_ofrecida:,}".replace(",", ".") if carrera.tarifa_ofrecida else ""
         mensajes = [
             push.mensaje(
                 c.push_token,
                 f"Nueva carrera{aviso_zona}",
-                f"De {carrera.origen} a {carrera.destino}",
+                f"De {carrera.origen} a {carrera.destino}{oferta}",
                 {"tipo": "carrera_nueva", "carrera_id": carrera.id},
             )
             for c in conductores
@@ -504,6 +538,47 @@ def avisar_carrera_aceptada(carrera_id: int):
             "Ya tienes transportador",
             f"{conductor.nombre}{placa} va en camino",
             {"tipo": "carrera_aceptada", "carrera_id": carrera.id},
+        )]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
+@nunca_falla
+def avisar_contraoferta(carrera_id: int, conductor_id: int, monto: int):
+    """Le avisa al cliente que un conductor propuso un precio."""
+    db = SessionLocal()
+    try:
+        carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        if not carrera:
+            return
+        cliente = db.query(Usuario).filter(Usuario.id == carrera.cliente_id).first()
+        conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
+        if not cliente or not cliente.push_token or not conductor:
+            return
+        mensajes = [push.mensaje(
+            cliente.push_token,
+            "Un conductor te propone un precio",
+            f"{conductor.nombre} ofrece hacerla por ${monto:,}".replace(",", "."),
+            {"tipo": "contraoferta", "carrera_id": carrera_id},
+        )]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
+@nunca_falla
+def avisar_oferta_aceptada(conductor_id: int, carrera_id: int):
+    """Le avisa al conductor que el cliente acepto su contraoferta."""
+    db = SessionLocal()
+    try:
+        conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
+        carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        if not conductor or not conductor.push_token or not carrera:
+            return
+        mensajes = [push.mensaje(
+            conductor.push_token,
+            "Te aceptaron la carrera",
+            f"Recoge en {carrera.origen}",
+            {"tipo": "oferta_aceptada", "carrera_id": carrera_id},
         )]
     finally:
         db.close()
@@ -611,6 +686,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
                   notas: str = None, vehiculo_pedido: str = None,
                   origen_lat: float = None, origen_lon: float = None,
                   destino_lat: float = None, destino_lon: float = None,
+                  tarifa_ofrecida: int = None,
                   db: Session = Depends(get_db)):
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
     if not cliente:
@@ -628,10 +704,11 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         raise HTTPException(
             status_code=400,
             detail=f"En {municipio} solo hay servicio de {' o '.join(permitidos) or 'ninguno'}")
+    if tarifa_ofrecida is not None and tarifa_ofrecida <= 0:
+        raise HTTPException(status_code=400, detail="La oferta debe ser mayor que cero")
     # donde hay GPS se calcula distancia y tarifa sugerida; donde no, quedan vacias
-    m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
-    sugerida = tarifas.calcular_tarifa(km, m.tarifa_base, m.valor_km, m.tarifa_minima) if m else None
+    sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)
 
     carrera = Carrera(
         cliente_id=cliente.id, cliente_nombre=cliente.nombre, cliente_telefono=cliente.telefono,
@@ -640,7 +717,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         municipio=municipio, vehiculo_pedido=vehiculo_pedido,
         origen_lat=origen_lat, origen_lon=origen_lon,
         destino_lat=destino_lat, destino_lon=destino_lon,
-        distancia_km=km, tarifa_sugerida=sugerida,
+        distancia_km=km, tarifa_sugerida=sugerida, tarifa_ofrecida=tarifa_ofrecida,
         zona=zona_de_la_carrera(origen, destino, municipio, db),
     )
     db.add(carrera)
@@ -673,17 +750,104 @@ def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks,
     pedida = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     if pedida and not le_sirve_la_carrera(conductor, pedida):
         raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
-    # update condicional: si dos conductores aceptan al mismo tiempo, solo uno
-    # encuentra la carrera en "buscando" y el otro recibe el 409
+    # el conductor toma la carrera al precio que ofrecio el cliente (o sin precio
+    # si no ofrecio nada). Update condicional: si dos aceptan a la vez, solo uno
+    # encuentra la carrera en "buscando" y el otro recibe el 409.
+    cambios = {"conductor_id": conductor_id, "estado": "aceptada"}
+    if pedida and pedida.tarifa_ofrecida is not None:
+        cambios["tarifa"] = pedida.tarifa_ofrecida
     tomada = db.query(Carrera).filter(
         Carrera.id == carrera_id,
         Carrera.estado == "buscando"
-    ).update({"conductor_id": conductor_id, "estado": "aceptada"}, synchronize_session=False)
+    ).update(cambios, synchronize_session=False)
     db.commit()
     if tomada == 0:
         raise HTTPException(status_code=409, detail="Esa carrera ya fue tomada por otro conductor")
+    db.query(Oferta).filter(Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente").update(
+        {"estado": "descartada"}, synchronize_session=False)
+    db.commit()
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     tareas.add_task(avisar_carrera_aceptada, carrera_id)
+    return carrera_dict(carrera, conductor)
+
+# ---- negociacion tipo inDrive: el cliente ofrece, el conductor contraoferta,
+#      el cliente elige. El que acepta el precio ofrecido se la lleva de una.
+
+def oferta_dict(o: Oferta, conductor: Usuario = None):
+    return {
+        "id": o.id, "carrera_id": o.carrera_id, "conductor_id": o.conductor_id,
+        "monto": o.monto, "estado": o.estado, "fecha": o.fecha,
+        "conductor_nombre": conductor.nombre if conductor else None,
+        "conductor_telefono": conductor.telefono if conductor else None,
+        "conductor_placa": conductor.placa if conductor else None,
+        "conductor_vehiculo": conductor.vehiculo if conductor else None,
+        "conductor_tipo": conductor.tipo_vehiculo if conductor else None,
+    }
+
+@app.post("/carreras/{carrera_id}/ofertas")
+def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: BackgroundTasks,
+                  db: Session = Depends(get_db)):
+    """El conductor propone otro precio. La carrera sigue 'buscando' hasta que el
+    cliente elija. No pisa la asignacion: si ya la tomaron, no deja ofertar."""
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor que cero")
+    conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
+    if not conductor:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    if not suscripcion_al_dia(conductor, db):
+        raise HTTPException(status_code=402, detail="Tu suscripcion se vencio. Comunicate con el administrador para renovarla.")
+    carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if not carrera:
+        raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    if carrera.estado != "buscando":
+        raise HTTPException(status_code=409, detail="Esa carrera ya no esta disponible")
+    if not le_sirve_la_carrera(conductor, carrera):
+        raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
+    # una sola oferta por conductor: si ya habia, se actualiza el monto
+    oferta = db.query(Oferta).filter(
+        Oferta.carrera_id == carrera_id, Oferta.conductor_id == conductor_id,
+        Oferta.estado == "pendiente").first()
+    if oferta:
+        oferta.monto = monto
+    else:
+        oferta = Oferta(carrera_id=carrera_id, conductor_id=conductor_id, monto=monto)
+        db.add(oferta)
+    db.commit()
+    db.refresh(oferta)
+    tareas.add_task(avisar_contraoferta, carrera_id, conductor_id, monto)
+    return oferta_dict(oferta, conductor)
+
+@app.get("/carreras/{carrera_id}/ofertas")
+def ofertas_de_carrera(carrera_id: int, db: Session = Depends(get_db)):
+    """Lo que ve el cliente: las contraofertas pendientes, mas barata primero."""
+    ofertas = db.query(Oferta).filter(
+        Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente").order_by(Oferta.monto).all()
+    ids = {o.conductor_id for o in ofertas}
+    conductores = {u.id: u for u in db.query(Usuario).filter(Usuario.id.in_(ids)).all()} if ids else {}
+    return [oferta_dict(o, conductores.get(o.conductor_id)) for o in ofertas]
+
+@app.put("/carreras/{carrera_id}/aceptar-oferta")
+def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db)):
+    """El cliente acepta la contraoferta de un conductor. Update condicional para
+    no chocar con un conductor que justo acepte el precio original."""
+    oferta = db.query(Oferta).filter(Oferta.id == oferta_id, Oferta.carrera_id == carrera_id).first()
+    if not oferta:
+        raise HTTPException(status_code=404, detail="Oferta no encontrada")
+    tomada = db.query(Carrera).filter(
+        Carrera.id == carrera_id, Carrera.estado == "buscando"
+    ).update({"conductor_id": oferta.conductor_id, "estado": "aceptada", "tarifa": oferta.monto},
+             synchronize_session=False)
+    db.commit()
+    if tomada == 0:
+        raise HTTPException(status_code=409, detail="Esa carrera ya fue tomada")
+    oferta.estado = "aceptada"
+    db.query(Oferta).filter(Oferta.carrera_id == carrera_id, Oferta.id != oferta_id,
+                            Oferta.estado == "pendiente").update(
+        {"estado": "descartada"}, synchronize_session=False)
+    db.commit()
+    carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    conductor = db.query(Usuario).filter(Usuario.id == oferta.conductor_id).first()
+    tareas.add_task(avisar_oferta_aceptada, oferta.conductor_id, carrera_id)
     return carrera_dict(carrera, conductor)
 
 @app.put("/carreras/{carrera_id}/estado")
