@@ -22,7 +22,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.darwine.movil2",
-      "permissions": ["POST_NOTIFICATIONS", "VIBRATE"]
+      "permissions": ["POST_NOTIFICATIONS", "VIBRATE", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -32,6 +32,12 @@
         "expo-notifications",
         {
           "color": "#185FA5"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Orito usa tu ubicacion para marcar de donde sales y calcular la tarifa."
         }
       ]
     ],

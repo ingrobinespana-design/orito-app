@@ -23,9 +23,15 @@ class Usuario(Base):
     password = Column(String)
     rol = Column(String, default="cliente")
     restaurante_id = Column(Integer, ForeignKey("restaurantes.id"), nullable=True)
+    # municipio donde trabaja/vive. Separa las carreras: un conductor de Orito
+    # no puede ver ni recibir avisos de carreras de Puerto Asis.
+    municipio = Column(String, default="Orito")
     # datos de conductor (solo para rol "conductor")
     placa = Column(String, nullable=True)
     vehiculo = Column(String, nullable=True)
+    # "moto" o "carro". Obligatorio para conductores, vacio para clientes:
+    # no hay valor por defecto a proposito, cada quien declara en que trabaja.
+    tipo_vehiculo = Column(String, nullable=True)
     disponible = Column(String, default="no")
     # token de Expo para mandarle notificaciones al celular aunque tenga la app cerrada
     push_token = Column(String, nullable=True)
@@ -73,7 +79,8 @@ class Lugar(Base):
     y `usos` hace que lo mas pedido aparezca primero."""
     __tablename__ = "lugares"
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String, unique=True)
+    nombre = Column(String)
+    municipio = Column(String, default="Orito")
     usos = Column(Integer, default=0)
     # "urbano" (casco del pueblo) o "rural" (veredas, a kilometros). El conductor
     # necesita saberlo ANTES de aceptar: no es lo mismo ir al parque que a una vereda.
@@ -104,7 +111,18 @@ class Carrera(Base):
     origen_detalle = Column(String, nullable=True)
     destino = Column(String)
     destino_detalle = Column(String, nullable=True)
+    # coordenadas cuando el municipio usa GPS; vacias donde se trabaja por referencias
+    origen_lat = Column(Float, nullable=True)
+    origen_lon = Column(Float, nullable=True)
+    destino_lat = Column(Float, nullable=True)
+    destino_lon = Column(Float, nullable=True)
+    distancia_km = Column(Float, nullable=True)
+    tarifa_sugerida = Column(Integer, nullable=True)   # sugerencia, no obligacion
     conductor_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    municipio = Column(String, default="Orito")
+    # que pidio el cliente: "moto" o "carro". Se respeta estricto — el que pide
+    # carro puede ir con maletas o con la familia, una moto no le sirve.
+    vehiculo_pedido = Column(String)
     # buscando -> aceptada -> en_camino -> finalizada  (o cancelada en cualquier punto)
     estado = Column(String, default="buscando")
     # "rural" si origen o destino es vereda: el conductor lo ve antes de aceptar
@@ -113,9 +131,46 @@ class Carrera(Base):
     notas = Column(Text, nullable=True)
     fecha = Column(DateTime, default=datetime.now)
 
+class Municipio(Base):
+    """Pueblos donde opera la app y que vehiculos se permiten en cada uno.
+    En Orito todavia no hay mototaxi, asi que alla la opcion no debe aparecer;
+    el dia que lleguen se habilita desde el panel, sin publicar app nueva."""
+    __tablename__ = "municipios"
+    nombre = Column(String, primary_key=True)
+    vehiculos = Column(String, default="carro")   # separados por coma: "moto,carro"
+    activo = Column(String, default="si")
+    # con GPS y mapa (OpenStreetMap, gratis) se ubica y se sugiere tarifa por km
+    usa_gps = Column(String, default="no")
+    tarifa_base = Column(Integer, default=0)      # lo que vale arrancar
+    valor_km = Column(Integer, default=0)         # por cada km recorrido
+    tarifa_minima = Column(Integer, default=0)    # nunca cobra menos que esto
+    # centro del pueblo: donde abre el mapa antes de que el usuario ubique
+    centro_lat = Column(Float, nullable=True)
+    centro_lon = Column(Float, nullable=True)
+
+# (vehiculos, usa_gps, tarifa_base, valor_km, tarifa_minima, centro_lat, centro_lon)
+# Los valores son un punto de partida: el dueño los ajusta desde el panel.
+# Orito arranca sin tarifa por km (valor_km=0): el mapa ubica pero no sugiere
+# precio hasta que se definan las tarifas de alla.
+MUNICIPIOS_INICIALES = {
+    "Orito": ("carro", "si", 0, 0, 0, 0.6668, -76.8719),
+    "Puerto Asis": ("moto,carro", "si", 3000, 1500, 4000, 0.5083, -76.4972),
+}
+
+# Semilla minima de Puerto Asis: solo referencias obvias, sin inventar negocios.
+# La lista buena se arma igual que en Orito, con lo que escriba la gente.
+LUGARES_PUERTO_ASIS = [
+    ("Parque principal", "urbano"),
+    ("Hospital", "urbano"),
+    ("Terminal de Transportes", "urbano"),
+    ("Aeropuerto Tres de Mayo", "urbano"),
+    ("Muelle", "urbano"),
+    ("Malecon", "urbano"),
+]
+
 # Referencias visibles en el mapa de Orito. Es solo la semilla para que el campo
 # no arranque vacio: la lista de verdad la va armando la gente al escribir.
-LUGARES_INICIALES = [
+LUGARES_ORITO = [
     # --- sitios publicos
     ("Parque Central", "urbano"),
     ("Parque Saludable", "urbano"),
@@ -184,6 +239,12 @@ LUGARES_INICIALES = [
     ("Pozo Orito 38", "rural"),
 ]
 
+# (nombre, zona, municipio)
+LUGARES_INICIALES = (
+    [(n, z, "Orito") for n, z in LUGARES_ORITO] +
+    [(n, z, "Puerto Asis") for n, z in LUGARES_PUERTO_ASIS]
+)
+
 def crear_tablas():
     Base.metadata.create_all(bind=engine)
     # las tablas ya creadas en produccion no reciben columnas nuevas de create_all
@@ -194,30 +255,46 @@ def crear_tablas():
         except Exception:
             pass
     for columna in ("placa VARCHAR", "vehiculo VARCHAR", "disponible VARCHAR", "push_token VARCHAR",
-                    "suscripcion_hasta TIMESTAMP"):
+                    "suscripcion_hasta TIMESTAMP", "municipio VARCHAR DEFAULT 'Orito'",
+                    "tipo_vehiculo VARCHAR DEFAULT 'carro'"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
         except Exception:
             pass
-    for columna in ("usos INTEGER DEFAULT 0", "zona VARCHAR DEFAULT 'urbano'"):
+    for columna in ("usos INTEGER DEFAULT 0", "zona VARCHAR DEFAULT 'urbano'",
+                    "municipio VARCHAR DEFAULT 'Orito'"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE lugares ADD COLUMN {columna}"))
         except Exception:
             pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE carreras ADD COLUMN zona VARCHAR DEFAULT 'urbano'"))
-    except Exception:
-        pass
+    for columna in ("zona VARCHAR DEFAULT 'urbano'", "municipio VARCHAR DEFAULT 'Orito'",
+                    "vehiculo_pedido VARCHAR", "origen_lat FLOAT", "origen_lon FLOAT",
+                    "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
+                    "tarifa_sugerida INTEGER"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))
+        except Exception:
+            pass
+    for columna in ("usa_gps VARCHAR DEFAULT 'no'", "tarifa_base INTEGER DEFAULT 0",
+                    "valor_km INTEGER DEFAULT 0", "tarifa_minima INTEGER DEFAULT 0",
+                    "centro_lat FLOAT", "centro_lon FLOAT"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE municipios ADD COLUMN {columna}"))
+        except Exception:
+            pass
     # semilla para que el primer usuario no vea el campo vacio; de ahi en adelante
     # la lista crece sola. Agrega solo lo que falte, asi no pisa lo que ya escribio
     # la gente ni duplica en cada arranque del servidor.
     db = SessionLocal()
     try:
-        existentes = {n.lower() for (n,) in db.query(Lugar.nombre).all()}
-        nuevos = [Lugar(nombre=n, zona=z) for n, z in LUGARES_INICIALES if n.lower() not in existentes]
+        # la clave es nombre+municipio: "Hospital" puede existir en los dos pueblos
+        existentes = {(n.lower(), m) for n, m in db.query(Lugar.nombre, Lugar.municipio).all()}
+        nuevos = [Lugar(nombre=n, zona=z, municipio=m) for n, z, m in LUGARES_INICIALES
+                  if (n.lower(), m) not in existentes]
         if nuevos:
             db.add_all(nuevos)
         # los ajustes que falten toman su valor por defecto, sin pisar los ya guardados
@@ -225,6 +302,15 @@ def crear_tablas():
         faltantes = [Config(clave=k, valor=v) for k, v in CONFIG_INICIAL.items() if k not in guardados]
         if faltantes:
             db.add_all(faltantes)
+        # los municipios que falten; los ya guardados no se pisan porque el dueño
+        # pudo haber habilitado moto en Orito desde el panel
+        existentes_m = {m.nombre for m in db.query(Municipio).all()}
+        nuevos_m = [Municipio(nombre=n, vehiculos=v, usa_gps=g, tarifa_base=tb, valor_km=vk,
+                              tarifa_minima=tm, centro_lat=cla, centro_lon=clo)
+                    for n, (v, g, tb, vk, tm, cla, clo) in MUNICIPIOS_INICIALES.items()
+                    if n not in existentes_m]
+        if nuevos_m:
+            db.add_all(nuevos_m)
         db.commit()
     finally:
         db.close()
