@@ -21,10 +21,26 @@
         "backgroundColor": "#F6F1E6"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.darwine.movil2"
+      "package": "com.darwine.movil2",
+      "permissions": ["POST_NOTIFICATIONS", "VIBRATE"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#185FA5"
+        }
+      ]
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/4dff04b1-da23-42c3-9ccb-058e19f5ddce",
+      "fallbackToCacheTimeout": 3000
     },
     "extra": {
       "eas": {

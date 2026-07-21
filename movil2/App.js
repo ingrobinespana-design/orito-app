@@ -1,11 +1,100 @@
 import { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 
-const API = "https://orito-app-production.up.railway.app";
+// Produccion por defecto. Para probar contra un servidor local se arranca con
+// EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
+const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
+
+// Que la notificacion se vea y suene aunque la app este abierta
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+/** Confirmacion que funciona en celular Y en navegador.
+ *  Alert.alert muestra los botones en el celular, pero en web los ignora
+ *  (el dialogo aparece y no pasa nada al tocar), asi que ahi va window.confirm. */
+function confirmar(titulo, mensaje, alAceptar, textoAceptar = "Confirmar") {
+  if (Platform.OS === "web") {
+    if (window.confirm(`${titulo}\n\n${mensaje}`)) alAceptar();
+    return;
+  }
+  Alert.alert(titulo, mensaje, [
+    { text: "Cancelar", style: "cancel" },
+    { text: textoAceptar, onPress: alAceptar },
+  ]);
+}
+
+/** Lo mismo pero eligiendo entre varias opciones. */
+function elegir(titulo, mensaje, opciones) {
+  if (Platform.OS === "web") {
+    const lista = opciones.map((o, i) => `${i + 1}. ${o.texto}`).join("\n");
+    const r = window.prompt(`${titulo}\n${mensaje}\n\n${lista}\n\nEscribe el numero:`);
+    const i = parseInt(r, 10) - 1;
+    if (opciones[i]) opciones[i].alElegir();
+    return;
+  }
+  Alert.alert(titulo, mensaje, [
+    { text: "Cancelar", style: "cancel" },
+    ...opciones.map(o => ({ text: o.texto, onPress: o.alElegir })),
+  ]);
+}
+
+/** Aviso simple. En web, Alert.alert sin botones si funciona, pero unificamos. */
+function avisar(titulo, mensaje) {
+  if (Platform.OS === "web") { window.alert(`${titulo}\n\n${mensaje}`); return; }
+  Alert.alert(titulo, mensaje);
+}
+
+/** Pide permiso, saca el token de Expo y lo guarda en el servidor.
+ *  Si algo falla no se avisa al usuario: la app funciona igual, solo que
+ *  tocara mirar la pantalla en vez de esperar el sonido. */
+async function registrarNotificaciones(usuarioId) {
+  try {
+    if (Platform.OS === "android") {
+      // El canal define que suene fuerte y salte en pantalla. Sin esto Android
+      // la trata como aviso silencioso y el conductor no se entera.
+      await Notifications.setNotificationChannelAsync("carreras", {
+        name: "Carreras",
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        sound: "default",
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    }
+    if (!Device.isDevice) return;   // no funciona en emulador
+
+    const permiso = await Notifications.getPermissionsAsync();
+    let estado = permiso.status;
+    if (estado !== "granted") {
+      estado = (await Notifications.requestPermissionsAsync()).status;
+    }
+    if (estado !== "granted") return;
+
+    const projectId =
+      Constants?.expoConfig?.extra?.eas?.projectId ??
+      Constants?.easConfig?.projectId;
+    if (!projectId) return;
+
+    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+    if (!token) return;
+
+    await fetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
+  } catch (e) {
+    console.log("No se pudieron activar las notificaciones:", e);
+  }
+}
 
 function LoginScreen({ navigation }) {
   const [modo, setModo] = useState("login");
@@ -24,10 +113,12 @@ function LoginScreen({ navigation }) {
       .then((data) => {
         setCargando(false);
         if (data.detail) { setError(data.detail); return; }
+        registrarNotificaciones(data.id);
         if (data.rol === "admin") navigation.replace("Admin", { usuario: data });
         else if (data.rol === "domiciliario") navigation.replace("Domiciliario", { usuario: data });
         else if (data.rol === "restaurante") navigation.replace("Restaurante", { usuario: data });
-        else navigation.replace("Inicio", { usuario: data });
+        else if (data.rol === "conductor") navigation.replace("Conductor", { usuario: data });
+        else navigation.replace("ElegirServicio", { usuario: data });
       })
       .catch(() => { setCargando(false); setError("Error de conexion"); });
   };
@@ -517,6 +608,13 @@ function AdminScreen({ navigation, route }) {
       <View style={[styles.header, { backgroundColor: "#1E3B22" }]}>
         <Text style={styles.headerSub}>Panel de</Text>
         <Text style={styles.headerTitle}>Administracion</Text>
+        <TouchableOpacity
+          style={{ backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 10, padding: 12, marginTop: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+          onPress={() => navigation.navigate("AdminCarreras")}
+        >
+          <Text style={{ color: "#fff", fontWeight: "600" }}>🚕  Carreras y cobros</Text>
+          <Text style={{ color: "rgba(255,255,255,0.7)" }}>›</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={{ flexDirection: "row", backgroundColor: "#F6F1E6", margin: 16, borderRadius: 10, padding: 4 }}>
@@ -899,11 +997,609 @@ function RestauranteScreen({ navigation, route }) {
   );
 }
 
+// ============================================================ CARRERAS
+// Seccion de transporte. Comparte el login con domicilios, todo lo demas es aparte.
+
+function ElegirServicioScreen({ navigation, route }) {
+  const { usuario } = route.params;
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
+        <Text style={styles.headerTitle}>Que necesitas hoy?</Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <TouchableOpacity style={styles.servicioCard} onPress={() => navigation.navigate("Inicio", { usuario })}>
+          <Text style={{ fontSize: 44 }}>🍽️</Text>
+          <Text style={styles.servicioTitulo}>Pedir comida</Text>
+          <Text style={styles.servicioSub}>Restaurantes de Orito a domicilio</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.servicioCard, { backgroundColor: "#E6F1FB" }]} onPress={() => navigation.navigate("PedirCarrera", { usuario })}>
+          <Text style={{ fontSize: 44 }}>🚕</Text>
+          <Text style={[styles.servicioTitulo, { color: "#185FA5" }]}>Pedir carrera</Text>
+          <Text style={styles.servicioSub}>Un transportador te recoge</Text>
+        </TouchableOpacity>
+      </ScrollView>
+      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
+        <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
+}
+
+/** Campo de origen/destino: se puede escribir libre (nomenclatura, negocio, lo que sea)
+ *  y va sugiriendo lo que otros ya han usado. */
+function CampoLugar({ etiqueta, valor, onChange, placeholder }) {
+  const [sugerencias, setSugerencias] = useState([]);
+  const [mostrar, setMostrar] = useState(false);
+
+  const buscar = (texto) => {
+    onChange(texto);
+    if (texto.trim().length < 2) { setSugerencias([]); return; }
+    fetch(`${API}/lugares?buscar=${encodeURIComponent(texto.trim())}`)
+      .then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setSugerencias(d); })
+      .catch(() => setSugerencias([]));
+  };
+
+  const verTodos = () => {
+    setMostrar(true);
+    fetch(`${API}/lugares`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setSugerencias(d); })
+      .catch(() => {});
+  };
+
+  return (
+    <View style={{ marginBottom: 4 }}>
+      <Text style={styles.etiqueta}>{etiqueta}</Text>
+      <TextInput
+        value={valor}
+        onChangeText={buscar}
+        onFocus={verTodos}
+        placeholder={placeholder}
+        style={styles.input}
+      />
+      {mostrar && sugerencias.length > 0 && (
+        <View style={styles.sugerencias}>
+          {sugerencias.slice(0, 6).map((l) => (
+            <TouchableOpacity
+              key={l.id}
+              style={styles.sugerenciaItem}
+              onPress={() => { onChange(l.nombre); setSugerencias([]); setMostrar(false); }}
+            >
+              <Text style={{ fontSize: 13, color: "#333" }}>
+                {l.zona === "rural" ? "🌄 " : "📍 "}{l.nombre}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function PedirCarreraScreen({ navigation, route }) {
+  const { usuario } = route.params;
+  const [carrera, setCarrera] = useState(null);
+  const [form, setForm] = useState({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
+  const [cargando, setCargando] = useState(false);
+
+  const cargarActiva = () => {
+    fetch(`${API}/carreras/cliente/${usuario.id}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!Array.isArray(d)) return;
+        setCarrera(d.find(c => ["buscando", "aceptada", "en_camino"].includes(c.estado)) || null);
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    cargarActiva();
+    const intervalo = setInterval(cargarActiva, 6000);
+    const aviso = Notifications.addNotificationReceivedListener(cargarActiva);
+    const toque = Notifications.addNotificationResponseReceivedListener(cargarActiva);
+    return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
+  }, []);
+
+  const pedir = () => {
+    if (!form.origen.trim()) { avisar("Falta el origen", "Dinos donde estas"); return; }
+    if (!form.destino.trim()) { avisar("Falta el destino", "Dinos para donde vas"); return; }
+    if (!form.origen_detalle.trim()) {
+      avisar("Falta la referencia", "Escribe exactamente donde estas para que el conductor te encuentre. Ej: casa de dos pisos, porton azul, al frente de la cancha");
+      return;
+    }
+    setCargando(true);
+    const p = new URLSearchParams({
+      cliente_id: usuario.id, origen: form.origen.trim(), destino: form.destino.trim(),
+      origen_detalle: form.origen_detalle.trim(), destino_detalle: form.destino_detalle.trim(), notas: form.notas.trim(),
+    });
+    fetch(`${API}/carreras?${p.toString()}`, { method: "POST" })
+      .then(r => r.json())
+      .then(d => {
+        setCargando(false);
+        if (d.detail) { avisar("No se pudo pedir", d.detail); return; }
+        setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
+        setCarrera(d);
+      })
+      .catch(() => { setCargando(false); avisar("Error", "No hay conexion. Intenta de nuevo."); });
+  };
+
+  const cancelar = () => {
+    confirmar("Cancelar carrera", "Seguro que quieres cancelar?",
+      () => fetch(`${API}/carreras/${carrera.id}/estado?estado=cancelada`, { method: "PUT" })
+        .then(() => setCarrera(null))
+        .catch(() => avisar("Error", "No se pudo cancelar")),
+      "Si, cancelar");
+  };
+
+  // --- ya tiene una carrera en curso: se le hace seguimiento
+  if (carrera) {
+    const buscando = carrera.estado === "buscando";
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={[styles.header, { backgroundColor: "#185FA5" }]}>
+          <Text style={styles.headerSub}>Carrera #{carrera.id}</Text>
+          <Text style={styles.headerTitle}>{buscando ? "Buscando transportador..." : "Ya tienes conductor"}</Text>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          {buscando ? (
+            <View style={[styles.card, { alignItems: "center", paddingVertical: 30 }]}>
+              <ActivityIndicator size="large" color="#185FA5" />
+              <Text style={{ color: "#888", marginTop: 12, textAlign: "center" }}>
+                Avisamos a los transportadores disponibles.{"\n"}No cierres la app.
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.card, { marginBottom: 12 }]}>
+              <Text style={{ fontSize: 12, color: "#888" }}>Tu transportador</Text>
+              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333", marginTop: 2 }}>{carrera.conductor_nombre}</Text>
+              {carrera.conductor_vehiculo ? <Text style={{ fontSize: 14, color: "#555", marginTop: 4 }}>🚕 {carrera.conductor_vehiculo}</Text> : null}
+              {carrera.conductor_placa ? (
+                <View style={styles.placaBadge}><Text style={styles.placaTexto}>{carrera.conductor_placa}</Text></View>
+              ) : null}
+              <Text style={{ fontSize: 17, fontWeight: "600", color: "#185FA5", marginTop: 10 }}>📞 {carrera.conductor_telefono}</Text>
+              <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Llamalo si necesitas explicarle mejor donde estas</Text>
+            </View>
+          )}
+
+          <View style={styles.card}>
+            <Text style={styles.etiqueta}>DESDE</Text>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{carrera.origen}</Text>
+            {carrera.origen_detalle ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{carrera.origen_detalle}</Text> : null}
+            <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 12 }} />
+            <Text style={styles.etiqueta}>HASTA</Text>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{carrera.destino}</Text>
+            {carrera.destino_detalle ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{carrera.destino_detalle}</Text> : null}
+            {carrera.zona === "rural" && (
+              <View style={styles.avisoRural}><Text style={styles.avisoRuralTexto}>🌄 Carrera fuera del casco urbano</Text></View>
+            )}
+          </View>
+
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", marginTop: 16 }]} onPress={cancelar}>
+            <Text style={{ color: "#C0392B", fontWeight: "600" }}>Cancelar carrera</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // --- formulario para pedir
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={[styles.header, { backgroundColor: "#185FA5", flexDirection: "row", alignItems: "center", gap: 12 }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
+        </TouchableOpacity>
+        <View>
+          <Text style={styles.headerSub}>Transporte en Orito</Text>
+          <Text style={styles.headerTitle}>Pedir carrera</Text>
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+        <View style={styles.card}>
+          <CampoLugar
+            etiqueta="DONDE ESTAS"
+            valor={form.origen}
+            onChange={(t) => setForm({ ...form, origen: t })}
+            placeholder="Ej: Parque Central o Carrera 5a # 4-20"
+          />
+          <TextInput
+            value={form.origen_detalle}
+            onChangeText={(t) => setForm({ ...form, origen_detalle: t })}
+            placeholder="Exactamente donde: casa de dos pisos, porton azul..."
+            style={styles.input}
+            multiline
+          />
+          <Text style={styles.ayuda}>Entre mas claro, mas rapido te encuentra el conductor</Text>
+
+          <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
+
+          <CampoLugar
+            etiqueta="PARA DONDE VAS"
+            valor={form.destino}
+            onChange={(t) => setForm({ ...form, destino: t })}
+            placeholder="Ej: ESE Hospital Orito o Vereda Monserrate"
+          />
+          <TextInput
+            value={form.destino_detalle}
+            onChangeText={(t) => setForm({ ...form, destino_detalle: t })}
+            placeholder="Referencia del destino (opcional)"
+            style={styles.input}
+            multiline
+          />
+
+          <TextInput
+            value={form.notas}
+            onChangeText={(t) => setForm({ ...form, notas: t })}
+            placeholder="Algo mas que deba saber? (opcional)"
+            style={styles.input}
+          />
+        </View>
+
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
+          {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Pedir carrera</Text>}
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function ConductorScreen({ navigation, route }) {
+  const { usuario } = route.params;
+  const [disponibles, setDisponibles] = useState([]);
+  const [mias, setMias] = useState([]);
+  const [disponible, setDisponible] = useState(usuario.disponible === "si");
+  const [cuenta, setCuenta] = useState(null);
+
+  const cargar = () => {
+    fetch(`${API}/carreras/disponibles`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setDisponibles(d); }).catch(() => {});
+    fetch(`${API}/carreras/conductor/${usuario.id}`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setMias(d.filter(c => ["aceptada", "en_camino"].includes(c.estado))); })
+      .catch(() => {});
+    fetch(`${API}/conductores/${usuario.id}/estado-cuenta`).then(r => r.json())
+      .then(d => { if (d && !d.detail) setCuenta(d); }).catch(() => {});
+  };
+
+  useEffect(() => {
+    cargar();
+    // el sondeo es el respaldo: si la notificacion no llega (sin señal, permiso
+    // negado), igual aparece la carrera al refrescar
+    const intervalo = setInterval(cargar, 8000);
+    const aviso = Notifications.addNotificationReceivedListener(cargar);
+    const toque = Notifications.addNotificationResponseReceivedListener(cargar);
+    return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
+  }, []);
+
+  const cambiarDisponibilidad = () => {
+    const nuevo = !disponible;
+    setDisponible(nuevo);
+    fetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
+  };
+
+  const aceptar = (c) => {
+    fetch(`${API}/carreras/${c.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" })
+      .then(async (r) => {
+        const d = await r.json();
+        if (r.status === 409) { avisar("Muy tarde", "Otro transportador ya tomo esa carrera."); cargar(); return; }
+        if (r.status === 402) { avisar("Suscripcion vencida", d.detail); cargar(); return; }
+        if (d.detail) { avisar("No se pudo", d.detail); return; }
+        cargar();
+      })
+      .catch(() => avisar("Error", "No hay conexion. Intenta de nuevo."));
+  };
+
+  // Alert.prompt solo existe en iPhone, asi que la ventana del cobro es propia
+  const [cobrando, setCobrando] = useState(null);
+  const [tarifa, setTarifa] = useState("");
+
+  const finalizar = (c) => { setTarifa(""); setCobrando(c); };
+
+  const confirmarCobro = () => {
+    const t = parseInt((tarifa || "").replace(/\D/g, ""), 10);
+    const id = cobrando.id;
+    setCobrando(null);
+    fetch(`${API}/carreras/${id}/estado?estado=finalizada${t ? `&tarifa=${t}` : ""}`, { method: "PUT" })
+      .then(cargar)
+      .catch(() => avisar("Error", "No hay conexion. Intenta de nuevo."));
+  };
+
+  const cambiarEstado = (c, estado) => {
+    fetch(`${API}/carreras/${c.id}/estado?estado=${estado}`, { method: "PUT" }).then(cargar).catch(() => {});
+  };
+
+  const tarjeta = (c, propia) => (
+    <View key={c.id} style={[styles.card, { marginBottom: 12 }]}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <Text style={{ fontWeight: "600" }}>Carrera #{c.id}</Text>
+        {c.zona === "rural" && (
+          <View style={styles.avisoRural}><Text style={styles.avisoRuralTexto}>🌄 Fuera del pueblo</Text></View>
+        )}
+      </View>
+
+      <Text style={styles.etiqueta}>RECOGER EN</Text>
+      <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.origen}</Text>
+      {c.origen_detalle ? <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>📍 {c.origen_detalle}</Text> : null}
+
+      <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
+
+      <Text style={styles.etiqueta}>LLEVAR A</Text>
+      <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.destino}</Text>
+      {c.destino_detalle ? <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>📍 {c.destino_detalle}</Text> : null}
+
+      {c.notas ? <Text style={{ fontSize: 13, color: "#888", marginTop: 10, fontStyle: "italic" }}>💬 {c.notas}</Text> : null}
+
+      <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
+      <Text style={{ fontSize: 13, color: "#888" }}>👤 {c.cliente_nombre}</Text>
+      <Text style={{ fontSize: 15, fontWeight: "600", color: "#185FA5", marginTop: 2 }}>📞 {c.cliente_telefono}</Text>
+
+      {!propia && (
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 12 }]} onPress={() => aceptar(c)}>
+          <Text style={styles.buttonText}>Tomar esta carrera</Text>
+        </TouchableOpacity>
+      )}
+      {propia && c.estado === "aceptada" && (
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5", marginTop: 12 }]} onPress={() => cambiarEstado(c, "en_camino")}>
+          <Text style={styles.buttonText}>Ya lo recogi — En camino</Text>
+        </TouchableOpacity>
+      )}
+      {propia && c.estado === "en_camino" && (
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 12 }]} onPress={() => finalizar(c)}>
+          <Text style={styles.buttonText}>Carrera terminada</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={[styles.header, { backgroundColor: "#185FA5" }]}>
+        <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕</Text>
+        <Text style={styles.headerTitle}>Carreras</Text>
+      </View>
+
+      {cuenta && cuenta.cobro_activo && !cuenta.al_dia && (
+        <View style={styles.avisoVencido}>
+          <Text style={{ fontWeight: "bold", color: "#8A1C1C" }}>Tu suscripcion esta vencida</Text>
+          <Text style={{ fontSize: 13, color: "#8A1C1C", marginTop: 4 }}>
+            No puedes tomar carreras. Renueva por ${cuenta.valor_mensual.toLocaleString()} al mes.
+          </Text>
+          {cuenta.nequi_pagos ? (
+            <Text style={{ fontSize: 13, color: "#8A1C1C", marginTop: 4, fontWeight: "600" }}>Nequi: {cuenta.nequi_pagos}</Text>
+          ) : null}
+        </View>
+      )}
+      {cuenta && cuenta.cobro_activo && cuenta.al_dia && cuenta.dias_restantes <= 5 && (
+        <View style={[styles.avisoVencido, { backgroundColor: "#FFF4E0" }]}>
+          <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "600" }}>
+            Te quedan {cuenta.dias_restantes} dias de suscripcion
+          </Text>
+        </View>
+      )}
+
+      <TouchableOpacity style={[styles.disponibleBar, { backgroundColor: disponible ? "#E8F5E9" : "#FBECEC" }]} onPress={cambiarDisponibilidad}>
+        <Text style={{ fontWeight: "600", color: disponible ? "#2E7D32" : "#C0392B" }}>
+          {disponible ? "🟢 Estas conectado" : "🔴 Estas desconectado"}
+        </Text>
+        <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Toca para cambiar</Text>
+      </TouchableOpacity>
+
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 8 }}>
+        {mias.length > 0 && (
+          <>
+            <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
+            {mias.map(c => tarjeta(c, true))}
+          </>
+        )}
+
+        <Text style={styles.seccionTitulo}>Carreras disponibles</Text>
+        {disponibles.length === 0 && (
+          <View style={{ alignItems: "center", padding: 30 }}>
+            <Text style={{ fontSize: 40 }}>😴</Text>
+            <Text style={{ color: "#888", marginTop: 8 }}>No hay carreras por ahora</Text>
+          </View>
+        )}
+        {disponibles.map(c => tarjeta(c, false))}
+      </ScrollView>
+
+      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
+        <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
+      </TouchableOpacity>
+
+      <Modal visible={!!cobrando} transparent animationType="fade" onRequestClose={() => setCobrando(null)}>
+        <View style={styles.fondoModal}>
+          <View style={styles.ventanaModal}>
+            <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Carrera terminada</Text>
+            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>Cuanto cobraste?</Text>
+            <TextInput
+              value={tarifa}
+              onChangeText={setTarifa}
+              placeholder="Ej: 8000"
+              keyboardType="number-pad"
+              style={styles.input}
+              autoFocus
+            />
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setCobrando(null)}>
+                <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={confirmarCobro}>
+                <Text style={styles.buttonText}>Guardar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+function AdminCarrerasScreen({ navigation }) {
+  const [conductores, setConductores] = useState([]);
+  const [carreras, setCarreras] = useState([]);
+  const [config, setConfig] = useState({});
+  const [pestana, setPestana] = useState("conductores");
+
+  const cargar = () => {
+    fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
+    fetch(`${API}/carreras`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCarreras(d); }).catch(() => {});
+    fetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
+  };
+
+  useEffect(() => {
+    cargar();
+    const intervalo = setInterval(cargar, 10000);
+    return () => clearInterval(intervalo);
+  }, []);
+
+  const registrarPago = (c) => {
+    elegir(`Pago de ${c.nombre}`, "Cuantos meses le registro?",
+      [1, 3, 6].map(m => ({
+        texto: `${m} ${m === 1 ? "mes" : "meses"}`,
+        alElegir: () => fetch(`${API}/conductores/${c.id}/suscripcion?meses=${m}`, { method: "PUT" }).then(cargar),
+      })));
+  };
+
+  const quitarSuscripcion = (c) => {
+    confirmar("Quitar suscripcion", `${c.nombre} dejara de recibir carreras.`,
+      () => fetch(`${API}/conductores/${c.id}/suscripcion`, { method: "DELETE" }).then(cargar),
+      "Si, quitar");
+  };
+
+  const cambiarCobro = () => {
+    const nuevo = config.cobro_activo === "si" ? "no" : "si";
+    confirmar(
+      nuevo === "si" ? "Activar cobro" : "Desactivar cobro",
+      nuevo === "si"
+        ? "Desde ahora solo los conductores con suscripcion al dia podran tomar carreras."
+        : "Todos los conductores podran trabajar gratis.",
+      () => fetch(`${API}/config?clave=cobro_activo&valor=${nuevo}`, { method: "PUT" }).then(cargar));
+  };
+
+  const activos = conductores.filter(c => c.al_dia).length;
+  const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_camino"].includes(c.estado));
+  const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={[styles.header, { backgroundColor: "#185FA5", flexDirection: "row", alignItems: "center", gap: 12 }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
+        </TouchableOpacity>
+        <View>
+          <Text style={styles.headerSub}>Administracion</Text>
+          <Text style={styles.headerTitle}>Carreras</Text>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: "row", padding: 16, gap: 10 }}>
+        <View style={styles.mini}><Text style={styles.miniNum}>{enCurso.length}</Text><Text style={styles.miniTxt}>En curso</Text></View>
+        <View style={styles.mini}><Text style={styles.miniNum}>{hoy.length}</Text><Text style={styles.miniTxt}>Hoy</Text></View>
+        <View style={styles.mini}><Text style={styles.miniNum}>{activos}</Text><Text style={styles.miniTxt}>Al dia</Text></View>
+      </View>
+
+      <View style={[styles.tabs, { marginHorizontal: 16 }]}>
+        {["conductores", "carreras", "cobro"].map(p => (
+          <TouchableOpacity key={p} style={[styles.tab, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
+            <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{p[0].toUpperCase() + p.slice(1)}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4 }}>
+        {pestana === "conductores" && conductores.map(c => (
+          <View key={c.id} style={[styles.card, { marginBottom: 10 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "600", fontSize: 15 }}>{c.nombre}</Text>
+                <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📞 {c.telefono}</Text>
+                {c.placa ? <Text style={{ fontSize: 12, color: "#888" }}>🚕 {c.vehiculo} - {c.placa}</Text> : null}
+              </View>
+              <View style={[styles.estadoBadge, { backgroundColor: c.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
+                <Text style={{ fontSize: 11, fontWeight: "600", color: c.al_dia ? "#2E7D32" : "#C0392B" }}>
+                  {c.al_dia ? (config.cobro_activo === "si" ? `${c.dias_restantes} dias` : "activo") : "vencido"}
+                </Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32", padding: 10 }]} onPress={() => registrarPago(c)}>
+                <Text style={[styles.buttonText, { fontSize: 13 }]}>Registrar pago</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", padding: 10 }]} onPress={() => quitarSuscripcion(c)}>
+                <Text style={{ color: "#C0392B", fontWeight: "600", fontSize: 13 }}>Quitar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+        {pestana === "conductores" && conductores.length === 0 && (
+          <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>
+            No hay conductores. Cambia el rol de un usuario a "conductor" desde el panel de usuarios.
+          </Text>
+        )}
+
+        {pestana === "carreras" && carreras.slice(0, 40).map(c => (
+          <View key={c.id} style={[styles.card, { marginBottom: 10 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ fontWeight: "600" }}>#{c.id} · {c.cliente_nombre}</Text>
+              <Text style={{ fontSize: 11, color: "#888" }}>{c.estado}</Text>
+            </View>
+            <Text style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{c.origen} → {c.destino}</Text>
+            {c.conductor_nombre ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🚕 {c.conductor_nombre}</Text> : null}
+            {c.tarifa ? <Text style={{ fontSize: 12, color: "#2E7D32", marginTop: 2 }}>${c.tarifa.toLocaleString()}</Text> : null}
+          </View>
+        ))}
+        {pestana === "carreras" && carreras.length === 0 && (
+          <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>Todavia no hay carreras</Text>
+        )}
+
+        {pestana === "cobro" && (
+          <View style={styles.card}>
+            <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 4 }}>Cobro a conductores</Text>
+            <Text style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>
+              {config.cobro_activo === "si"
+                ? "Esta activo: solo los que tengan la suscripcion al dia reciben carreras."
+                : "Esta apagado: todos trabajan gratis. Ideal mientras la app se llena de usuarios."}
+            </Text>
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: config.cobro_activo === "si" ? "#C0392B" : "#2E7D32" }]}
+              onPress={cambiarCobro}
+            >
+              <Text style={styles.buttonText}>{config.cobro_activo === "si" ? "Desactivar cobro" : "Activar cobro"}</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.etiqueta, { marginTop: 20 }]}>VALOR MENSUAL</Text>
+            <TextInput
+              defaultValue={config.valor_mensual}
+              onEndEditing={(e) => {
+                const v = e.nativeEvent.text.replace(/\D/g, "");
+                if (v) fetch(`${API}/config?clave=valor_mensual&valor=${v}`, { method: "PUT" }).then(cargar);
+              }}
+              keyboardType="number-pad"
+              style={styles.input}
+            />
+            <Text style={styles.etiqueta}>NEQUI PARA RECIBIR PAGOS</Text>
+            <TextInput
+              defaultValue={config.nequi_pagos}
+              placeholder="Numero al que te transfieren"
+              onEndEditing={(e) => fetch(`${API}/config?clave=nequi_pagos&valor=${encodeURIComponent(e.nativeEvent.text)}`, { method: "PUT" }).then(cargar)}
+              keyboardType="phone-pad"
+              style={styles.input}
+            />
+            <Text style={styles.ayuda}>Los conductores vencidos ven este numero para renovar</Text>
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 export default function App() {
   return (
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="ElegirServicio" component={ElegirServicioScreen} />
         <Stack.Screen name="Inicio" component={InicioScreen} />
         <Stack.Screen name="Menu" component={MenuScreen} />
         <Stack.Screen name="Pedido" component={PedidoScreen} />
@@ -911,6 +1607,9 @@ export default function App() {
         <Stack.Screen name="Admin" component={AdminScreen} />
         <Stack.Screen name="Domiciliario" component={DomiciliarioScreen} />
         <Stack.Screen name="Restaurante" component={RestauranteScreen} />
+        <Stack.Screen name="PedirCarrera" component={PedirCarreraScreen} />
+        <Stack.Screen name="Conductor" component={ConductorScreen} />
+        <Stack.Screen name="AdminCarreras" component={AdminCarrerasScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -933,6 +1632,27 @@ const styles = StyleSheet.create({
   button: { backgroundColor: "#E8821C", borderRadius: 8, padding: 14, alignItems: "center" },
   buttonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   searchInput: { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12, color: "#fff" },
+  // --- carreras
+  servicioCard: { backgroundColor: "#FDEEDC", borderRadius: 16, padding: 24, alignItems: "center", marginBottom: 16 },
+  servicioTitulo: { fontSize: 20, fontWeight: "bold", color: "#E8821C", marginTop: 10 },
+  servicioSub: { fontSize: 13, color: "#888", marginTop: 4, textAlign: "center" },
+  etiqueta: { fontSize: 11, color: "#888", fontWeight: "600", letterSpacing: 0.5, marginBottom: 4 },
+  ayuda: { fontSize: 11, color: "#888", marginTop: -6, marginBottom: 6 },
+  sugerencias: { backgroundColor: "#fff", borderWidth: 0.5, borderColor: "#ddd", borderRadius: 8, marginTop: -8, marginBottom: 12, overflow: "hidden" },
+  sugerenciaItem: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5, borderBottomColor: "#eee" },
+  seccionTitulo: { fontSize: 15, fontWeight: "600", color: "#333", marginBottom: 10, marginTop: 6 },
+  disponibleBar: { marginHorizontal: 16, marginTop: 16, borderRadius: 12, padding: 14, alignItems: "center" },
+  placaBadge: { backgroundColor: "#333", borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6, alignSelf: "flex-start", marginTop: 8 },
+  placaTexto: { color: "#fff", fontWeight: "bold", fontSize: 16, letterSpacing: 2 },
+  avisoRural: { backgroundColor: "#FFF4E0", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, marginTop: 10, alignSelf: "flex-start" },
+  avisoRuralTexto: { fontSize: 11, color: "#8A5A00", fontWeight: "600" },
+  avisoVencido: { backgroundColor: "#FBECEC", marginHorizontal: 16, marginTop: 16, borderRadius: 12, padding: 14 },
+  mini: { flex: 1, backgroundColor: "#fff", borderRadius: 12, padding: 12, alignItems: "center", elevation: 2 },
+  miniNum: { fontSize: 22, fontWeight: "bold", color: "#185FA5" },
+  miniTxt: { fontSize: 11, color: "#888", marginTop: 2 },
+  estadoBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  fondoModal: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
+  ventanaModal: { backgroundColor: "#fff", borderRadius: 16, padding: 20 },
   restauranteCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
   restauranteNombre: { fontSize: 15, fontWeight: "600", color: "#333" },
   restauranteCategoria: { fontSize: 12, color: "#888", marginTop: 2 },
