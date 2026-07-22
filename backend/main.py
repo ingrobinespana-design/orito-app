@@ -904,6 +904,54 @@ def carreras_del_conductor(conductor_id: int, db: Session = Depends(get_db)):
     carreras = db.query(Carrera).filter(Carrera.conductor_id == conductor_id).order_by(Carrera.fecha.desc()).all()
     return con_conductor(carreras, db)
 
+def _periodos_desde():
+    """Inicios de dia, semana (lunes), mes y año para agrupar."""
+    ahora = datetime.now()
+    dia = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "hoy": dia,
+        "semana": dia - timedelta(days=dia.weekday()),
+        "mes": dia.replace(day=1),
+        "anio": dia.replace(month=1, day=1),
+        "total": datetime.min,
+    }
+
+def _resumen(carreras, desde):
+    """Cuenta carreras y suma lo ganado (tarifa) desde una fecha."""
+    hechas = [c for c in carreras if c.fecha and c.fecha >= desde]
+    return {"carreras": len(hechas), "ganado": sum((c.tarifa or 0) for c in hechas)}
+
+@app.get("/conductores/{conductor_id}/estadisticas")
+def estadisticas_conductor(conductor_id: int, db: Session = Depends(get_db)):
+    """Dashboard del conductor: carreras y ganancias por dia/semana/mes/año.
+    Solo cuenta las finalizadas (las que de verdad hizo y cobro)."""
+    conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
+    if not conductor:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    finalizadas = db.query(Carrera).filter(
+        Carrera.conductor_id == conductor_id, Carrera.estado == "finalizada").all()
+    periodos = _periodos_desde()
+    return {p: _resumen(finalizadas, desde) for p, desde in periodos.items()}
+
+@app.get("/estadisticas")
+def estadisticas_globales(db: Session = Depends(get_db)):
+    """Para el dueño: pulso del negocio. Volumen de carreras y plata movida por
+    periodo, mas conteos utiles para medir el desempeño de la app."""
+    finalizadas = db.query(Carrera).filter(Carrera.estado == "finalizada").all()
+    periodos = _periodos_desde()
+    resumen = {p: _resumen(finalizadas, desde) for p, desde in periodos.items()}
+    todas = db.query(Carrera).all()
+    conductores = db.query(Usuario).filter(Usuario.rol == "conductor").all()
+    return {
+        **resumen,
+        "clientes": db.query(Usuario).filter(Usuario.rol == "cliente").count(),
+        "conductores": len(conductores),
+        "conductores_al_dia": sum(1 for c in conductores if suscripcion_al_dia(c, db)),
+        "carreras_totales": len(todas),
+        "canceladas": sum(1 for c in todas if c.estado == "cancelada"),
+        "en_curso": sum(1 for c in todas if c.estado in ("buscando", "aceptada", "en_camino")),
+    }
+
 @app.get("/carreras")
 def todas_las_carreras(db: Session = Depends(get_db)):
     carreras = db.query(Carrera).order_by(Carrera.fecha.desc()).all()

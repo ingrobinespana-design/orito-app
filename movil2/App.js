@@ -1708,6 +1708,7 @@ function ConductorScreen({ navigation, route }) {
   const [mias, setMias] = useState([]);
   const [disponible, setDisponible] = useState(usuario.disponible === "si");
   const [cuenta, setCuenta] = useState(null);
+  const [stats, setStats] = useState(null);
 
   const cargar = () => {
     // con conductor_id el servidor filtra por municipio y tipo de vehiculo
@@ -1718,6 +1719,8 @@ function ConductorScreen({ navigation, route }) {
       .catch(() => {});
     fetch(`${API}/conductores/${usuario.id}/estado-cuenta`).then(r => r.json())
       .then(d => { if (d && !d.detail) setCuenta(d); }).catch(() => {});
+    fetch(`${API}/conductores/${usuario.id}/estadisticas`).then(r => r.json())
+      .then(d => { if (d && !d.detail) setStats(d); }).catch(() => {});
   };
 
   useEffect(() => {
@@ -1889,6 +1892,32 @@ function ConductorScreen({ navigation, route }) {
       </TouchableOpacity>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 8 }}>
+        {/* dashboard: lo hecho y lo ganado por periodo */}
+        {stats && (
+          <View style={[styles.card, { marginBottom: 14 }]}>
+            <Text style={styles.seccionTitulo}>Tus números</Text>
+            <View style={styles.statHoy}>
+              <View>
+                <Text style={{ fontSize: 12, color: "#666" }}>Hoy</Text>
+                <Text style={{ fontSize: 28, fontWeight: "bold", color: "#187830" }}>${(stats.hoy.ganado || 0).toLocaleString()}</Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={{ fontSize: 12, color: "#666" }}>Carreras hoy</Text>
+                <Text style={{ fontSize: 28, fontWeight: "bold", color: "#F06000" }}>{stats.hoy.carreras || 0}</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 12 }}>
+              {[["Semana", stats.semana], ["Mes", stats.mes], ["Año", stats.anio], ["Total", stats.total]].map(([lbl, d]) => (
+                <View key={lbl} style={styles.statCelda}>
+                  <Text style={{ fontSize: 11, color: "#888" }}>{lbl}</Text>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: "#333" }}>${(d.ganado || 0).toLocaleString()}</Text>
+                  <Text style={{ fontSize: 11, color: "#888" }}>{d.carreras || 0} {d.carreras === 1 ? "carrera" : "carreras"}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
         {mias.length > 0 && (
           <>
             <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
@@ -1968,11 +1997,13 @@ function AdminCarrerasScreen({ navigation }) {
   const [conductores, setConductores] = useState([]);
   const [carreras, setCarreras] = useState([]);
   const [config, setConfig] = useState({});
+  const [gStats, setGStats] = useState(null);
   const [pestana, setPestana] = useState("conductores");
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
     fetch(`${API}/carreras`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCarreras(d); }).catch(() => {});
+    fetch(`${API}/estadisticas`).then(r => r.json()).then(d => { if (d && !d.detail) setGStats(d); }).catch(() => {});
     fetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
   };
 
@@ -2029,7 +2060,7 @@ function AdminCarrerasScreen({ navigation }) {
       </View>
 
       <View style={[styles.tabs, { marginHorizontal: 16 }]}>
-        {["conductores", "carreras", "cobro"].map(p => (
+        {["numeros", "conductores", "carreras", "cobro"].map(p => (
           <TouchableOpacity key={p} style={[styles.tab, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
             <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{p[0].toUpperCase() + p.slice(1)}</Text>
           </TouchableOpacity>
@@ -2037,6 +2068,32 @@ function AdminCarrerasScreen({ navigation }) {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4 }}>
+        {pestana === "numeros" && gStats && (
+          <>
+            <View style={[styles.card, { marginBottom: 12 }]}>
+              <Text style={styles.seccionTitulo}>Plata movida (carreras finalizadas)</Text>
+              {[["Hoy", gStats.hoy], ["Esta semana", gStats.semana], ["Este mes", gStats.mes], ["Este año", gStats.anio], ["Total historico", gStats.total]].map(([lbl, d]) => (
+                <View key={lbl} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 0.5, borderBottomColor: "#eee" }}>
+                  <Text style={{ fontSize: 14, color: "#333" }}>{lbl}</Text>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>${(d.ganado || 0).toLocaleString()}</Text>
+                    <Text style={{ fontSize: 11, color: "#888" }}>{d.carreras || 0} carreras</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+              {[["Clientes", gStats.clientes], ["Conductores", gStats.conductores], ["Al día", gStats.conductores_al_dia], ["En curso", gStats.en_curso], ["Canceladas", gStats.canceladas], ["Carreras totales", gStats.carreras_totales]].map(([lbl, v]) => (
+                <View key={lbl} style={{ width: "33.3%", padding: 4 }}>
+                  <View style={[styles.card, { alignItems: "center", padding: 12 }]}>
+                    <Text style={{ fontSize: 22, fontWeight: "bold", color: "#F06000" }}>{v}</Text>
+                    <Text style={{ fontSize: 10, color: "#888", textAlign: "center" }}>{lbl}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
         {pestana === "conductores" && conductores.map(c => (
           <View key={c.id} style={[styles.card, { marginBottom: 10 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -2226,6 +2283,8 @@ const styles = StyleSheet.create({
   miniNum: { fontSize: 22, fontWeight: "bold", color: "#187830" },
   miniTxt: { fontSize: 11, color: "#888", marginTop: 2 },
   estadoBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  statHoy: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#EAF6EC", borderRadius: 12, padding: 14 },
+  statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },
   botonMapa: { borderWidth: 1, borderColor: "#187830", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F1F8F1" },
