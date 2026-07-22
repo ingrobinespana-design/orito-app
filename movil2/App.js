@@ -213,9 +213,12 @@ function LoginScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.header}>
-          <Text style={styles.headerSub}>Bienvenido a</Text>
-          <Text style={styles.headerTitle}>Tukán 🦜</Text>
+        <View style={[styles.header, { flexDirection: "row", alignItems: "center", gap: 14 }]}>
+          <Image source={require("./assets/icon.png")} style={{ width: 54, height: 54, borderRadius: 14 }} />
+          <View>
+            <Text style={styles.headerSub}>Bienvenido a</Text>
+            <Text style={styles.headerTitle}>Tukán</Text>
+          </View>
         </View>
         <View style={styles.card}>
           <View style={styles.tabs}>
@@ -2605,11 +2608,12 @@ export default function App() {
 
   if (!listo) {
     return (
-      <View style={{ flex: 1, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: "#fff", fontSize: 30, fontWeight: "bold" }}>Tukán 🦜</Text>
-        <Text style={{ color: "rgba(255,255,255,0.85)", marginTop: 4, fontSize: 12 }}>Domicilios y carreras amazónicas</Text>
-        <ActivityIndicator color="#fff" style={{ marginTop: 18 }} />
-        <Text style={{ color: "rgba(255,255,255,0.7)", marginTop: 10, fontSize: 12 }}>Buscando actualizaciones...</Text>
+      <View style={{ flex: 1, backgroundColor: "#F6F1E6", alignItems: "center", justifyContent: "center" }}>
+        <Image source={require("./assets/icon.png")} style={{ width: 180, height: 180, borderRadius: 36 }} />
+        <Text style={{ color: "#187830", fontSize: 32, fontWeight: "bold", marginTop: 16 }}>Tukán</Text>
+        <Text style={{ color: "#888", marginTop: 4, fontSize: 13 }}>Domicilios y carreras amazónicas</Text>
+        <ActivityIndicator color="#187830" style={{ marginTop: 20 }} />
+        <Text style={{ color: "#aaa", marginTop: 10, fontSize: 12 }}>Buscando actualizaciones...</Text>
       </View>
     );
   }
