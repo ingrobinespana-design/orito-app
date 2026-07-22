@@ -49,6 +49,11 @@ class Usuario(Base):
     foto_conductor = Column(String, nullable=True)
     foto_vehiculo = Column(String, nullable=True)
     foto_tarjeta = Column(String, nullable=True)
+    # ultima ubicacion reportada del conductor (solo mientras tiene carrera
+    # activa y la app abierta): para que el cliente lo vea venir en el mapa
+    ubic_lat = Column(Float, nullable=True)
+    ubic_lon = Column(Float, nullable=True)
+    ubic_fecha = Column(DateTime, nullable=True)
 
 class Restaurante(Base):
     __tablename__ = "restaurantes"
@@ -320,7 +325,8 @@ def crear_tablas():
                     "tipo_vehiculo VARCHAR DEFAULT 'carro'", "pago_efectivo VARCHAR DEFAULT 'si'",
                     "pago_nequi VARCHAR", "pago_daviplata VARCHAR", "pago_bancolombia VARCHAR",
                     "pago_breb VARCHAR", "foto_conductor VARCHAR", "foto_vehiculo VARCHAR",
-                    "foto_tarjeta VARCHAR"):
+                    "foto_tarjeta VARCHAR", "ubic_lat FLOAT", "ubic_lon FLOAT",
+                    "ubic_fecha TIMESTAMP"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))

@@ -1361,6 +1361,55 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
   );
 }
 
+/** Mapa de seguimiento: el cliente ve al conductor 🚗 acercarse a su punto 📍.
+ *  Se actualiza inyectando la nueva posicion cada vez que llega del servidor. */
+function mapaSeguimientoHTML(lat, lon) {
+  return `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}.em{font-size:34px;line-height:34px;text-align:center}</style>
+</head><body><div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  var map = L.map('map',{zoomControl:false}).setView([${lat}, ${lon}], 16);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
+  var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
+  var icoCarro = L.divIcon({html:'🚗', className:'em', iconSize:[34,34], iconAnchor:[17,17]});
+  var pin = L.marker([${lat}, ${lon}], {icon:icoPin}).addTo(map);
+  var carro = null, linea = null, ajustado = false;
+  function conductor(la, lo){
+    if(!carro){ carro = L.marker([la, lo], {icon:icoCarro}).addTo(map); }
+    else { carro.setLatLng([la, lo]); }
+    if(linea){ map.removeLayer(linea); }
+    linea = L.polyline([[la, lo], [${lat}, ${lon}]], {color:'#187830', weight:3, dashArray:'6 8'}).addTo(map);
+    if(!ajustado){ map.fitBounds(L.latLngBounds([[la,lo],[${lat},${lon}]]).pad(0.25)); ajustado = true; }
+  }
+</script></body></html>`;
+}
+
+function MapaSeguimiento({ punto, conductor }) {
+  const webRef = useRef(null);
+  useEffect(() => {
+    if (conductor && conductor.lat != null && webRef.current) {
+      webRef.current.injectJavaScript(`conductor(${conductor.lat}, ${conductor.lon}); true;`);
+    }
+  }, [conductor && conductor.lat, conductor && conductor.lon]);
+  if (!punto || punto.lat == null) return null;
+  return (
+    <View style={{ height: 240, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
+      <WebView
+        ref={webRef}
+        originWhitelist={["*"]}
+        source={{ html: mapaSeguimientoHTML(punto.lat, punto.lon), baseUrl: "https://orito.app/" }}
+        javaScriptEnabled domStorageEnabled mixedContentMode="always"
+        setSupportMultipleWindows={false} androidLayerType="hardware"
+        style={{ flex: 1 }}
+      />
+    </View>
+  );
+}
+
 function PedirCarreraScreen({ navigation, route }) {
   const { usuario } = route.params;
   const [carrera, setCarrera] = useState(null);
@@ -1600,6 +1649,31 @@ function PedirCarreraScreen({ navigation, route }) {
               )}
             </>
           ) : (
+            <>
+            {(() => {
+              // mientras viene a recogerte, el punto de referencia es tu ORIGEN;
+              // ya con vos a bordo, el DESTINO
+              const punto = carrera.estado === "aceptada"
+                ? (carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null)
+                : (carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null);
+              const cond = carrera.conductor_lat != null ? { lat: carrera.conductor_lat, lon: carrera.conductor_lon } : null;
+              const dist = punto && cond ? kmEntre(cond, punto) : null;
+              return (
+                <>
+                  <MapaSeguimiento punto={punto || cond} conductor={cond} />
+                  {dist != null && (
+                    <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
+                      <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
+                        🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"} ~{dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}
+                      </Text>
+                      {carrera.conductor_ubic_fecha && (Date.now() - new Date(carrera.conductor_ubic_fecha).getTime()) > 90000 && (
+                        <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicacion de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
+                      )}
+                    </View>
+                  )}
+                </>
+              );
+            })()}
             <View style={[styles.card, { marginBottom: 12 }]}>
               <Text style={{ fontSize: 12, color: "#888" }}>Tu transportador</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 }}>
@@ -1641,6 +1715,7 @@ function PedirCarreraScreen({ navigation, route }) {
                 </View>
               )}
             </View>
+            </>
           )}
 
           <View style={styles.card}>
@@ -1656,9 +1731,15 @@ function PedirCarreraScreen({ navigation, route }) {
             )}
           </View>
 
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", marginTop: 16 }]} onPress={cancelar}>
-            <Text style={{ color: "#C0392B", fontWeight: "600" }}>Cancelar carrera</Text>
-          </TouchableOpacity>
+          {["buscando", "aceptada"].includes(carrera.estado) ? (
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", marginTop: 16 }]} onPress={cancelar}>
+              <Text style={{ color: "#C0392B", fontWeight: "600" }}>Cancelar carrera</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={{ textAlign: "center", color: "#888", fontSize: 13, marginTop: 16 }}>
+              El viaje esta en curso y ya no se puede cancelar.{"\n"}Si hay un problema, llama al conductor.
+            </Text>
+          )}
         </ScrollView>
       </SafeAreaView>
     );
@@ -1880,6 +1961,26 @@ function ConductorScreen({ navigation, route }) {
     setDisponible(nuevo);
     fetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
   };
+
+  // mientras tiene carrera activa, reporta su ubicacion cada 8s para que el
+  // cliente lo vea venir en el mapa (solo con la app abierta; asi cuida bateria)
+  const tieneCarreraActiva = mias.length > 0;
+  useEffect(() => {
+    if (!tieneCarreraActiva) return;
+    let vivo = true;
+    const reportar = async () => {
+      try {
+        const p = await Location.getForegroundPermissionsAsync();
+        if (p.status !== "granted") return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!vivo) return;
+        fetch(`${API}/conductores/${usuario.id}/ubicacion?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`, { method: "PUT" }).catch(() => {});
+      } catch (e) {}
+    };
+    reportar();
+    const t = setInterval(reportar, 8000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [tieneCarreraActiva]);
 
   const aceptar = (c) => {
     fetch(`${API}/carreras/${c.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" })

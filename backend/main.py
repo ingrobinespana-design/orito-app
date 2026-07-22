@@ -488,6 +488,9 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "conductor_pagos": medios_pago(conductor) if conductor else None,
         "conductor_foto": conductor.foto_conductor if conductor else None,
         "conductor_foto_vehiculo": conductor.foto_vehiculo if conductor else None,
+        "conductor_lat": conductor.ubic_lat if conductor else None,
+        "conductor_lon": conductor.ubic_lon if conductor else None,
+        "conductor_ubic_fecha": conductor.ubic_fecha if conductor else None,
         "estado": c.estado,
         "zona": c.zona,
         "municipio": c.municipio,
@@ -1010,6 +1013,9 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tarifa: int = None, 
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     if not carrera:
         raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    # con el pasajero a bordo ya no se cancela: se finaliza o se resuelve hablando
+    if estado == "cancelada" and carrera.estado == "en_camino":
+        raise HTTPException(status_code=400, detail="El viaje ya esta en curso y no se puede cancelar. Si hay un problema, llama al conductor.")
     carrera.estado = estado
     if tarifa is not None:
         carrera.tarifa = tarifa
@@ -1160,6 +1166,17 @@ def obtener_conductores(db: Session = Depends(get_db)):
              "dias_restantes": dias_restantes(u),
              "al_dia": suscripcion_al_dia(u, db),
              "fotos": fotos_de(u)} for u in conductores]
+
+@app.put("/conductores/{conductor_id}/ubicacion")
+def reportar_ubicacion(conductor_id: int, lat: float, lon: float, db: Session = Depends(get_db)):
+    """El conductor reporta donde va (cada pocos segundos mientras tiene carrera
+    activa y la app abierta). El cliente lo ve venir en el mapa."""
+    u = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    u.ubic_lat, u.ubic_lon, u.ubic_fecha = lat, lon, datetime.now()
+    db.commit()
+    return {"ok": True}
 
 @app.get("/conductores/{conductor_id}/estado-cuenta")
 def estado_cuenta(conductor_id: int, db: Session = Depends(get_db)):
