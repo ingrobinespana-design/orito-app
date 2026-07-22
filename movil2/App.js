@@ -14,6 +14,25 @@ import { WebView } from 'react-native-webview';
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
 
+/** fetch con reintentos: el servidor gratis de Railway se "duerme" y la primera
+ *  peticion puede tardar en despertarlo. En vez de fallar de una, reintenta. */
+async function fetchReintento(url, opciones = {}, intentos = 3) {
+  let ultimoError;
+  for (let i = 0; i < intentos; i++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(url, { ...opciones, signal: ctrl.signal });
+      clearTimeout(timer);
+      return r;
+    } catch (e) {
+      ultimoError = e;
+      await new Promise((res) => setTimeout(res, 1500 * (i + 1)));  // espera y reintenta
+    }
+  }
+  throw ultimoError;
+}
+
 // Que la notificacion se vea y suene aunque la app este abierta
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -101,12 +120,17 @@ async function registrarNotificaciones(usuarioId) {
 function LoginScreen({ navigation }) {
   const [modo, setModo] = useState("login");
   const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "Orito", comoMe: "cliente", placa: "" });
-  const [municipios, setMunicipios] = useState([{ nombre: "Orito", vehiculos: ["carro"] }]);
+  const [municipios, setMunicipios] = useState([]);
+  const [cargandoMun, setCargandoMun] = useState(true);
 
-  useEffect(() => {
-    fetch(`${API}/municipios`).then(r => r.json())
-      .then(d => { if (Array.isArray(d) && d.length) setMunicipios(d); }).catch(() => {});
-  }, []);
+  const cargarMunicipios = () => {
+    setCargandoMun(true);
+    fetchReintento(`${API}/municipios`).then(r => r.json())
+      .then(d => { if (Array.isArray(d) && d.length) setMunicipios(d); })
+      .catch(() => {})
+      .finally(() => setCargandoMun(false));
+  };
+  useEffect(cargarMunicipios, []);
 
   // en Orito no hay mototaxi: la opcion de moto ni siquiera se muestra alla
   const vehiculosAqui = (municipios.find(m => m.nombre === form.municipio) || {}).vehiculos || ["carro"];
@@ -122,7 +146,7 @@ function LoginScreen({ navigation }) {
         + `&municipio=${encodeURIComponent(form.municipio)}`
         + (form.comoMe === "cliente" ? "" :
            `&tipo_vehiculo=${form.comoMe}&placa=${encodeURIComponent(form.placa)}`);
-    fetch(url, { method: "POST" })
+    fetchReintento(url, { method: "POST" })
       .then((res) => res.json())
       .then((data) => {
         setCargando(false);
@@ -134,7 +158,7 @@ function LoginScreen({ navigation }) {
         else if (data.rol === "conductor") navigation.replace("Conductor", { usuario: data });
         else navigation.replace("ElegirServicio", { usuario: data });
       })
-      .catch(() => { setCargando(false); setError("Error de conexion"); });
+      .catch(() => { setCargando(false); setError("No hay conexion. Verifica tu internet e intenta de nuevo."); });
   };
 
   return (
@@ -157,21 +181,29 @@ function LoginScreen({ navigation }) {
             <>
               <TextInput placeholder="Tu nombre" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} />
               <Text style={styles.etiqueta}>TU MUNICIPIO</Text>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                {municipios.map(m => (
-                  <TouchableOpacity
-                    key={m.nombre}
-                    style={[styles.opcion, form.municipio === m.nombre && styles.opcionActiva]}
-                    onPress={() => {
-                      // si venia con moto elegida y en el nuevo pueblo no hay, se limpia
-                      const permite = (m.vehiculos || []).includes(form.comoMe);
-                      setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : "cliente" });
-                    }}
-                  >
-                    <Text style={[styles.opcionTexto, form.municipio === m.nombre && styles.opcionTextoActivo]}>{m.nombre}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {cargandoMun ? (
+                <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#185FA5" /></View>
+              ) : municipios.length === 0 ? (
+                <TouchableOpacity style={[styles.opcion, { marginBottom: 12 }]} onPress={cargarMunicipios}>
+                  <Text style={{ color: "#C0392B", fontSize: 13 }}>Sin conexion. Toca para reintentar</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                  {municipios.map(m => (
+                    <TouchableOpacity
+                      key={m.nombre}
+                      style={[styles.opcion, form.municipio === m.nombre && styles.opcionActiva]}
+                      onPress={() => {
+                        // si venia con moto elegida y en el nuevo pueblo no hay, se limpia
+                        const permite = (m.vehiculos || []).includes(form.comoMe);
+                        setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : "cliente" });
+                      }}
+                    >
+                      <Text style={[styles.opcionTexto, form.municipio === m.nombre && styles.opcionTextoActivo]}>{m.nombre}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
 
               <Text style={styles.etiqueta}>COMO TE REGISTRAS</Text>
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
@@ -1087,15 +1119,16 @@ function ElegirServicioScreen({ navigation, route }) {
 }
 
 /** Campo de origen/destino: se puede escribir libre (nomenclatura, negocio, lo que sea)
- *  y va sugiriendo lo que otros ya han usado. */
-function CampoLugar({ etiqueta, valor, onChange, placeholder }) {
+ *  y va sugiriendo lo que otros ya han usado EN ESE MUNICIPIO (no mezcla pueblos). */
+function CampoLugar({ etiqueta, valor, onChange, placeholder, municipio }) {
   const [sugerencias, setSugerencias] = useState([]);
   const [mostrar, setMostrar] = useState(false);
+  const filtroMun = municipio ? `&municipio=${encodeURIComponent(municipio)}` : "";
 
   const buscar = (texto) => {
     onChange(texto);
     if (texto.trim().length < 2) { setSugerencias([]); return; }
-    fetch(`${API}/lugares?buscar=${encodeURIComponent(texto.trim())}`)
+    fetch(`${API}/lugares?buscar=${encodeURIComponent(texto.trim())}${filtroMun}`)
       .then(r => r.json())
       .then(d => { if (Array.isArray(d)) setSugerencias(d); })
       .catch(() => setSugerencias([]));
@@ -1103,7 +1136,7 @@ function CampoLugar({ etiqueta, valor, onChange, placeholder }) {
 
   const verTodos = () => {
     setMostrar(true);
-    fetch(`${API}/lugares`).then(r => r.json())
+    fetch(`${API}/lugares?buscar=${filtroMun}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setSugerencias(d); })
       .catch(() => {});
   };
@@ -1230,7 +1263,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [cargando, setCargando] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/municipios`).then(r => r.json()).then(d => {
+    fetchReintento(`${API}/municipios`).then(r => r.json()).then(d => {
       if (!Array.isArray(d)) return;
       const mio = d.find(m => m.nombre === (usuario.municipio || "Orito"));
       if (!mio) return;
@@ -1269,6 +1302,23 @@ function PedirCarreraScreen({ navigation, route }) {
     if (mapaAbierto === "origen") setOrigenCoords(coords);
     else if (mapaAbierto === "destino") setDestinoCoords(coords);
     setMapaAbierto(null);
+  };
+
+  // GPS de un toque: marca el origen con la ubicacion actual sin abrir el mapa
+  const [buscandoGps, setBuscandoGps] = useState(false);
+  const usarUbicacionActual = async () => {
+    try {
+      setBuscandoGps(true);
+      const permiso = await Location.requestForegroundPermissionsAsync();
+      if (permiso.status !== "granted") {
+        avisar("Permiso de ubicacion", "Para usar tu ubicacion activa el permiso, o marca el punto en el mapa.");
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      setOrigenCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+    } catch (e) {
+      avisar("GPS", "No pudimos tomar tu ubicacion. Marca el punto en el mapa.");
+    } finally { setBuscandoGps(false); }
   };
 
   const cargarActiva = () => {
@@ -1311,16 +1361,16 @@ function PedirCarreraScreen({ navigation, route }) {
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
     const p = new URLSearchParams(datos);
-    fetch(`${API}/carreras?${p.toString()}`, { method: "POST" })
+    fetchReintento(`${API}/carreras?${p.toString()}`, { method: "POST" })
       .then(r => r.json())
       .then(d => {
         setCargando(false);
         if (d.detail) { avisar("No se pudo pedir", d.detail); return; }
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
-        setOrigenCoords(null); setDestinoCoords(null); setEstimado(null);
+        setOrigenCoords(null); setDestinoCoords(null); setEstimado(null); setOferta("");
         setCarrera(d);
       })
-      .catch(() => { setCargando(false); avisar("Error", "No hay conexion. Intenta de nuevo."); });
+      .catch(() => { setCargando(false); avisar("Sin conexion", "No pudimos enviar tu carrera. Verifica tu internet e intenta de nuevo."); });
   };
 
   const cancelar = () => {
@@ -1447,6 +1497,7 @@ function PedirCarreraScreen({ navigation, route }) {
             valor={form.origen}
             onChange={(t) => setForm({ ...form, origen: t })}
             placeholder="Ej: Parque Central o Carrera 5a # 4-20"
+            municipio={usuario.municipio}
           />
           <TextInput
             value={form.origen_detalle}
@@ -1464,6 +1515,7 @@ function PedirCarreraScreen({ navigation, route }) {
             valor={form.destino}
             onChange={(t) => setForm({ ...form, destino: t })}
             placeholder="Ej: ESE Hospital Orito o Vereda Monserrate"
+            municipio={usuario.municipio}
           />
           <TextInput
             value={form.destino_detalle}
@@ -1503,9 +1555,14 @@ function PedirCarreraScreen({ navigation, route }) {
             <>
               <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
               <Text style={styles.etiqueta}>UBICACION EN EL MAPA</Text>
+              <TouchableOpacity style={[styles.botonGps]} onPress={usarUbicacionActual} disabled={buscandoGps}>
+                {buscandoGps
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={{ color: "#fff", fontWeight: "700" }}>📍 Usar mi ubicacion actual</Text>}
+              </TouchableOpacity>
               <TouchableOpacity style={[styles.botonMapa, origenCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("origen")}>
                 <Text style={{ color: origenCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
-                  {origenCoords ? "✓ Origen marcado" : "📍 Marcar de donde sales"}
+                  {origenCoords ? "✓ Origen marcado — cambiar en el mapa" : "🗺️ O marcar de donde sales en el mapa"}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.botonMapa, destinoCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("destino")}>
@@ -2014,7 +2071,7 @@ const styles = StyleSheet.create({
   tabTextActive: { color: "#333", fontWeight: "500" },
   input: { borderWidth: 0.5, borderColor: "#ddd", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 14, backgroundColor: "#fff" },
   error: { color: "red", fontSize: 12, marginBottom: 12 },
-  button: { backgroundColor: "#E8821C", borderRadius: 8, padding: 14, alignItems: "center" },
+  button: { backgroundColor: "#E8821C", borderRadius: 10, padding: 14, alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 3 },
   buttonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   searchInput: { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12, color: "#fff" },
   // --- carreras
@@ -2036,6 +2093,7 @@ const styles = StyleSheet.create({
   miniNum: { fontSize: 22, fontWeight: "bold", color: "#185FA5" },
   miniTxt: { fontSize: 11, color: "#888", marginTop: 2 },
   estadoBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  botonGps: { backgroundColor: "#185FA5", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   botonMapa: { borderWidth: 1, borderColor: "#185FA5", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F4F9FE" },
   botonMapaOk: { borderColor: "#2E7D32", backgroundColor: "#EAF6EC" },
   estimado: { backgroundColor: "#F4F9FE", borderRadius: 10, padding: 14, marginTop: 6, alignItems: "center" },
