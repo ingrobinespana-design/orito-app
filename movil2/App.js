@@ -1240,20 +1240,24 @@ function mapaHTML(lat, lon) {
   .pin-emoji{font-size:40px;line-height:40px;text-align:center}
   #aviso{position:absolute;top:8px;left:8px;right:8px;z-index:1000;background:#fff3cd;color:#8A5A00;
     font-family:sans-serif;font-size:12px;padding:8px;border-radius:6px;display:none;text-align:center}
+  #btnsat{position:absolute;bottom:14px;right:10px;z-index:1000;background:#fff;border:none;
+    border-radius:10px;padding:9px 11px;font-size:20px;box-shadow:0 1px 5px rgba(0,0,0,.3)}
 </style></head><body>
 <div id="map"></div>
 <div id="aviso">El mapa no cargo. Puedes cerrar y escribir la direccion.</div>
+<button id="btnsat" onclick="alternarSatelite()">🛰️</button>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   if(!window.L){ document.getElementById('aviso').style.display='block'; }
-  var map = L.map('map',{zoomControl:true}).setView([${lat}, ${lon}], 16);
-  // Plan A/B/C: si un servidor de mapas no responde, prueba el siguiente solo
+  var map = L.map('map',{zoomControl:true}).setView([${lat}, ${lon}], 17);
+  // OSM estandar de primero: es el que muestra nombres de calles Y negocios
+  // (el mas parecido a Google Maps, gratis). Respaldo: Carto -> Esri.
   var proveedores = [
+    {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opt:{maxZoom:19, subdomains:'abc'}},
     {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', opt:{maxZoom:20, subdomains:'abcd'}},
-    {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opt:{maxZoom:19}},
-    {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opt:{maxZoom:19, subdomains:'abc'}}
+    {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opt:{maxZoom:19}}
   ];
-  var idx=0, capa=null;
+  var idx=0, capa=null, satelite=false, capaSat=null, capaEtiq=null;
   function ponerCapa(){
     if(capa){ map.removeLayer(capa); }
     var p = proveedores[idx];
@@ -1270,6 +1274,20 @@ function mapaHTML(lat, lon) {
     capa.addTo(map);
   }
   ponerCapa();
+  // boton de satelite como Google: en pueblo la gente encuentra su casa por el techo
+  function alternarSatelite(){
+    satelite = !satelite;
+    document.getElementById('btnsat').textContent = satelite ? '🗺️' : '🛰️';
+    if(satelite){
+      if(capa) map.removeLayer(capa);
+      capaSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19}).addTo(map);
+      capaEtiq = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png', {maxZoom:20, subdomains:'abcd'}).addTo(map);
+    } else {
+      if(capaSat) map.removeLayer(capaSat);
+      if(capaEtiq) map.removeLayer(capaEtiq);
+      ponerCapa();
+    }
+  }
   // pin de verdad: se queda donde lo pones (tocando el mapa) y se puede arrastrar
   var icono = L.divIcon({html:'📍', className:'pin-emoji', iconSize:[40,40], iconAnchor:[20,38]});
   var pin = L.marker([${lat}, ${lon}], {draggable:true, icon:icono, autoPan:true}).addTo(map);
