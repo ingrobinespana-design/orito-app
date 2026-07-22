@@ -1096,9 +1096,14 @@ function ElegirServicioScreen({ navigation, route }) {
   const { usuario } = route.params;
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
-        <Text style={styles.headerTitle}>Que necesitas hoy?</Text>
+      <View style={[styles.header, { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
+        <View>
+          <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
+          <Text style={styles.headerTitle}>Que necesitas hoy?</Text>
+        </View>
+        <TouchableOpacity onPress={() => navigation.navigate("Configuracion", { usuario })} style={{ padding: 4 }}>
+          <Text style={{ fontSize: 24 }}>⚙️</Text>
+        </TouchableOpacity>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <TouchableOpacity style={styles.servicioCard} onPress={() => navigation.navigate("Inicio", { usuario })}>
@@ -1515,6 +1520,17 @@ function PedirCarreraScreen({ navigation, route }) {
               ) : null}
               <Text style={{ fontSize: 17, fontWeight: "600", color: "#187830", marginTop: 10 }}>📞 {carrera.conductor_telefono}</Text>
               <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Llamalo si necesitas explicarle mejor donde estas</Text>
+
+              {carrera.conductor_pagos && (
+                <View style={{ marginTop: 12, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 12 }}>
+                  <Text style={{ fontSize: 12, color: "#666", marginBottom: 6, fontWeight: "600" }}>COMO PAGARLE</Text>
+                  {carrera.conductor_pagos.efectivo && <Text style={styles.pagoItem}>💵 Efectivo</Text>}
+                  {carrera.conductor_pagos.nequi ? <Text style={styles.pagoItem}>📱 Nequi: {carrera.conductor_pagos.nequi}</Text> : null}
+                  {carrera.conductor_pagos.daviplata ? <Text style={styles.pagoItem}>📱 Daviplata: {carrera.conductor_pagos.daviplata}</Text> : null}
+                  {carrera.conductor_pagos.bancolombia ? <Text style={styles.pagoItem}>🏦 Bancolombia: {carrera.conductor_pagos.bancolombia}</Text> : null}
+                  {carrera.conductor_pagos.breb ? <Text style={styles.pagoItem}>🔑 Bre-B: {carrera.conductor_pagos.breb}</Text> : null}
+                </View>
+              )}
             </View>
           )}
 
@@ -1860,9 +1876,14 @@ function ConductorScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#187830" }]}>
-        <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕</Text>
-        <Text style={styles.headerTitle}>Carreras</Text>
+      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
+        <View>
+          <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕</Text>
+          <Text style={styles.headerTitle}>Carreras</Text>
+        </View>
+        <TouchableOpacity onPress={() => navigation.navigate("Configuracion", { usuario })} style={{ padding: 4 }}>
+          <Text style={{ fontSize: 24 }}>⚙️</Text>
+        </TouchableOpacity>
       </View>
 
       {cuenta && cuenta.cobro_activo && !cuenta.al_dia && (
@@ -2192,6 +2213,102 @@ function AdminCarrerasScreen({ navigation }) {
   );
 }
 
+function ConfiguracionScreen({ navigation, route }) {
+  const { usuario } = route.params;
+  const esConductor = usuario.rol === "conductor";
+  const [pagos, setPagos] = useState({ efectivo: true, nequi: "", daviplata: "", bancolombia: "", breb: "" });
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
+      .then(d => { if (d && d.pagos) setPagos(d.pagos); })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  const guardar = () => {
+    setGuardando(true);
+    const p = new URLSearchParams({
+      efectivo: pagos.efectivo ? "si" : "no",
+      nequi: pagos.nequi || "", daviplata: pagos.daviplata || "",
+      bancolombia: pagos.bancolombia || "", breb: pagos.breb || "",
+    });
+    fetch(`${API}/usuarios/${usuario.id}/pagos?${p.toString()}`, { method: "PUT" })
+      .then(r => r.json())
+      .then(d => { setGuardando(false); if (d.ok) avisar("Guardado", "Tus medios de pago quedaron actualizados."); else avisar("Error", "No se pudo guardar."); })
+      .catch(() => { setGuardando(false); avisar("Sin conexion", "Intenta de nuevo."); });
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", alignItems: "center", gap: 12 }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
+        </TouchableOpacity>
+        <View>
+          <Text style={styles.headerSub}>Mi cuenta</Text>
+          <Text style={styles.headerTitle}>Configuracion</Text>
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <View style={[styles.card, { marginBottom: 14 }]}>
+          <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>{usuario.nombre}</Text>
+          <Text style={{ fontSize: 13, color: "#888", marginTop: 4 }}>📞 {usuario.telefono}</Text>
+          {usuario.municipio ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {usuario.municipio}</Text> : null}
+          {esConductor ? (
+            <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+              {usuario.tipo_vehiculo === "moto" ? "🏍️ Moto" : "🚗 Carro"}{usuario.placa ? ` · ${usuario.placa}` : ""}
+            </Text>
+          ) : null}
+        </View>
+
+        {cargando ? <ActivityIndicator color="#187830" /> : esConductor ? (
+          <View style={styles.card}>
+            <Text style={styles.seccionTitulo}>Como quieres que te paguen</Text>
+            <Text style={styles.ayuda}>El cliente vera estos datos para pagarte directo. La app no cobra ni maneja tu plata.</Text>
+
+            <TouchableOpacity style={styles.pagoFila} onPress={() => setPagos({ ...pagos, efectivo: !pagos.efectivo })}>
+              <Text style={{ fontSize: 15, color: "#333" }}>💵 Efectivo</Text>
+              <View style={[styles.switch, pagos.efectivo && styles.switchOn]}>
+                <Text style={{ fontSize: 12, fontWeight: "600", color: pagos.efectivo ? "#fff" : "#888" }}>{pagos.efectivo ? "SI" : "NO"}</Text>
+              </View>
+            </TouchableOpacity>
+
+            <Text style={styles.etiqueta}>NEQUI (numero)</Text>
+            <TextInput value={pagos.nequi} onChangeText={t => setPagos({ ...pagos, nequi: t.replace(/\D/g, "") })}
+              placeholder="Ej: 3001234567" keyboardType="phone-pad" style={styles.input} />
+
+            <Text style={styles.etiqueta}>DAVIPLATA (numero)</Text>
+            <TextInput value={pagos.daviplata} onChangeText={t => setPagos({ ...pagos, daviplata: t.replace(/\D/g, "") })}
+              placeholder="Opcional" keyboardType="phone-pad" style={styles.input} />
+
+            <Text style={styles.etiqueta}>BANCOLOMBIA (cuenta o llave)</Text>
+            <TextInput value={pagos.bancolombia} onChangeText={t => setPagos({ ...pagos, bancolombia: t })}
+              placeholder="Numero de cuenta ahorros/corriente" style={styles.input} />
+
+            <Text style={styles.etiqueta}>LLAVE BRE-B</Text>
+            <TextInput value={pagos.breb} onChangeText={t => setPagos({ ...pagos, breb: t })}
+              placeholder="Tu llave Bre-B (opcional)" style={styles.input} />
+
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 8 }]} onPress={guardar} disabled={guardando}>
+              {guardando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Guardar medios de pago</Text>}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.seccionTitulo}>Pagos</Text>
+            <Text style={{ fontSize: 14, color: "#555", lineHeight: 20 }}>
+              Le pagas directo al conductor. Cuando aceptes una carrera, veras que medios acepta
+              (efectivo, Nequi, Bancolombia, Bre-B...) para que pagues como prefieras.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 export default function App() {
   const [listo, setListo] = useState(false);
 
@@ -2242,6 +2359,7 @@ export default function App() {
         <Stack.Screen name="PedirCarrera" component={PedirCarreraScreen} />
         <Stack.Screen name="Conductor" component={ConductorScreen} />
         <Stack.Screen name="AdminCarreras" component={AdminCarrerasScreen} />
+        <Stack.Screen name="Configuracion" component={ConfiguracionScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -2284,6 +2402,10 @@ const styles = StyleSheet.create({
   miniTxt: { fontSize: 11, color: "#888", marginTop: 2 },
   estadoBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   statHoy: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#EAF6EC", borderRadius: 12, padding: 14 },
+  pagoFila: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: "#eee", marginBottom: 8 },
+  switch: { backgroundColor: "#eee", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, minWidth: 44, alignItems: "center" },
+  switchOn: { backgroundColor: "#187830" },
+  pagoItem: { fontSize: 14, color: "#333", marginTop: 3 },
   statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },

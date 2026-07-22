@@ -390,6 +390,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "conductor_telefono": conductor.telefono if conductor else None,
         "conductor_placa": conductor.placa if conductor else None,
         "conductor_vehiculo": conductor.vehiculo if conductor else None,
+        "conductor_pagos": medios_pago(conductor) if conductor else None,
         "estado": c.estado,
         "zona": c.zona,
         "municipio": c.municipio,
@@ -956,6 +957,45 @@ def estadisticas_globales(db: Session = Depends(get_db)):
 def todas_las_carreras(db: Session = Depends(get_db)):
     carreras = db.query(Carrera).order_by(Carrera.fecha.desc()).all()
     return con_conductor(carreras, db)
+
+def medios_pago(u: Usuario):
+    """Los medios de pago que el conductor acepta, para mostrarle al cliente."""
+    return {
+        "efectivo": (u.pago_efectivo or "si") == "si",
+        "nequi": u.pago_nequi or "",
+        "daviplata": u.pago_daviplata or "",
+        "bancolombia": u.pago_bancolombia or "",
+        "breb": u.pago_breb or "",
+    }
+
+@app.get("/usuarios/{usuario_id}/perfil")
+def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return {"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
+            "municipio": u.municipio, "tipo_vehiculo": u.tipo_vehiculo, "placa": u.placa,
+            "vehiculo": u.vehiculo, "pagos": medios_pago(u)}
+
+@app.put("/usuarios/{usuario_id}/pagos")
+def guardar_pagos(usuario_id: int, efectivo: str = None, nequi: str = None, daviplata: str = None,
+                  bancolombia: str = None, breb: str = None, db: Session = Depends(get_db)):
+    """El conductor configura como quiere que le paguen (efectivo, Nequi, etc.).
+    Se manda solo lo que cambia; lo demas queda igual."""
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if efectivo is not None:
+        if efectivo not in ("si", "no"):
+            raise HTTPException(status_code=400, detail="efectivo solo acepta si o no")
+        u.pago_efectivo = efectivo
+    if nequi is not None: u.pago_nequi = nequi.strip() or None
+    if daviplata is not None: u.pago_daviplata = daviplata.strip() or None
+    if bancolombia is not None: u.pago_bancolombia = bancolombia.strip() or None
+    if breb is not None: u.pago_breb = breb.strip() or None
+    db.commit()
+    db.refresh(u)
+    return {"ok": True, "pagos": medios_pago(u)}
 
 @app.get("/conductores")
 def obtener_conductores(db: Session = Depends(get_db)):

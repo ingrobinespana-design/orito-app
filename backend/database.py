@@ -37,6 +37,13 @@ class Usuario(Base):
     push_token = Column(String, nullable=True)
     # hasta cuando tiene paga la suscripcion. Vacio = nunca ha pagado.
     suscripcion_hasta = Column(DateTime, nullable=True)
+    # medios de pago que el conductor acepta (la app NO procesa pagos: solo le
+    # muestra al cliente como pagarle directo). Efectivo por defecto.
+    pago_efectivo = Column(String, default="si")
+    pago_nequi = Column(String, nullable=True)          # numero Nequi
+    pago_daviplata = Column(String, nullable=True)      # numero Daviplata
+    pago_bancolombia = Column(String, nullable=True)    # cuenta / llave
+    pago_breb = Column(String, nullable=True)           # llave Bre-B
 
 class Restaurante(Base):
     __tablename__ = "restaurantes"
@@ -294,7 +301,9 @@ def crear_tablas():
             pass
     for columna in ("placa VARCHAR", "vehiculo VARCHAR", "disponible VARCHAR", "push_token VARCHAR",
                     "suscripcion_hasta TIMESTAMP", "municipio VARCHAR DEFAULT 'Orito'",
-                    "tipo_vehiculo VARCHAR DEFAULT 'carro'"):
+                    "tipo_vehiculo VARCHAR DEFAULT 'carro'", "pago_efectivo VARCHAR DEFAULT 'si'",
+                    "pago_nequi VARCHAR", "pago_daviplata VARCHAR", "pago_bancolombia VARCHAR",
+                    "pago_breb VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
