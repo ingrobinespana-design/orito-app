@@ -2027,11 +2027,41 @@ function ConductorScreen({ navigation, route }) {
           </View>
         )}
 
+        {/* ===== PESTAÑA CARTERA: suscripcion ===== */}
+        {tab === "cartera" && (
+          <View style={styles.card}>
+            <Text style={styles.seccionTitulo}>Tu suscripción</Text>
+            {!cuenta ? <ActivityIndicator color="#187830" /> : !cuenta.cobro_activo ? (
+              <>
+                <Text style={{ fontSize: 16, color: "#187830", fontWeight: "700" }}>Gratis por ahora 🎉</Text>
+                <Text style={{ fontSize: 13, color: "#666", marginTop: 6 }}>Trabajas sin costo durante el lanzamiento. Cuando empiece el cobro te avisamos aca.</Text>
+              </>
+            ) : (
+              <>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontSize: 14, color: "#333" }}>Estado</Text>
+                  <View style={[styles.estadoBadge, { backgroundColor: cuenta.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: cuenta.al_dia ? "#187830" : "#C0392B" }}>{cuenta.al_dia ? "Al día" : "Vencida"}</Text>
+                  </View>
+                </View>
+                {cuenta.al_dia && <Text style={{ fontSize: 13, color: "#666", marginTop: 10 }}>Te quedan {cuenta.dias_restantes} días</Text>}
+                <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>Valor: ${cuenta.valor_mensual.toLocaleString()} / mes</Text>
+                {!cuenta.al_dia && cuenta.nequi_pagos ? (
+                  <View style={{ backgroundColor: "#FFF4E0", borderRadius: 8, padding: 12, marginTop: 12 }}>
+                    <Text style={{ fontSize: 13, color: "#8A5A00" }}>Renueva pagando a Nequi:</Text>
+                    <Text style={{ fontSize: 18, fontWeight: "bold", color: "#8A5A00" }}>{cuenta.nequi_pagos}</Text>
+                  </View>
+                ) : null}
+              </>
+            )}
+          </View>
+        )}
+
       </ScrollView>
 
-      {/* barra de pestañas: solo lo necesario */}
+      {/* barra de pestañas */}
       <View style={styles.tabBar}>
-        {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
+        {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
           <TouchableOpacity key={k} style={styles.tabBarItem}
             onPress={() => k === "salir" ? navigation.replace("Login") : (animar(), setTab(k))}>
             <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
