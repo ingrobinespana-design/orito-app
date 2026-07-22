@@ -2530,6 +2530,9 @@ function ConfiguracionScreen({ navigation, route }) {
               {usuario.tipo_vehiculo === "moto" ? "🏍️ Moto" : "🚗 Carro"}{usuario.placa ? ` · ${usuario.placa}` : ""}
             </Text>
           ) : null}
+          <Text style={{ fontSize: 11, color: "#bbb", marginTop: 6 }}>
+            Version: {Updates.updateId ? `${Updates.updateId.slice(0, 8)} · ${Updates.createdAt ? new Date(Updates.createdAt).toLocaleString() : ""}` : "base (sin actualizaciones aun)"}
+          </Text>
         </View>
 
         {/* notificaciones: recibir servicios aunque la app este cerrada */}
