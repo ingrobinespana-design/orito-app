@@ -182,7 +182,7 @@ function LoginScreen({ navigation }) {
               <TextInput placeholder="Tu nombre" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} />
               <Text style={styles.etiqueta}>TU MUNICIPIO</Text>
               {cargandoMun ? (
-                <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#185FA5" /></View>
+                <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#187830" /></View>
               ) : municipios.length === 0 ? (
                 <TouchableOpacity style={[styles.opcion, { marginBottom: 12 }]} onPress={cargarMunicipios}>
                   <Text style={{ color: "#C0392B", fontSize: 13 }}>Sin conexion. Toca para reintentar</Text>
@@ -363,7 +363,7 @@ function MenuScreen({ navigation, route }) {
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{p.nombre}</Text>
               {p.descripcion ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{p.descripcion}</Text> : null}
-              <Text style={{ fontSize: 15, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>${p.precio.toLocaleString()}</Text>
+              <Text style={{ fontSize: 15, fontWeight: "600", color: "#F06000", marginTop: 4 }}>${p.precio.toLocaleString()}</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <TouchableOpacity style={styles.btnCantidad} onPress={() => quitarDelCarrito(p)}>
@@ -372,7 +372,7 @@ function MenuScreen({ navigation, route }) {
               <Text style={{ fontSize: 15, fontWeight: "600", minWidth: 20, textAlign: "center" }}>
                 {carrito.find(c => c.id === p.id)?.cantidad || 0}
               </Text>
-              <TouchableOpacity style={[styles.btnCantidad, { backgroundColor: "#E8821C" }]} onPress={() => agregarAlCarrito(p)}>
+              <TouchableOpacity style={[styles.btnCantidad, { backgroundColor: "#F06000" }]} onPress={() => agregarAlCarrito(p)}>
                 <Text style={{ fontSize: 18, color: "#fff" }}>+</Text>
               </TouchableOpacity>
             </View>
@@ -430,7 +430,7 @@ function PedidoScreen({ navigation, route }) {
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
             <Text style={{ fontSize: 15, fontWeight: "600" }}>Total</Text>
-            <Text style={{ fontSize: 15, fontWeight: "600", color: "#E8821C" }}>${total.toLocaleString()}</Text>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#F06000" }}>${total.toLocaleString()}</Text>
           </View>
         </View>
         <View style={[styles.card, { marginTop: 12 }]}>
@@ -441,8 +441,8 @@ function PedidoScreen({ navigation, route }) {
           <Text style={{ fontWeight: "600", fontSize: 15, marginBottom: 12 }}>Metodo de pago</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {["efectivo", "nequi", "bancolombia"].map((m) => (
-              <TouchableOpacity key={m} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: metodoPago === m ? "#E8821C" : "#ddd", backgroundColor: metodoPago === m ? "#FDEEDC" : "#fff", alignItems: "center" }} onPress={() => setMetodoPago(m)}>
-                <Text style={{ fontSize: 11, color: metodoPago === m ? "#E8821C" : "#888", fontWeight: metodoPago === m ? "600" : "400" }}>
+              <TouchableOpacity key={m} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: metodoPago === m ? "#F06000" : "#ddd", backgroundColor: metodoPago === m ? "#FDEEDC" : "#fff", alignItems: "center" }} onPress={() => setMetodoPago(m)}>
+                <Text style={{ fontSize: 11, color: metodoPago === m ? "#F06000" : "#888", fontWeight: metodoPago === m ? "600" : "400" }}>
                   {m === "efectivo" ? "Efectivo" : m === "nequi" ? "Nequi" : "Bancolombia"}
                 </Text>
               </TouchableOpacity>
@@ -450,19 +450,19 @@ function PedidoScreen({ navigation, route }) {
           </View>
           {metodoPago === "nequi" && (
             <View style={{ backgroundColor: "#FDEEDC", borderRadius: 8, padding: 10, marginTop: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: "#E8821C" }}>Transfiere por Nequi</Text>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#F06000" }}>Transfiere por Nequi</Text>
               <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Numero: 3156009728</Text>
             </View>
           )}
           {metodoPago === "bancolombia" && (
-            <View style={{ backgroundColor: "#E6F1FB", borderRadius: 8, padding: 10, marginTop: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: "#185FA5" }}>Transfiere por Bancolombia</Text>
+            <View style={{ backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginTop: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#187830" }}>Transfiere por Bancolombia</Text>
               <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Cuenta: 07985044028</Text>
             </View>
           )}
           {metodoPago === "efectivo" && (
             <View style={{ backgroundColor: "#EAF3DE", borderRadius: 8, padding: 10, marginTop: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: "#2E7D32" }}>Pago en efectivo</Text>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#187830" }}>Pago en efectivo</Text>
               <Text style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Ten el dinero listo cuando llegue el domiciliario</Text>
             </View>
           )}
@@ -512,10 +512,10 @@ function MisPedidosScreen({ navigation, route }) {
           <View key={p.id} style={[styles.card, { marginBottom: 12 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={{ fontWeight: "600" }}>Pedido #{p.id}</Text>
-              <Text style={{ color: "#E8821C", fontWeight: "600", fontSize: 12 }}>{p.estado.toUpperCase()}</Text>
+              <Text style={{ color: "#F06000", fontWeight: "600", fontSize: 12 }}>{p.estado.toUpperCase()}</Text>
             </View>
             <Text style={{ fontSize: 13, color: "#888" }}>{p.plato}</Text>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>${p.total.toLocaleString()}</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#F06000", marginTop: 4 }}>${p.total.toLocaleString()}</Text>
             <View style={{ marginTop: 12 }}>
               {ordenEstados.map((estado, index) => {
                 const indiceActual = ordenEstados.indexOf(p.estado);
@@ -523,13 +523,13 @@ function MisPedidosScreen({ navigation, route }) {
                 const actual = index === indiceActual;
                 return (
                   <View key={estado} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: completado ? "#E8821C" : "#f0f0f0", alignItems: "center", justifyContent: "center" }}>
+                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: completado ? "#F06000" : "#f0f0f0", alignItems: "center", justifyContent: "center" }}>
                       <Text style={{ fontSize: 12 }}>{completado ? iconos[index] : "○"}</Text>
                     </View>
                     <Text style={{ fontSize: 12, color: completado ? "#333" : "#bbb", fontWeight: actual ? "600" : "400" }}>{labels[index]}</Text>
                     {actual && (
                       <View style={{ backgroundColor: "#FDEEDC", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
-                        <Text style={{ fontSize: 10, color: "#E8821C", fontWeight: "600" }}>Ahora</Text>
+                        <Text style={{ fontSize: 10, color: "#F06000", fontWeight: "600" }}>Ahora</Text>
                       </View>
                     )}
                   </View>
@@ -540,7 +540,7 @@ function MisPedidosScreen({ navigation, route }) {
         ))}
       </ScrollView>
       <TouchableOpacity
-        style={{ position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#E8821C", borderRadius: 12, padding: 14, alignItems: "center" }}
+        style={{ position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#F06000", borderRadius: 12, padding: 14, alignItems: "center" }}
         onPress={() => navigation.replace("Inicio", { usuario })}
       >
         <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 15 }}>Hacer otro pedido</Text>
@@ -687,10 +687,10 @@ function AdminScreen({ navigation, route }) {
 
   const colorEstado = (estado) => {
     if (estado === "pendiente") return { bg: "#FAEEDA", text: "#854F0B" };
-    if (estado === "preparando" || estado === "aceptado") return { bg: "#E6F1FB", text: "#185FA5" };
-    if (estado === "listo") return { bg: "#EAF3DE", text: "#2E7D32" };
-    if (estado === "asignado" || estado === "en camino") return { bg: "#FDEEDC", text: "#E8821C" };
-    if (estado === "entregado") return { bg: "#EAF3DE", text: "#2E7D32" };
+    if (estado === "preparando" || estado === "aceptado") return { bg: "#E7F3E9", text: "#187830" };
+    if (estado === "listo") return { bg: "#EAF3DE", text: "#187830" };
+    if (estado === "asignado" || estado === "en camino") return { bg: "#FDEEDC", text: "#F06000" };
+    if (estado === "entregado") return { bg: "#EAF3DE", text: "#187830" };
     return { bg: "#F6F1E6", text: "#888" };
   };
 
@@ -725,13 +725,13 @@ function AdminScreen({ navigation, route }) {
               <Text style={{ fontSize: 11, color: "#854F0B" }}>Pendientes</Text>
               <Text style={{ fontSize: 22, fontWeight: "bold", color: "#854F0B" }}>{pedidos.filter(p => p.estado === "pendiente").length}</Text>
             </View>
-            <View style={{ flex: 1, backgroundColor: "#E6F1FB", borderRadius: 12, padding: 12, alignItems: "center" }}>
-              <Text style={{ fontSize: 11, color: "#185FA5" }}>En proceso</Text>
-              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => ["aceptado", "preparando", "listo", "asignado", "en camino"].includes(p.estado)).length}</Text>
+            <View style={{ flex: 1, backgroundColor: "#E7F3E9", borderRadius: 12, padding: 12, alignItems: "center" }}>
+              <Text style={{ fontSize: 11, color: "#187830" }}>En proceso</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>{pedidos.filter(p => ["aceptado", "preparando", "listo", "asignado", "en camino"].includes(p.estado)).length}</Text>
             </View>
             <View style={{ flex: 1, backgroundColor: "#EAF3DE", borderRadius: 12, padding: 12, alignItems: "center" }}>
-              <Text style={{ fontSize: 11, color: "#2E7D32" }}>Entregados</Text>
-              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#2E7D32" }}>{pedidos.filter(p => p.estado === "entregado").length}</Text>
+              <Text style={{ fontSize: 11, color: "#187830" }}>Entregados</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>{pedidos.filter(p => p.estado === "entregado").length}</Text>
             </View>
           </View>
           {pedidos.map((p) => (
@@ -751,7 +751,7 @@ function AdminScreen({ navigation, route }) {
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     <View style={{ flexDirection: "row", gap: 8 }}>
                       {domiciliarios.map((d) => (
-                        <TouchableOpacity key={d.id} style={{ backgroundColor: "#185FA5", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                        <TouchableOpacity key={d.id} style={{ backgroundColor: "#187830", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
                           onPress={() => { fetch(`${API}/pedidos/${p.id}/asignar?domiciliario_id=${d.id}`, { method: "PUT" }).then(() => cargarPedidos()); }}>
                           <Text style={{ color: "#fff", fontSize: 12, fontWeight: "600" }}>🛵 {d.nombre}</Text>
                         </TouchableOpacity>
@@ -761,7 +761,7 @@ function AdminScreen({ navigation, route }) {
                 </View>
               )}
               {p.estado === "en camino" && (
-                <TouchableOpacity style={[styles.button, { marginTop: 10, backgroundColor: "#2E7D32" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
+                <TouchableOpacity style={[styles.button, { marginTop: 10, backgroundColor: "#187830" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
                   <Text style={styles.buttonText}>Entregado</Text>
                 </TouchableOpacity>
               )}
@@ -788,10 +788,10 @@ function AdminScreen({ navigation, route }) {
                 </View>
               </View>
               <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#185FA5" }]} onPress={() => { setRestauranteSeleccionado(r); cargarPlatos(r.id); }}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={() => { setRestauranteSeleccionado(r); cargarPlatos(r.id); }}>
                   <Text style={styles.buttonText}>Ver menu</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={() => subirFotoRestaurante(r.id)}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={() => subirFotoRestaurante(r.id)}>
                   <Text style={styles.buttonText}>📷 Foto</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#C62828" }]} onPress={() => eliminarRestaurante(r)}>
@@ -806,7 +806,7 @@ function AdminScreen({ navigation, route }) {
       {vista === "restaurantes" && restauranteSeleccionado && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
           <TouchableOpacity style={{ marginBottom: 12 }} onPress={() => { setRestauranteSeleccionado(null); setMensaje(""); }}>
-            <Text style={{ color: "#E8821C", fontWeight: "600" }}>← Volver</Text>
+            <Text style={{ color: "#F06000", fontWeight: "600" }}>← Volver</Text>
           </TouchableOpacity>
           <Text style={{ fontWeight: "600", fontSize: 16, marginBottom: 12 }}>{restauranteSeleccionado.nombre}</Text>
           <View style={[styles.card, { marginBottom: 16 }]}>
@@ -814,12 +814,12 @@ function AdminScreen({ navigation, route }) {
             <TextInput placeholder="Nombre del plato" value={nuevoPlato.nombre} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, nombre: t })} style={styles.input} />
             <TextInput placeholder="Descripcion (opcional)" value={nuevoPlato.descripcion} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, descripcion: t })} style={styles.input} />
             <TextInput placeholder="Precio (ej: 15000)" value={nuevoPlato.precio} onChangeText={(t) => setNuevoPlato({ ...nuevoPlato, precio: t })} style={styles.input} keyboardType="numeric" />
-            {mensaje ? <Text style={{ color: "#2E7D32", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
+            {mensaje ? <Text style={{ color: "#187830", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
             <TouchableOpacity style={styles.button} onPress={agregarPlato}>
               <Text style={styles.buttonText}>Agregar plato</Text>
             </TouchableOpacity>
           </View>
-          {subiendo && <ActivityIndicator color="#E8821C" style={{ marginBottom: 12 }} />}
+          {subiendo && <ActivityIndicator color="#F06000" style={{ marginBottom: 12 }} />}
           <Text style={{ fontWeight: "600", fontSize: 14, marginBottom: 12 }}>Platos ({platos.length})</Text>
           {platos.map((p) => (
             <View key={p.id} style={[styles.card, { marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 10 }]}>
@@ -828,14 +828,14 @@ function AdminScreen({ navigation, route }) {
                   <Image source={{ uri: p.imagen_url }} style={{ width: 60, height: 60, borderRadius: 10 }} />
                 ) : (
                   <View style={{ width: 60, height: 60, borderRadius: 10, backgroundColor: "#FDEEDC", alignItems: "center", justifyContent: "center" }}>
-                    <Text style={{ fontSize: 10, color: "#E8821C", textAlign: "center" }}>📷{"\n"}Subir</Text>
+                    <Text style={{ fontSize: 10, color: "#F06000", textAlign: "center" }}>📷{"\n"}Subir</Text>
                   </View>
                 )}
               </TouchableOpacity>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: "600" }}>{p.nombre}</Text>
                 {p.descripcion ? <Text style={{ fontSize: 12, color: "#888" }}>{p.descripcion}</Text> : null}
-                <Text style={{ fontSize: 13, color: "#E8821C", fontWeight: "600" }}>${p.precio.toLocaleString()}</Text>
+                <Text style={{ fontSize: 13, color: "#F06000", fontWeight: "600" }}>${p.precio.toLocaleString()}</Text>
               </View>
             </View>
           ))}
@@ -851,17 +851,17 @@ function AdminScreen({ navigation, route }) {
             <TextInput placeholder="Contrasena" value={nuevoUsuario.password} onChangeText={(t) => setNuevoUsuario({ ...nuevoUsuario, password: t })} style={styles.input} />
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
               {["domiciliario", "restaurante", "admin"].map((r) => (
-                <TouchableOpacity key={r} style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#E8821C" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FDEEDC" : "#fff", alignItems: "center" }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}>
-                  <Text style={{ fontSize: 10, color: nuevoUsuario.rol === r ? "#E8821C" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
+                <TouchableOpacity key={r} style={{ flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.rol === r ? "#F06000" : "#ddd", backgroundColor: nuevoUsuario.rol === r ? "#FDEEDC" : "#fff", alignItems: "center" }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, rol: r })}>
+                  <Text style={{ fontSize: 10, color: nuevoUsuario.rol === r ? "#F06000" : "#888", fontWeight: nuevoUsuario.rol === r ? "600" : "400" }}>{r}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             {nuevoUsuario.rol === "restaurante" && restaurantes.map((r) => (
-              <TouchableOpacity key={r.id} style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#E8821C" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FDEEDC" : "#fff", marginBottom: 8 }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}>
-                <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#E8821C" : "#333" }}>{r.nombre}</Text>
+              <TouchableOpacity key={r.id} style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: nuevoUsuario.restaurante_id === String(r.id) ? "#F06000" : "#ddd", backgroundColor: nuevoUsuario.restaurante_id === String(r.id) ? "#FDEEDC" : "#fff", marginBottom: 8 }} onPress={() => setNuevoUsuario({ ...nuevoUsuario, restaurante_id: String(r.id) })}>
+                <Text style={{ fontSize: 13, color: nuevoUsuario.restaurante_id === String(r.id) ? "#F06000" : "#333" }}>{r.nombre}</Text>
               </TouchableOpacity>
             ))}
-            {mensaje ? <Text style={{ color: "#2E7D32", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
+            {mensaje ? <Text style={{ color: "#187830", fontSize: 12, marginBottom: 8 }}>{mensaje}</Text> : null}
             <TouchableOpacity style={styles.button} onPress={crearUsuario}>
               <Text style={styles.buttonText}>Crear usuario</Text>
             </TouchableOpacity>
@@ -872,8 +872,8 @@ function AdminScreen({ navigation, route }) {
                 <Text style={{ fontWeight: "600" }}>{u.nombre}</Text>
                 <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📞 {u.telefono}</Text>
               </View>
-              <View style={{ backgroundColor: u.rol === "admin" ? "#FAEEDA" : u.rol === "domiciliario" ? "#E6F1FB" : u.rol === "restaurante" ? "#EAF3DE" : "#F6F1E6", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontSize: 11, color: u.rol === "admin" ? "#854F0B" : u.rol === "domiciliario" ? "#185FA5" : u.rol === "restaurante" ? "#2E7D32" : "#888", fontWeight: "600" }}>{u.rol}</Text>
+              <View style={{ backgroundColor: u.rol === "admin" ? "#FAEEDA" : u.rol === "domiciliario" ? "#E7F3E9" : u.rol === "restaurante" ? "#EAF3DE" : "#F6F1E6", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontSize: 11, color: u.rol === "admin" ? "#854F0B" : u.rol === "domiciliario" ? "#187830" : u.rol === "restaurante" ? "#187830" : "#888", fontWeight: "600" }}>{u.rol}</Text>
               </View>
             </View>
           ))}
@@ -921,7 +921,7 @@ function DomiciliarioScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#E8821C" }]}>
+      <View style={[styles.header, { backgroundColor: "#F06000" }]}>
         <Text style={styles.headerSub}>Hola, {usuario.nombre} 🛵</Text>
         <Text style={styles.headerTitle}>Mis Entregas</Text>
       </View>
@@ -930,9 +930,9 @@ function DomiciliarioScreen({ navigation, route }) {
           <Text style={{ fontSize: 11, color: "#854F0B" }}>Por recoger</Text>
           <Text style={{ fontSize: 22, fontWeight: "bold", color: "#854F0B" }}>{pedidos.filter(p => p.estado === "asignado").length}</Text>
         </View>
-        <View style={{ flex: 1, backgroundColor: "#E6F1FB", borderRadius: 12, padding: 12, alignItems: "center" }}>
-          <Text style={{ fontSize: 11, color: "#185FA5" }}>En camino</Text>
-          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => p.estado === "en camino").length}</Text>
+        <View style={{ flex: 1, backgroundColor: "#E7F3E9", borderRadius: 12, padding: 12, alignItems: "center" }}>
+          <Text style={{ fontSize: 11, color: "#187830" }}>En camino</Text>
+          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>{pedidos.filter(p => p.estado === "en camino").length}</Text>
         </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
@@ -946,29 +946,29 @@ function DomiciliarioScreen({ navigation, route }) {
           <View key={p.id} style={[styles.card, { marginBottom: 12 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={{ fontWeight: "600" }}>Pedido #{p.id}</Text>
-              <View style={{ backgroundColor: p.estado === "asignado" ? "#FAEEDA" : "#E6F1FB", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                <Text style={{ fontSize: 11, color: p.estado === "asignado" ? "#854F0B" : "#185FA5", fontWeight: "600" }}>{p.estado}</Text>
+              <View style={{ backgroundColor: p.estado === "asignado" ? "#FAEEDA" : "#E7F3E9", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                <Text style={{ fontSize: 11, color: p.estado === "asignado" ? "#854F0B" : "#187830", fontWeight: "600" }}>{p.estado}</Text>
               </View>
             </View>
             {restaurantes[p.restaurante_id] && (
               <View style={{ backgroundColor: "#FDEEDC", borderRadius: 8, padding: 10, marginBottom: 10 }}>
-                <Text style={{ fontSize: 12, fontWeight: "600", color: "#E8821C" }}>Recoger en:</Text>
+                <Text style={{ fontSize: 12, fontWeight: "600", color: "#F06000" }}>Recoger en:</Text>
                 <Text style={{ fontSize: 14, fontWeight: "600", marginTop: 2 }}>{restaurantes[p.restaurante_id].nombre}</Text>
               </View>
             )}
             <Text style={{ fontSize: 13, color: "#888" }}>👤 {p.cliente_nombre}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {p.cliente_direccion}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📞 {p.cliente_telefono}</Text>
-            <Text style={{ fontSize: 13, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>🍽️ {p.plato}</Text>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#F06000", marginTop: 4 }}>🍽️ {p.plato}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>💰 ${p.total.toLocaleString()} - {p.metodo_pago}</Text>
             <View style={{ marginTop: 12 }}>
               {p.estado === "asignado" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#E8821C" }]} onPress={() => cambiarEstado(p.id, "en camino")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000" }]} onPress={() => cambiarEstado(p.id, "en camino")}>
                   <Text style={styles.buttonText}>Ya recogi — En camino</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "en camino" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#187830" }]} onPress={() => cambiarEstado(p.id, "entregado")}>
                   <Text style={styles.buttonText}>Pedido entregado</Text>
                 </TouchableOpacity>
               )}
@@ -1005,9 +1005,9 @@ function RestauranteScreen({ navigation, route }) {
 
   const colorEstado = (estado) => {
     if (estado === "pendiente") return { bg: "#FAEEDA", text: "#854F0B" };
-    if (estado === "aceptado") return { bg: "#E6F1FB", text: "#185FA5" };
-    if (estado === "preparando") return { bg: "#E6F1FB", text: "#185FA5" };
-    if (estado === "listo") return { bg: "#EAF3DE", text: "#2E7D32" };
+    if (estado === "aceptado") return { bg: "#E7F3E9", text: "#187830" };
+    if (estado === "preparando") return { bg: "#E7F3E9", text: "#187830" };
+    if (estado === "listo") return { bg: "#EAF3DE", text: "#187830" };
     if (estado === "asignado") return { bg: "#F1EFE8", text: "#5F5E5A" };
     return { bg: "#F6F1E6", text: "#888" };
   };
@@ -1023,13 +1023,13 @@ function RestauranteScreen({ navigation, route }) {
           <Text style={{ fontSize: 11, color: "#854F0B" }}>Nuevos</Text>
           <Text style={{ fontSize: 22, fontWeight: "bold", color: "#854F0B" }}>{pedidos.filter(p => p.estado === "pendiente").length}</Text>
         </View>
-        <View style={{ flex: 1, backgroundColor: "#E6F1FB", borderRadius: 12, padding: 12, alignItems: "center" }}>
-          <Text style={{ fontSize: 11, color: "#185FA5" }}>Preparando</Text>
-          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>{pedidos.filter(p => p.estado === "preparando").length}</Text>
+        <View style={{ flex: 1, backgroundColor: "#E7F3E9", borderRadius: 12, padding: 12, alignItems: "center" }}>
+          <Text style={{ fontSize: 11, color: "#187830" }}>Preparando</Text>
+          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>{pedidos.filter(p => p.estado === "preparando").length}</Text>
         </View>
         <View style={{ flex: 1, backgroundColor: "#EAF3DE", borderRadius: 12, padding: 12, alignItems: "center" }}>
-          <Text style={{ fontSize: 11, color: "#2E7D32" }}>Listos</Text>
-          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#2E7D32" }}>{pedidos.filter(p => p.estado === "listo").length}</Text>
+          <Text style={{ fontSize: 11, color: "#187830" }}>Listos</Text>
+          <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>{pedidos.filter(p => p.estado === "listo").length}</Text>
         </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
@@ -1040,7 +1040,7 @@ function RestauranteScreen({ navigation, route }) {
           </View>
         )}
         {pedidos.map((p) => (
-          <View key={p.id} style={[styles.card, { marginBottom: 12, borderWidth: p.estado === "pendiente" ? 1.5 : 0.5, borderColor: p.estado === "pendiente" ? "#E8821C" : "#eee" }]}>
+          <View key={p.id} style={[styles.card, { marginBottom: 12, borderWidth: p.estado === "pendiente" ? 1.5 : 0.5, borderColor: p.estado === "pendiente" ? "#F06000" : "#eee" }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={{ fontWeight: "600" }}>Pedido #{p.id}</Text>
               <View style={{ backgroundColor: colorEstado(p.estado).bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
@@ -1049,27 +1049,27 @@ function RestauranteScreen({ navigation, route }) {
             </View>
             <Text style={{ fontSize: 13, color: "#888" }}>👤 {p.cliente_nombre}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {p.cliente_direccion}</Text>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#E8821C", marginTop: 4 }}>🍽️ {p.plato}</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#F06000", marginTop: 4 }}>🍽️ {p.plato}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>💰 ${p.total.toLocaleString()} - {p.metodo_pago}</Text>
             <View style={{ marginTop: 12 }}>
               {p.estado === "pendiente" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5" }]} onPress={() => cambiarEstado(p.id, "aceptado")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#187830" }]} onPress={() => cambiarEstado(p.id, "aceptado")}>
                   <Text style={styles.buttonText}>Aceptar pedido</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "aceptado" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#E8821C" }]} onPress={() => cambiarEstado(p.id, "preparando")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000" }]} onPress={() => cambiarEstado(p.id, "preparando")}>
                   <Text style={styles.buttonText}>Empezar a preparar</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "preparando" && (
-                <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32" }]} onPress={() => cambiarEstado(p.id, "listo")}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#187830" }]} onPress={() => cambiarEstado(p.id, "listo")}>
                   <Text style={styles.buttonText}>Marcar como listo</Text>
                 </TouchableOpacity>
               )}
               {p.estado === "listo" && (
                 <View style={{ backgroundColor: "#EAF3DE", borderRadius: 8, padding: 12 }}>
-                  <Text style={{ color: "#2E7D32", fontWeight: "600", textAlign: "center" }}>Esperando domiciliario...</Text>
+                  <Text style={{ color: "#187830", fontWeight: "600", textAlign: "center" }}>Esperando domiciliario...</Text>
                 </View>
               )}
               {p.estado === "asignado" && (
@@ -1105,9 +1105,9 @@ function ElegirServicioScreen({ navigation, route }) {
           <Text style={styles.servicioTitulo}>Pedir comida</Text>
           <Text style={styles.servicioSub}>Restaurantes de Orito a domicilio</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.servicioCard, { backgroundColor: "#E6F1FB" }]} onPress={() => navigation.navigate("PedirCarrera", { usuario })}>
+        <TouchableOpacity style={[styles.servicioCard, { backgroundColor: "#E7F3E9" }]} onPress={() => navigation.navigate("PedirCarrera", { usuario })}>
           <Text style={{ fontSize: 44 }}>🚕</Text>
-          <Text style={[styles.servicioTitulo, { color: "#185FA5" }]}>Pedir carrera</Text>
+          <Text style={[styles.servicioTitulo, { color: "#187830" }]}>Pedir carrera</Text>
           <Text style={styles.servicioSub}>Un transportador te recoge</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -1250,9 +1250,9 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
         </View>
         <View style={{ padding: 16, gap: 10 }}>
           <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={usarMiUbicacion} disabled={buscando}>
-            {buscando ? <ActivityIndicator color="#185FA5" /> : <Text style={{ color: "#185FA5", fontWeight: "600" }}>📍 Usar mi ubicacion</Text>}
+            {buscando ? <ActivityIndicator color="#187830" /> : <Text style={{ color: "#187830", fontWeight: "600" }}>📍 Usar mi ubicacion</Text>}
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5" }]} onPress={() => onConfirmar(coords)}>
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830" }]} onPress={() => onConfirmar(coords)}>
             <Text style={styles.buttonText}>Confirmar este punto</Text>
           </TouchableOpacity>
         </View>
@@ -1433,7 +1433,7 @@ function PedirCarreraScreen({ navigation, route }) {
     const buscando = carrera.estado === "buscando";
     return (
       <SafeAreaView style={styles.container}>
-        <View style={[styles.header, { backgroundColor: "#185FA5" }]}>
+        <View style={[styles.header, { backgroundColor: "#187830" }]}>
           <Text style={styles.headerSub}>Carrera #{carrera.id}</Text>
           <Text style={styles.headerTitle}>{buscando ? "Buscando transportador..." : "Ya tienes conductor"}</Text>
         </View>
@@ -1441,7 +1441,7 @@ function PedirCarreraScreen({ navigation, route }) {
           {buscando ? (
             <>
               <View style={[styles.card, { alignItems: "center", paddingVertical: 24 }]}>
-                <ActivityIndicator size="large" color="#185FA5" />
+                <ActivityIndicator size="large" color="#187830" />
                 <Text style={{ color: "#888", marginTop: 12, textAlign: "center" }}>
                   {carrera.tarifa_ofrecida
                     ? `Ofreciste $${carrera.tarifa_ofrecida.toLocaleString()}. Esperando que un conductor acepte o te proponga otro precio.`
@@ -1462,9 +1462,9 @@ function PedirCarreraScreen({ navigation, route }) {
                             {of.conductor_tipo === "moto" ? "🏍️" : "🚗"} {of.conductor_placa || ""}
                           </Text>
                         </View>
-                        <Text style={{ fontSize: 20, fontWeight: "bold", color: "#185FA5" }}>${of.monto.toLocaleString()}</Text>
+                        <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${of.monto.toLocaleString()}</Text>
                       </View>
-                      <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 10, padding: 10 }]} onPress={() => aceptarContraoferta(of)}>
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 10 }]} onPress={() => aceptarContraoferta(of)}>
                         <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar a este precio</Text>
                       </TouchableOpacity>
                     </View>
@@ -1480,7 +1480,7 @@ function PedirCarreraScreen({ navigation, route }) {
               {carrera.conductor_placa ? (
                 <View style={styles.placaBadge}><Text style={styles.placaTexto}>{carrera.conductor_placa}</Text></View>
               ) : null}
-              <Text style={{ fontSize: 17, fontWeight: "600", color: "#185FA5", marginTop: 10 }}>📞 {carrera.conductor_telefono}</Text>
+              <Text style={{ fontSize: 17, fontWeight: "600", color: "#187830", marginTop: 10 }}>📞 {carrera.conductor_telefono}</Text>
               <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Llamalo si necesitas explicarle mejor donde estas</Text>
             </View>
           )}
@@ -1509,7 +1509,7 @@ function PedirCarreraScreen({ navigation, route }) {
   // --- formulario para pedir
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#185FA5", flexDirection: "row", alignItems: "center", gap: 12 }]}>
+      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", alignItems: "center", gap: 12 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
         </TouchableOpacity>
@@ -1528,7 +1528,7 @@ function PedirCarreraScreen({ navigation, route }) {
               : <Text style={{ color: "#fff", fontWeight: "700" }}>📍 Usar mi ubicacion actual</Text>}
           </TouchableOpacity>
           <TouchableOpacity style={[styles.botonMapa, origenCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("origen")}>
-            <Text style={{ color: origenCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
+            <Text style={{ color: origenCoords ? "#187830" : "#187830", fontWeight: "600" }}>
               {origenCoords ? "✓ Ubicacion marcada — cambiar en el mapa" : "🗺️ O marcar en el mapa"}
             </Text>
           </TouchableOpacity>
@@ -1536,7 +1536,7 @@ function PedirCarreraScreen({ navigation, route }) {
           {/* municipio detectado o a elegir manual */}
           {muni ? (
             <TouchableOpacity style={styles.muniBanner} onPress={() => setEligiendoMuni(true)}>
-              <Text style={{ fontSize: 13, color: "#185FA5", fontWeight: "600" }}>📌 Estas en {muni.nombre}</Text>
+              <Text style={{ fontSize: 13, color: "#187830", fontWeight: "600" }}>📌 Estas en {muni.nombre}</Text>
               <Text style={{ fontSize: 12, color: "#888" }}>cambiar</Text>
             </TouchableOpacity>
           ) : (
@@ -1613,7 +1613,7 @@ function PedirCarreraScreen({ navigation, route }) {
             multiline
           />
           <TouchableOpacity style={[styles.botonMapa, destinoCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("destino")}>
-            <Text style={{ color: destinoCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
+            <Text style={{ color: destinoCoords ? "#187830" : "#187830", fontWeight: "600" }}>
               {destinoCoords ? "✓ Destino marcado en el mapa" : "🏁 Marcar a donde vas en el mapa"}
             </Text>
           </TouchableOpacity>
@@ -1639,7 +1639,7 @@ function PedirCarreraScreen({ navigation, route }) {
           )}
           <Text style={styles.etiqueta}>CUANTO OFRECES PAGAR</Text>
           <View style={styles.ofertaFila}>
-            <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>$</Text>
+            <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
             <TextInput
               value={oferta}
               onChangeText={(t) => setOferta(t.replace(/\D/g, ""))}
@@ -1651,7 +1651,7 @@ function PedirCarreraScreen({ navigation, route }) {
           <Text style={styles.ayuda}>Un conductor puede aceptar tu precio o proponerte otro, y tu eliges</Text>
         </View>
 
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
           {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Pedir carrera</Text>}
         </TouchableOpacity>
       </ScrollView>
@@ -1783,37 +1783,37 @@ function ConductorScreen({ navigation, route }) {
       {!propia && c.tarifa_ofrecida ? (
         <View style={styles.ofertaCliente}>
           <Text style={{ fontSize: 12, color: "#555" }}>El cliente ofrece</Text>
-          <Text style={{ fontSize: 24, fontWeight: "bold", color: "#2E7D32" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
+          <Text style={{ fontSize: 24, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
         </View>
       ) : null}
 
       <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
       <Text style={{ fontSize: 13, color: "#888" }}>👤 {c.cliente_nombre}</Text>
-      <Text style={{ fontSize: 15, fontWeight: "600", color: "#185FA5", marginTop: 2 }}>📞 {c.cliente_telefono}</Text>
+      <Text style={{ fontSize: 15, fontWeight: "600", color: "#187830", marginTop: 2 }}>📞 {c.cliente_telefono}</Text>
 
       {!propia && (
         c.tarifa_ofrecida ? (
           <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={() => aceptar(c)}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={() => aceptar(c)}>
               <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar ${c.tarifa_ofrecida.toLocaleString()}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#185FA5" }]} onPress={() => { setMontoOferta(String(c.tarifa_ofrecida)); setContraofertando(c); }}>
-              <Text style={{ color: "#185FA5", fontWeight: "600", fontSize: 14 }}>Proponer otro</Text>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830" }]} onPress={() => { setMontoOferta(String(c.tarifa_ofrecida)); setContraofertando(c); }}>
+              <Text style={{ color: "#187830", fontWeight: "600", fontSize: 14 }}>Proponer otro</Text>
             </TouchableOpacity>
           </View>
         ) : (
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 12 }]} onPress={() => aceptar(c)}>
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={() => aceptar(c)}>
             <Text style={styles.buttonText}>Tomar esta carrera</Text>
           </TouchableOpacity>
         )
       )}
       {propia && c.estado === "aceptada" && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#185FA5", marginTop: 12 }]} onPress={() => cambiarEstado(c, "en_camino")}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={() => cambiarEstado(c, "en_camino")}>
           <Text style={styles.buttonText}>Ya lo recogi — En camino</Text>
         </TouchableOpacity>
       )}
       {propia && c.estado === "en_camino" && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#2E7D32", marginTop: 12 }]} onPress={() => finalizar(c)}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={() => finalizar(c)}>
           <Text style={styles.buttonText}>Carrera terminada</Text>
         </TouchableOpacity>
       )}
@@ -1822,7 +1822,7 @@ function ConductorScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#185FA5" }]}>
+      <View style={[styles.header, { backgroundColor: "#187830" }]}>
         <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕</Text>
         <Text style={styles.headerTitle}>Carreras</Text>
       </View>
@@ -1847,7 +1847,7 @@ function ConductorScreen({ navigation, route }) {
       )}
 
       <TouchableOpacity style={[styles.disponibleBar, { backgroundColor: disponible ? "#E8F5E9" : "#FBECEC" }]} onPress={cambiarDisponibilidad}>
-        <Text style={{ fontWeight: "600", color: disponible ? "#2E7D32" : "#C0392B" }}>
+        <Text style={{ fontWeight: "600", color: disponible ? "#187830" : "#C0392B" }}>
           {disponible ? "🟢 Estas conectado" : "🔴 Estas desconectado"}
         </Text>
         <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Toca para cambiar</Text>
@@ -1892,7 +1892,7 @@ function ConductorScreen({ navigation, route }) {
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setCobrando(null)}>
                 <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32" }]} onPress={confirmarCobro}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={confirmarCobro}>
                 <Text style={styles.buttonText}>Guardar</Text>
               </TouchableOpacity>
             </View>
@@ -1910,7 +1910,7 @@ function ConductorScreen({ navigation, route }) {
                 : "Cuanto quieres cobrar?"}
             </Text>
             <View style={styles.ofertaFila}>
-              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>$</Text>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
               <TextInput value={montoOferta} onChangeText={(t) => setMontoOferta(t.replace(/\D/g, ""))}
                 placeholder="0" keyboardType="number-pad" style={styles.ofertaInput} autoFocus />
             </View>
@@ -1918,7 +1918,7 @@ function ConductorScreen({ navigation, route }) {
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setContraofertando(null)}>
                 <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#185FA5" }]} onPress={contraofertar}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={contraofertar}>
                 <Text style={styles.buttonText}>Enviar</Text>
               </TouchableOpacity>
             </View>
@@ -1977,7 +1977,7 @@ function AdminCarrerasScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#185FA5", flexDirection: "row", alignItems: "center", gap: 12 }]}>
+      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", alignItems: "center", gap: 12 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
         </TouchableOpacity>
@@ -2011,13 +2011,13 @@ function AdminCarrerasScreen({ navigation }) {
                 {c.placa ? <Text style={{ fontSize: 12, color: "#888" }}>🚕 {c.vehiculo} - {c.placa}</Text> : null}
               </View>
               <View style={[styles.estadoBadge, { backgroundColor: c.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
-                <Text style={{ fontSize: 11, fontWeight: "600", color: c.al_dia ? "#2E7D32" : "#C0392B" }}>
+                <Text style={{ fontSize: 11, fontWeight: "600", color: c.al_dia ? "#187830" : "#C0392B" }}>
                   {c.al_dia ? (config.cobro_activo === "si" ? `${c.dias_restantes} dias` : "activo") : "vencido"}
                 </Text>
               </View>
             </View>
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#2E7D32", padding: 10 }]} onPress={() => registrarPago(c)}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => registrarPago(c)}>
                 <Text style={[styles.buttonText, { fontSize: 13 }]}>Registrar pago</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", padding: 10 }]} onPress={() => quitarSuscripcion(c)}>
@@ -2040,7 +2040,7 @@ function AdminCarrerasScreen({ navigation }) {
             </View>
             <Text style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{c.origen} → {c.destino}</Text>
             {c.conductor_nombre ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🚕 {c.conductor_nombre}</Text> : null}
-            {c.tarifa ? <Text style={{ fontSize: 12, color: "#2E7D32", marginTop: 2 }}>${c.tarifa.toLocaleString()}</Text> : null}
+            {c.tarifa ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>${c.tarifa.toLocaleString()}</Text> : null}
           </View>
         ))}
         {pestana === "carreras" && carreras.length === 0 && (
@@ -2056,7 +2056,7 @@ function AdminCarrerasScreen({ navigation }) {
                 : "Esta apagado: todos trabajan gratis. Ideal mientras la app se llena de usuarios."}
             </Text>
             <TouchableOpacity
-              style={[styles.button, { backgroundColor: config.cobro_activo === "si" ? "#C0392B" : "#2E7D32" }]}
+              style={[styles.button, { backgroundColor: config.cobro_activo === "si" ? "#C0392B" : "#187830" }]}
               onPress={cambiarCobro}
             >
               <Text style={styles.buttonText}>{config.cobro_activo === "si" ? "Desactivar cobro" : "Activar cobro"}</Text>
@@ -2112,7 +2112,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F6F1E6" },
   scroll: { padding: 16 },
-  header: { backgroundColor: "#2E7D32", padding: 20, paddingTop: 50 },
+  header: { backgroundColor: "#187830", padding: 20, paddingTop: 50 },
   headerSub: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
   headerTitle: { color: "#fff", fontSize: 24, fontWeight: "bold", marginTop: 4 },
   card: { backgroundColor: "#fff", borderRadius: 16, padding: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 },
@@ -2123,12 +2123,12 @@ const styles = StyleSheet.create({
   tabTextActive: { color: "#333", fontWeight: "500" },
   input: { borderWidth: 0.5, borderColor: "#ddd", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 14, backgroundColor: "#fff" },
   error: { color: "red", fontSize: 12, marginBottom: 12 },
-  button: { backgroundColor: "#E8821C", borderRadius: 10, padding: 14, alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 3 },
+  button: { backgroundColor: "#F06000", borderRadius: 10, padding: 14, alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 3 },
   buttonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   searchInput: { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12, color: "#fff" },
   // --- carreras
   servicioCard: { backgroundColor: "#FDEEDC", borderRadius: 16, padding: 24, alignItems: "center", marginBottom: 16 },
-  servicioTitulo: { fontSize: 20, fontWeight: "bold", color: "#E8821C", marginTop: 10 },
+  servicioTitulo: { fontSize: 20, fontWeight: "bold", color: "#F06000", marginTop: 10 },
   servicioSub: { fontSize: 13, color: "#888", marginTop: 4, textAlign: "center" },
   etiqueta: { fontSize: 11, color: "#888", fontWeight: "600", letterSpacing: 0.5, marginBottom: 4 },
   ayuda: { fontSize: 11, color: "#888", marginTop: -6, marginBottom: 6 },
@@ -2142,21 +2142,21 @@ const styles = StyleSheet.create({
   avisoRuralTexto: { fontSize: 11, color: "#8A5A00", fontWeight: "600" },
   avisoVencido: { backgroundColor: "#FBECEC", marginHorizontal: 16, marginTop: 16, borderRadius: 12, padding: 14 },
   mini: { flex: 1, backgroundColor: "#fff", borderRadius: 12, padding: 12, alignItems: "center", elevation: 2 },
-  miniNum: { fontSize: 22, fontWeight: "bold", color: "#185FA5" },
+  miniNum: { fontSize: 22, fontWeight: "bold", color: "#187830" },
   miniTxt: { fontSize: 11, color: "#888", marginTop: 2 },
   estadoBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
-  botonGps: { backgroundColor: "#185FA5", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
-  muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E6F1FB", borderRadius: 8, padding: 10, marginBottom: 12 },
-  botonMapa: { borderWidth: 1, borderColor: "#185FA5", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F4F9FE" },
-  botonMapaOk: { borderColor: "#2E7D32", backgroundColor: "#EAF6EC" },
-  estimado: { backgroundColor: "#F4F9FE", borderRadius: 10, padding: 14, marginTop: 6, alignItems: "center" },
-  ofertaFila: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#185FA5", borderRadius: 10, paddingHorizontal: 12, backgroundColor: "#F4F9FE" },
-  ofertaInput: { flex: 1, fontSize: 22, fontWeight: "bold", color: "#185FA5", padding: 12 },
+  botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
+  muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },
+  botonMapa: { borderWidth: 1, borderColor: "#187830", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F1F8F1" },
+  botonMapaOk: { borderColor: "#187830", backgroundColor: "#EAF6EC" },
+  estimado: { backgroundColor: "#F1F8F1", borderRadius: 10, padding: 14, marginTop: 6, alignItems: "center" },
+  ofertaFila: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#187830", borderRadius: 10, paddingHorizontal: 12, backgroundColor: "#F1F8F1" },
+  ofertaInput: { flex: 1, fontSize: 22, fontWeight: "bold", color: "#187830", padding: 12 },
   ofertaCliente: { backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginTop: 10, alignItems: "center" },
   opcion: { flex: 1, paddingVertical: 10, paddingHorizontal: 6, borderRadius: 8, borderWidth: 1, borderColor: "#ddd", alignItems: "center", backgroundColor: "#fff" },
-  opcionActiva: { backgroundColor: "#E6F1FB", borderColor: "#185FA5" },
+  opcionActiva: { backgroundColor: "#E7F3E9", borderColor: "#187830" },
   opcionTexto: { fontSize: 13, color: "#888" },
-  opcionTextoActivo: { color: "#185FA5", fontWeight: "600" },
+  opcionTextoActivo: { color: "#187830", fontWeight: "600" },
   fondoModal: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
   ventanaModal: { backgroundColor: "#fff", borderRadius: 16, padding: 20 },
   restauranteCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
@@ -2164,8 +2164,8 @@ const styles = StyleSheet.create({
   restauranteCategoria: { fontSize: 12, color: "#888", marginTop: 2 },
   restauranteInfo: { fontSize: 12, color: "#888" },
   calificacionBadge: { backgroundColor: "#EAF3DE", borderRadius: 8, padding: 6 },
-  calificacionText: { fontSize: 12, color: "#2E7D32", fontWeight: "500" },
+  calificacionText: { fontSize: 12, color: "#187830", fontWeight: "500" },
   platoCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
   btnCantidad: { width: 28, height: 28, borderRadius: 14, borderWidth: 0.5, borderColor: "#ddd", alignItems: "center", justifyContent: "center" },
-  botonCarrito: { position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#E8821C", borderRadius: 12, padding: 16, alignItems: "center", elevation: 4 },
+  botonCarrito: { position: "absolute", bottom: 20, left: 16, right: 16, backgroundColor: "#F06000", borderRadius: 12, padding: 16, alignItems: "center", elevation: 4 },
 });
