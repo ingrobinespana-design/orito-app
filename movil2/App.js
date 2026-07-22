@@ -2003,7 +2003,9 @@ function ConductorScreen({ navigation, route }) {
   const [cobrando, setCobrando] = useState(null);
   const [tarifa, setTarifa] = useState("");
 
-  const finalizar = (c) => { setTarifa(""); setCobrando(c); };
+  // llega pre-llenada con el precio ACORDADO: confirmar y listo. Solo se toca
+  // si de verdad cambio (evita errores de dedo que dañan las estadisticas)
+  const finalizar = (c) => { setTarifa(c.tarifa != null ? String(c.tarifa) : ""); setCobrando(c); };
 
   const confirmarCobro = () => {
     const t = parseInt((tarifa || "").replace(/\D/g, ""), 10);
@@ -2255,7 +2257,11 @@ function ConductorScreen({ navigation, route }) {
         <View style={styles.fondoModal}>
           <View style={styles.ventanaModal}>
             <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Carrera terminada</Text>
-            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>Cuanto cobraste?</Text>
+            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
+              {cobrando && cobrando.tarifa != null
+                ? `Precio acordado: $${cobrando.tarifa.toLocaleString()}. Confirma, o ajustalo solo si cambio.`
+                : "Cuanto cobraste?"}
+            </Text>
             <TextInput
               value={tarifa}
               onChangeText={setTarifa}
