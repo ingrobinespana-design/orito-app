@@ -1190,11 +1190,29 @@ function mapaHTML(lat, lon) {
 <script>
   if(!window.L){ document.getElementById('aviso').style.display='block'; }
   var map = L.map('map',{zoomControl:true}).setView([${lat}, ${lon}], 16);
-  var capa = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-    {maxZoom:20, subdomains:'abcd'});
-  var errores=0;
-  capa.on('tileerror', function(){ errores++; if(errores>3) document.getElementById('aviso').style.display='block'; });
-  capa.addTo(map);
+  // Plan A/B/C: si un servidor de mapas no responde, prueba el siguiente solo
+  var proveedores = [
+    {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', opt:{maxZoom:20, subdomains:'abcd'}},
+    {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opt:{maxZoom:19}},
+    {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opt:{maxZoom:19, subdomains:'abc'}}
+  ];
+  var idx=0, capa=null;
+  function ponerCapa(){
+    if(capa){ map.removeLayer(capa); }
+    var p = proveedores[idx];
+    capa = L.tileLayer(p.url, p.opt);
+    var err=0, ok=false;
+    capa.on('load', function(){ ok=true; document.getElementById('aviso').style.display='none'; });
+    capa.on('tileerror', function(){
+      err++;
+      if(err>4 && !ok){
+        if(idx < proveedores.length-1){ idx++; ponerCapa(); }   // pasa al siguiente proveedor
+        else { document.getElementById('aviso').style.display='block'; }
+      }
+    });
+    capa.addTo(map);
+  }
+  ponerCapa();
   // pin de verdad: se queda donde lo pones (tocando el mapa) y se puede arrastrar
   var icono = L.divIcon({html:'📍', className:'pin-emoji', iconSize:[40,40], iconAnchor:[20,38]});
   var pin = L.marker([${lat}, ${lon}], {draggable:true, icon:icono, autoPan:true}).addTo(map);
@@ -1240,8 +1258,15 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
           <WebView
             ref={webRef}
             originWhitelist={["*"]}
-            source={{ html: mapaHTML(inicial.lat, inicial.lon) }}
+            // baseUrl le da un origen https valido: sin esto Android usa "about:blank"
+            // y varios servidores de mapas rechazan las peticiones de imagenes
+            source={{ html: mapaHTML(inicial.lat, inicial.lon), baseUrl: "https://orito.app/" }}
             onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); } catch (_) {} }}
+            javaScriptEnabled
+            domStorageEnabled
+            mixedContentMode="always"
+            setSupportMultipleWindows={false}
+            androidLayerType="hardware"
             style={{ flex: 1 }}
           />
           <Text style={{ textAlign: "center", fontSize: 12, color: "#888", paddingVertical: 6 }}>
