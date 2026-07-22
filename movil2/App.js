@@ -9,6 +9,7 @@ import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import { WebView } from 'react-native-webview';
 import * as Updates from 'expo-updates';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Produccion por defecto. Para probar contra un servidor local se arranca con
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
@@ -1145,6 +1146,7 @@ function RestauranteScreen({ navigation, route }) {
 
 function ElegirServicioScreen({ navigation, route }) {
   const { usuario } = route.params;
+  const insets = useSafeAreaInsets();
   return (
     <SafeAreaView style={styles.container}>
       <View style={[styles.header, { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
@@ -1168,7 +1170,7 @@ function ElegirServicioScreen({ navigation, route }) {
           <Text style={styles.servicioSub}>Un transportador te recoge</Text>
         </TouchableOpacity>
       </ScrollView>
-      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
+      <TouchableOpacity style={{ padding: 16, paddingBottom: 16 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
         <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
       </TouchableOpacity>
     </SafeAreaView>
@@ -1910,6 +1912,9 @@ function PedirCarreraScreen({ navigation, route }) {
 
 function ConductorScreen({ navigation, route }) {
   const { usuario } = route.params;
+  // en Samsung y otros con botones de navegacion en pantalla, la barra del
+  // sistema tapa las pestañas si no se respeta el area segura inferior
+  const insets = useSafeAreaInsets();
   const [disponibles, setDisponibles] = useState([]);
   const [mias, setMias] = useState([]);
   const [disponible, setDisponible] = useState(usuario.disponible === "si");
@@ -2235,8 +2240,8 @@ function ConductorScreen({ navigation, route }) {
 
       </ScrollView>
 
-      {/* barra de pestañas */}
-      <View style={styles.tabBar}>
+      {/* barra de pestañas (con espacio para la barra del sistema en Samsung y similares) */}
+      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
           <TouchableOpacity key={k} style={styles.tabBarItem}
             onPress={() => k === "salir" ? navigation.replace("Login") : (animar(), setTab(k))}>
@@ -2755,6 +2760,7 @@ export default function App() {
   }
 
   return (
+    <SafeAreaProvider>
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen name="Login" component={LoginScreen} />
@@ -2772,6 +2778,7 @@ export default function App() {
         <Stack.Screen name="Configuracion" component={ConfiguracionScreen} />
       </Stack.Navigator>
     </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
 
