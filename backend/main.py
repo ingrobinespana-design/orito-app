@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -44,6 +44,72 @@ def get_db():
 @app.get("/")
 def inicio():
     return {"mensaje": "Bienvenido a Tukan"}
+
+# ---------------------------------------------------------------- DESCARGA
+# Pagina publica para masificar la app: el QR del flyer y los mensajes de
+# WhatsApp/Facebook apuntan a /app (enlace FIJO). El boton baja el APK vigente
+# via /apk, que se cambia por config sin reimprimir nada.
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+
+@app.get("/logo.png")
+def logo():
+    return FileResponse("logo_tukan.png", media_type="image/png")
+
+@app.get("/apk")
+def descargar_apk(db: Session = Depends(get_db)):
+    url = leer_config("apk_url", db, "")
+    if not url:
+        raise HTTPException(status_code=404, detail="APK no disponible todavia")
+    return RedirectResponse(url)
+
+@app.get("/app", response_class=HTMLResponse)
+def pagina_descarga(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return f"""<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tukán — Descarga la app</title>
+<meta property="og:title" content="Tukán 🦜 — Carreras y domicilios en Putumayo">
+<meta property="og:description" content="Pide tu carrera en Puerto Asís y Orito. Descarga la app gratis. 1 mes gratis para los primeros 1.000.">
+<meta property="og:image" content="{base}/logo.png">
+<meta property="og:type" content="website">
+<style>
+  body{{margin:0;font-family:-apple-system,Roboto,'Segoe UI',sans-serif;background:#0E3D1E;color:#fff}}
+  .caja{{max-width:430px;margin:0 auto;padding:28px 20px;text-align:center}}
+  img.logo{{width:150px;height:150px;border-radius:32px;box-shadow:0 6px 24px rgba(0,0,0,.4)}}
+  h1{{font-size:42px;margin:14px 0 2px;color:#F6F1E6}}
+  h1 span{{color:#F06000}}
+  .sub{{color:#A9CBB4;font-size:15px;margin-bottom:22px}}
+  .boton{{display:block;background:#F06000;color:#fff;text-decoration:none;font-size:21px;font-weight:800;
+    padding:17px;border-radius:14px;box-shadow:0 4px 14px rgba(240,96,0,.45);margin:6px 0 8px}}
+  .mini{{color:#A9CBB4;font-size:12px;margin-bottom:24px}}
+  .paso{{background:rgba(255,255,255,.07);border-radius:12px;padding:13px 15px;margin:9px 0;text-align:left;font-size:14px;line-height:1.45}}
+  .paso b{{color:#FFB36B}}
+  .promo{{background:#F06000;border-radius:12px;padding:12px;margin:20px 0 6px;font-weight:700;font-size:15px}}
+  a.wa{{color:#7BE2A0;font-weight:600;text-decoration:none}}
+  .pie{{color:#6E9880;font-size:11px;margin-top:26px}}
+</style></head><body><div class="caja">
+  <img class="logo" src="/logo.png" alt="Tukán">
+  <h1>Tuk<span>án</span></h1>
+  <div class="sub">Carreras y domicilios amazónicos<br>Puerto Asís · Orito · Putumayo</div>
+
+  <a class="boton" href="/apk">⬇️ Descargar Tukán</a>
+  <div class="mini">App para Android · Descarga directa, no necesita Play Store</div>
+
+  <div class="paso"><b>1. Descarga</b> — toca el botón naranja y espera a que baje el archivo.</div>
+  <div class="paso"><b>2. Instala</b> — abre el archivo descargado. Si el teléfono pregunta, permite
+    <b>"instalar aplicaciones desconocidas"</b> (es normal en apps fuera de Play Store).</div>
+  <div class="paso"><b>3. Regístrate</b> — abre Tukán, pon tu nombre y teléfono. Si eres mototaxista
+    o conductor, elige tu vehículo y ¡empieza a recibir carreras!</div>
+
+  <div class="promo">🎉 1 MES GRATIS para los primeros 1.000 registrados en Puerto Asís y Orito</div>
+
+  <div style="margin-top:18px;font-size:14px">¿Dudas o ayuda para instalar?<br>
+  <a class="wa" href="https://wa.me/573156009728">💬 Escríbenos al WhatsApp 315 600 9728</a></div>
+
+  <div class="pie">Tukán · Delivery amazónico · Hecho en Putumayo 🦜</div>
+</div></body></html>"""
 
 @app.post("/registro")
 def registrar_usuario(nombre: str, telefono: str, password: str, municipio: str = "Orito",
@@ -444,7 +510,7 @@ def obtener_config(db: Session = Depends(get_db)):
 
 @app.put("/config")
 def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db)):
-    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos")
+    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url")
     if clave not in permitidas:
         raise HTTPException(status_code=400, detail="Ajuste no permitido")
     if clave == "cobro_activo" and valor not in ("si", "no"):

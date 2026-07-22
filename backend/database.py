@@ -147,6 +147,9 @@ CONFIG_INICIAL = {
     "valor_mensual_moto": "39900",
     "valor_mensual_carro": "59900",
     "nequi_pagos": "",
+    # a donde manda el boton "Descargar" de la pagina /app. Se actualiza por
+    # config cuando sale un APK nuevo, sin tocar el flyer ni el QR.
+    "apk_url": "https://expo.dev/artifacts/eas/paW_WArt2QVsaB-YcZ8UfNUQfSnFUWTjl9D9l7Q5-_g.apk",
 }
 
 class Carrera(Base):
