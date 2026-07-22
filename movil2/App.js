@@ -15,6 +15,25 @@ import * as Updates from 'expo-updates';
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
 
+/** distancia en km en linea recta entre dos puntos {lat,lon} (Haversine) */
+function kmEntre(a, b) {
+  if (!a || !b || a.lat == null || b.lat == null) return null;
+  const R = 6371, rad = (x) => (x * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+/** "hace 3 min" a partir de una fecha ISO */
+function haceCuanto(fechaISO) {
+  if (!fechaISO) return "";
+  const min = Math.max(0, Math.floor((Date.now() - new Date(fechaISO).getTime()) / 60000));
+  if (min < 1) return "ahora";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  return `hace ${h} h`;
+}
+
 /** fetch con reintentos: el servidor gratis de Railway se "duerme" y la primera
  *  peticion puede tardar en despertarlo. En vez de fallar de una, reintenta. */
 async function fetchReintento(url, opciones = {}, intentos = 3) {
@@ -1745,6 +1764,23 @@ function ConductorScreen({ navigation, route }) {
   const [disponible, setDisponible] = useState(usuario.disponible === "si");
   const [cuenta, setCuenta] = useState(null);
   const [stats, setStats] = useState(null);
+  const [tab, setTab] = useState("solicitudes");
+  const [miUbic, setMiUbic] = useState(null);   // ubicacion del conductor, para calcular distancia a cada carrera
+
+  // ubicacion del conductor una vez, para mostrar "a X km" de cada solicitud
+  useEffect(() => {
+    (async () => {
+      try {
+        const permiso = await Location.getForegroundPermissionsAsync();
+        if (permiso.status !== "granted") {
+          const pedir = await Location.requestForegroundPermissionsAsync();
+          if (pedir.status !== "granted") return;
+        }
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        setMiUbic({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      } catch (e) {}
+    })();
+  }, []);
 
   const cargar = () => {
     // con conductor_id el servidor filtra por municipio y tipo de vehiculo
@@ -1827,39 +1863,52 @@ function ConductorScreen({ navigation, route }) {
       .catch(() => avisar("Error", "No hay conexion."));
   };
 
-  const tarjeta = (c, propia) => (
+  const tarjeta = (c, propia) => {
+    // distancia del conductor al punto de recogida (si sabemos ambas ubicaciones)
+    const kmAlOrigen = !propia && miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
+    // "precio justo": la oferta esta a la altura de lo sugerido
+    const justo = c.tarifa_ofrecida && c.tarifa_sugerida && c.tarifa_ofrecida >= c.tarifa_sugerida * 0.9;
+    const bajo = c.tarifa_ofrecida && c.tarifa_sugerida && c.tarifa_ofrecida < c.tarifa_sugerida * 0.9;
+    return (
     <View key={c.id} style={[styles.card, { marginBottom: 12 }]}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <Text style={{ fontWeight: "600" }}>Carrera #{c.id}</Text>
-        {c.zona === "rural" && (
-          <View style={styles.avisoRural}><Text style={styles.avisoRuralTexto}>🌄 Fuera del pueblo</Text></View>
-        )}
+      {/* linea superior estilo inDrive: distancia/tiempo + precio grande */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <View>
+          {kmAlOrigen != null && <Text style={{ fontSize: 13, color: "#888" }}>~{kmAlOrigen.toFixed(1)} km de ti</Text>}
+          <Text style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{haceCuanto(c.fecha)}</Text>
+        </View>
+        {!propia && c.tarifa_ofrecida ? (
+          <View style={{ alignItems: "flex-end" }}>
+            <Text style={{ fontSize: 26, fontWeight: "bold", color: "#333" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
+            {justo && <Text style={{ fontSize: 12, color: "#8E44AD", fontWeight: "600" }}>◇ Precio justo</Text>}
+            {bajo && <Text style={{ fontSize: 12, color: "#C0392B", fontWeight: "600" }}>▽ Bajo lo usual</Text>}
+          </View>
+        ) : null}
       </View>
 
-      <Text style={styles.etiqueta}>RECOGER EN</Text>
-      <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.origen}</Text>
-      {c.origen_detalle ? <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>📍 {c.origen_detalle}</Text> : null}
+      {c.zona === "rural" && (
+        <View style={[styles.avisoRural, { marginTop: 8 }]}><Text style={styles.avisoRuralTexto}>🌄 Fuera del pueblo</Text></View>
+      )}
 
-      <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
-
-      <Text style={styles.etiqueta}>LLEVAR A</Text>
-      <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.destino}</Text>
-      {c.destino_detalle ? <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>📍 {c.destino_detalle}</Text> : null}
-
-      {c.notas ? <Text style={{ fontSize: 13, color: "#888", marginTop: 10, fontStyle: "italic" }}>💬 {c.notas}</Text> : null}
-
-      {c.distancia_km ? (
-        <Text style={{ fontSize: 13, color: "#555", marginTop: 8 }}>
-          📏 {c.distancia_km} km{c.tarifa_sugerida ? `  ·  sugerido $${c.tarifa_sugerida.toLocaleString()}` : ""}
-        </Text>
-      ) : null}
-
-      {!propia && c.tarifa_ofrecida ? (
-        <View style={styles.ofertaCliente}>
-          <Text style={{ fontSize: 12, color: "#555" }}>El cliente ofrece</Text>
-          <Text style={{ fontSize: 24, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
+      <View style={{ marginTop: 12 }}>
+        <View style={{ flexDirection: "row" }}>
+          <Text style={{ marginRight: 6 }}>🟢</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.origen}</Text>
+            {c.origen_detalle ? <Text style={{ fontSize: 13, color: "#888" }}>{c.origen_detalle}</Text> : null}
+          </View>
         </View>
-      ) : null}
+        <View style={{ flexDirection: "row", marginTop: 8 }}>
+          <Text style={{ marginRight: 6 }}>🔴</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.destino}</Text>
+            {c.destino_detalle ? <Text style={{ fontSize: 13, color: "#888" }}>{c.destino_detalle}</Text> : null}
+          </View>
+        </View>
+      </View>
+
+      {c.distancia_km ? <Text style={{ fontSize: 12, color: "#888", marginTop: 8 }}>Recorrido ~{c.distancia_km} km{c.tarifa_sugerida ? ` · sugerido $${c.tarifa_sugerida.toLocaleString()}` : ""}</Text> : null}
+      {c.notas ? <Text style={{ fontSize: 13, color: "#888", marginTop: 6, fontStyle: "italic" }}>💬 {c.notas}</Text> : null}
 
       <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
       <Text style={{ fontSize: 13, color: "#888" }}>👤 {c.cliente_nombre}</Text>
@@ -1892,7 +1941,8 @@ function ConductorScreen({ navigation, route }) {
         </TouchableOpacity>
       )}
     </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1933,39 +1983,42 @@ function ConductorScreen({ navigation, route }) {
       </TouchableOpacity>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 8 }}>
-        {/* 1. tu carrera en curso, si tienes una */}
-        {mias.length > 0 && (
+        {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
+        {tab === "solicitudes" && (
           <>
-            <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
-            {mias.map(c => tarjeta(c, true))}
+            {mias.length > 0 && (
+              <>
+                <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
+                {mias.map(c => tarjeta(c, true))}
+                <View style={{ height: 8 }} />
+              </>
+            )}
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <Text style={styles.seccionTitulo}>Solicitudes en vivo</Text>
+              {disponible && (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#2E7D32" }} />
+                  <Text style={{ fontSize: 11, color: "#2E7D32", fontWeight: "600" }}>EN VIVO · {disponibles.length}</Text>
+                </View>
+              )}
+            </View>
+            {!disponible ? (
+              <View style={{ alignItems: "center", padding: 24 }}>
+                <Text style={{ fontSize: 34 }}>🔌</Text>
+                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>Estas desconectado.{"\n"}Conectate arriba para recibir solicitudes.</Text>
+              </View>
+            ) : disponibles.length === 0 ? (
+              <View style={{ alignItems: "center", padding: 30 }}>
+                <Text style={{ fontSize: 40 }}>😴</Text>
+                <Text style={{ color: "#888", marginTop: 8 }}>Esperando solicitudes...</Text>
+              </View>
+            ) : disponibles.map(c => tarjeta(c, false))}
           </>
         )}
 
-        {/* 2. feed en vivo de carreras entrantes */}
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          <Text style={styles.seccionTitulo}>Carreras disponibles</Text>
-          {disponible && (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#2E7D32" }} />
-              <Text style={{ fontSize: 11, color: "#2E7D32", fontWeight: "600" }}>EN VIVO · {disponibles.length}</Text>
-            </View>
-          )}
-        </View>
-        {!disponible ? (
-          <View style={{ alignItems: "center", padding: 24 }}>
-            <Text style={{ fontSize: 34 }}>🔌</Text>
-            <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>Estas desconectado.{"\n"}Conectate arriba para recibir carreras.</Text>
-          </View>
-        ) : disponibles.length === 0 ? (
-          <View style={{ alignItems: "center", padding: 30 }}>
-            <Text style={{ fontSize: 40 }}>😴</Text>
-            <Text style={{ color: "#888", marginTop: 8 }}>Esperando carreras...</Text>
-          </View>
-        ) : disponibles.map(c => tarjeta(c, false))}
-
-        {/* 3. tus numeros, al final */}
-        {stats && (
-          <View style={[styles.card, { marginTop: 18 }]}>
+        {/* ===== PESTAÑA DESEMPEÑO: estadisticas ===== */}
+        {tab === "desempeno" && stats && (
+          <View style={styles.card}>
             <Text style={styles.seccionTitulo}>Tus números</Text>
             <View style={styles.statHoy}>
               <View>
@@ -1988,11 +2041,47 @@ function ConductorScreen({ navigation, route }) {
             </View>
           </View>
         )}
+
+        {/* ===== PESTAÑA CARTERA: suscripcion ===== */}
+        {tab === "cartera" && (
+          <View style={styles.card}>
+            <Text style={styles.seccionTitulo}>Tu suscripción</Text>
+            {cuenta && !cuenta.cobro_activo ? (
+              <Text style={{ fontSize: 14, color: "#187830", fontWeight: "600" }}>Gratis por ahora 🎉{"\n"}
+                <Text style={{ fontWeight: "400", color: "#666", fontSize: 13 }}>Trabajas sin costo durante el lanzamiento.</Text>
+              </Text>
+            ) : cuenta ? (
+              <>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontSize: 14, color: "#333" }}>Estado</Text>
+                  <View style={[styles.estadoBadge, { backgroundColor: cuenta.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: cuenta.al_dia ? "#187830" : "#C0392B" }}>{cuenta.al_dia ? "Al día" : "Vencida"}</Text>
+                  </View>
+                </View>
+                {cuenta.al_dia && <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>Te quedan {cuenta.dias_restantes} días</Text>}
+                <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>Valor: ${cuenta.valor_mensual.toLocaleString()} / mes</Text>
+                {!cuenta.al_dia && cuenta.nequi_pagos ? (
+                  <View style={{ backgroundColor: "#FFF4E0", borderRadius: 8, padding: 10, marginTop: 10 }}>
+                    <Text style={{ fontSize: 13, color: "#8A5A00" }}>Renueva pagando a Nequi:</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "bold", color: "#8A5A00" }}>{cuenta.nequi_pagos}</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : <ActivityIndicator color="#187830" />}
+          </View>
+        )}
       </ScrollView>
 
-      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
-        <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
-      </TouchableOpacity>
+      {/* barra de pestañas estilo inDrive */}
+      <View style={styles.tabBar}>
+        {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
+          <TouchableOpacity key={k} style={styles.tabBarItem}
+            onPress={() => k === "salir" ? navigation.replace("Login") : setTab(k)}>
+            <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
+            <Text style={{ fontSize: 11, marginTop: 2, color: tab === k ? "#187830" : "#999", fontWeight: tab === k ? "700" : "400" }}>{lbl}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <Modal visible={!!cobrando} transparent animationType="fade" onRequestClose={() => setCobrando(null)}>
         <View style={styles.fondoModal}>
@@ -2463,6 +2552,8 @@ const styles = StyleSheet.create({
   pasos: { flexDirection: "row", gap: 6, marginBottom: 12 },
   paso: { flex: 1, backgroundColor: "#eee", borderRadius: 8, paddingVertical: 8, alignItems: "center" },
   pasoActivo: { backgroundColor: "#187830" },
+  tabBar: { flexDirection: "row", borderTopWidth: 0.5, borderTopColor: "#ddd", backgroundColor: "#fff", paddingBottom: 6, paddingTop: 8 },
+  tabBarItem: { flex: 1, alignItems: "center" },
   statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },
