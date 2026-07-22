@@ -1399,7 +1399,9 @@ function PedirCarreraScreen({ navigation, route }) {
 
   useEffect(() => {
     cargarActiva();
-    const intervalo = setInterval(cargarActiva, 6000);
+    // refresco en vivo cada 4s: el estado de la carrera (aceptada, en camino) se
+    // actualiza casi al momento, ademas de la notificacion push
+    const intervalo = setInterval(cargarActiva, 4000);
     const aviso = Notifications.addNotificationReceivedListener(cargarActiva);
     const toque = Notifications.addNotificationResponseReceivedListener(cargarActiva);
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
@@ -1469,13 +1471,31 @@ function PedirCarreraScreen({ navigation, route }) {
   // --- ya tiene una carrera en curso: se le hace seguimiento
   if (carrera) {
     const buscando = carrera.estado === "buscando";
+    const tituloEstado = {
+      buscando: "Buscando transportador...",
+      aceptada: "Tu conductor va en camino",
+      en_camino: "En viaje a tu destino",
+    }[carrera.estado] || "Tu carrera";
     return (
       <SafeAreaView style={styles.container}>
         <View style={[styles.header, { backgroundColor: "#187830" }]}>
           <Text style={styles.headerSub}>Carrera #{carrera.id}</Text>
-          <Text style={styles.headerTitle}>{buscando ? "Buscando transportador..." : "Ya tienes conductor"}</Text>
+          <Text style={styles.headerTitle}>{tituloEstado}</Text>
         </View>
         <ScrollView contentContainerStyle={{ padding: 16 }}>
+          {!buscando && (
+            <View style={styles.pasos}>
+              {[["aceptada", "✓ Aceptada"], ["en_camino", "🚗 En camino"], ["finalizada", "🏁 Fin"]].map(([est, lbl], i) => {
+                const orden = { aceptada: 0, en_camino: 1, finalizada: 2 };
+                const activo = orden[carrera.estado] >= i;
+                return (
+                  <View key={est} style={[styles.paso, activo && styles.pasoActivo]}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: activo ? "#fff" : "#999" }}>{lbl}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
           {buscando ? (
             <>
               <View style={[styles.card, { alignItems: "center", paddingVertical: 24 }]}>
@@ -1741,9 +1761,9 @@ function ConductorScreen({ navigation, route }) {
 
   useEffect(() => {
     cargar();
-    // el sondeo es el respaldo: si la notificacion no llega (sin señal, permiso
-    // negado), igual aparece la carrera al refrescar
-    const intervalo = setInterval(cargar, 8000);
+    // refresco en vivo cada 4s (mas la notificacion push instantanea) para que
+    // las carreras nuevas aparezcan casi al momento
+    const intervalo = setInterval(cargar, 4000);
     const aviso = Notifications.addNotificationReceivedListener(cargar);
     const toque = Notifications.addNotificationResponseReceivedListener(cargar);
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
@@ -1913,9 +1933,39 @@ function ConductorScreen({ navigation, route }) {
       </TouchableOpacity>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 8 }}>
-        {/* dashboard: lo hecho y lo ganado por periodo */}
+        {/* 1. tu carrera en curso, si tienes una */}
+        {mias.length > 0 && (
+          <>
+            <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
+            {mias.map(c => tarjeta(c, true))}
+          </>
+        )}
+
+        {/* 2. feed en vivo de carreras entrantes */}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <Text style={styles.seccionTitulo}>Carreras disponibles</Text>
+          {disponible && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#2E7D32" }} />
+              <Text style={{ fontSize: 11, color: "#2E7D32", fontWeight: "600" }}>EN VIVO · {disponibles.length}</Text>
+            </View>
+          )}
+        </View>
+        {!disponible ? (
+          <View style={{ alignItems: "center", padding: 24 }}>
+            <Text style={{ fontSize: 34 }}>🔌</Text>
+            <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>Estas desconectado.{"\n"}Conectate arriba para recibir carreras.</Text>
+          </View>
+        ) : disponibles.length === 0 ? (
+          <View style={{ alignItems: "center", padding: 30 }}>
+            <Text style={{ fontSize: 40 }}>😴</Text>
+            <Text style={{ color: "#888", marginTop: 8 }}>Esperando carreras...</Text>
+          </View>
+        ) : disponibles.map(c => tarjeta(c, false))}
+
+        {/* 3. tus numeros, al final */}
         {stats && (
-          <View style={[styles.card, { marginBottom: 14 }]}>
+          <View style={[styles.card, { marginTop: 18 }]}>
             <Text style={styles.seccionTitulo}>Tus números</Text>
             <View style={styles.statHoy}>
               <View>
@@ -1938,22 +1988,6 @@ function ConductorScreen({ navigation, route }) {
             </View>
           </View>
         )}
-
-        {mias.length > 0 && (
-          <>
-            <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
-            {mias.map(c => tarjeta(c, true))}
-          </>
-        )}
-
-        <Text style={styles.seccionTitulo}>Carreras disponibles</Text>
-        {disponibles.length === 0 && (
-          <View style={{ alignItems: "center", padding: 30 }}>
-            <Text style={{ fontSize: 40 }}>😴</Text>
-            <Text style={{ color: "#888", marginTop: 8 }}>No hay carreras por ahora</Text>
-          </View>
-        )}
-        {disponibles.map(c => tarjeta(c, false))}
       </ScrollView>
 
       <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
@@ -2213,28 +2247,51 @@ function AdminCarrerasScreen({ navigation }) {
   );
 }
 
+// todos los medios que puede aceptar un conductor; los que llevan cuenta piden el dato al marcar
+const METODOS_PAGO = [
+  { key: "efectivo", label: "Efectivo", icon: "💵", cuenta: false },
+  { key: "nequi", label: "Nequi", icon: "📱", cuenta: true, ph: "Numero Nequi", soloNumeros: true },
+  { key: "daviplata", label: "Daviplata", icon: "📱", cuenta: true, ph: "Numero Daviplata", soloNumeros: true },
+  { key: "bancolombia", label: "Bancolombia", icon: "🏦", cuenta: true, ph: "Cuenta o llave" },
+  { key: "breb", label: "Llave Bre-B", icon: "🔑", cuenta: true, ph: "Tu llave Bre-B" },
+];
+
 function ConfiguracionScreen({ navigation, route }) {
   const { usuario } = route.params;
   const esConductor = usuario.rol === "conductor";
   const [pagos, setPagos] = useState({ efectivo: true, nequi: "", daviplata: "", bancolombia: "", breb: "" });
+  const [activos, setActivos] = useState({ efectivo: true });   // cuales estan marcados
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
-      .then(d => { if (d && d.pagos) setPagos(d.pagos); })
+      .then(d => {
+        if (d && d.pagos) {
+          setPagos(d.pagos);
+          setActivos({
+            efectivo: d.pagos.efectivo, nequi: !!d.pagos.nequi, daviplata: !!d.pagos.daviplata,
+            bancolombia: !!d.pagos.bancolombia, breb: !!d.pagos.breb,
+          });
+        }
+      })
       .catch(() => {})
       .finally(() => setCargando(false));
   }, []);
 
   const guardar = () => {
+    // si marco un medio con cuenta pero no puso el dato, se avisa
+    for (const m of METODOS_PAGO) {
+      if (m.cuenta && activos[m.key] && !(pagos[m.key] || "").trim()) {
+        avisar("Falta un dato", `Marcaste ${m.label} pero no pusiste el numero/cuenta.`); return;
+      }
+    }
     setGuardando(true);
-    const p = new URLSearchParams({
-      efectivo: pagos.efectivo ? "si" : "no",
-      nequi: pagos.nequi || "", daviplata: pagos.daviplata || "",
-      bancolombia: pagos.bancolombia || "", breb: pagos.breb || "",
-    });
-    fetch(`${API}/usuarios/${usuario.id}/pagos?${p.toString()}`, { method: "PUT" })
+    const datos = { efectivo: activos.efectivo ? "si" : "no" };
+    for (const m of METODOS_PAGO) {
+      if (m.cuenta) datos[m.key] = activos[m.key] ? (pagos[m.key] || "") : "";  // desmarcar borra el dato
+    }
+    fetch(`${API}/usuarios/${usuario.id}/pagos?${new URLSearchParams(datos).toString()}`, { method: "PUT" })
       .then(r => r.json())
       .then(d => { setGuardando(false); if (d.ok) avisar("Guardado", "Tus medios de pago quedaron actualizados."); else avisar("Error", "No se pudo guardar."); })
       .catch(() => { setGuardando(false); avisar("Sin conexion", "Intenta de nuevo."); });
@@ -2265,33 +2322,30 @@ function ConfiguracionScreen({ navigation, route }) {
 
         {cargando ? <ActivityIndicator color="#187830" /> : esConductor ? (
           <View style={styles.card}>
-            <Text style={styles.seccionTitulo}>Como quieres que te paguen</Text>
-            <Text style={styles.ayuda}>El cliente vera estos datos para pagarte directo. La app no cobra ni maneja tu plata.</Text>
+            <Text style={styles.seccionTitulo}>Medios de pago que aceptas</Text>
+            <Text style={styles.ayuda}>Marca los que aceptas. El cliente vera solo esos para pagarte directo. La app no cobra ni maneja tu plata.</Text>
 
-            <TouchableOpacity style={styles.pagoFila} onPress={() => setPagos({ ...pagos, efectivo: !pagos.efectivo })}>
-              <Text style={{ fontSize: 15, color: "#333" }}>💵 Efectivo</Text>
-              <View style={[styles.switch, pagos.efectivo && styles.switchOn]}>
-                <Text style={{ fontSize: 12, fontWeight: "600", color: pagos.efectivo ? "#fff" : "#888" }}>{pagos.efectivo ? "SI" : "NO"}</Text>
+            {METODOS_PAGO.map(m => (
+              <View key={m.key}>
+                <TouchableOpacity style={styles.pagoFila} onPress={() => setActivos({ ...activos, [m.key]: !activos[m.key] })}>
+                  <Text style={{ fontSize: 15, color: "#333" }}>{m.icon} {m.label}</Text>
+                  <View style={[styles.switch, activos[m.key] && styles.switchOn]}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: activos[m.key] ? "#fff" : "#888" }}>{activos[m.key] ? "SI" : "NO"}</Text>
+                  </View>
+                </TouchableOpacity>
+                {m.cuenta && activos[m.key] && (
+                  <TextInput
+                    value={pagos[m.key]}
+                    onChangeText={t => setPagos({ ...pagos, [m.key]: m.soloNumeros ? t.replace(/\D/g, "") : t })}
+                    placeholder={m.ph}
+                    keyboardType={m.soloNumeros ? "phone-pad" : "default"}
+                    style={[styles.input, { marginTop: 4 }]}
+                  />
+                )}
               </View>
-            </TouchableOpacity>
+            ))}
 
-            <Text style={styles.etiqueta}>NEQUI (numero)</Text>
-            <TextInput value={pagos.nequi} onChangeText={t => setPagos({ ...pagos, nequi: t.replace(/\D/g, "") })}
-              placeholder="Ej: 3001234567" keyboardType="phone-pad" style={styles.input} />
-
-            <Text style={styles.etiqueta}>DAVIPLATA (numero)</Text>
-            <TextInput value={pagos.daviplata} onChangeText={t => setPagos({ ...pagos, daviplata: t.replace(/\D/g, "") })}
-              placeholder="Opcional" keyboardType="phone-pad" style={styles.input} />
-
-            <Text style={styles.etiqueta}>BANCOLOMBIA (cuenta o llave)</Text>
-            <TextInput value={pagos.bancolombia} onChangeText={t => setPagos({ ...pagos, bancolombia: t })}
-              placeholder="Numero de cuenta ahorros/corriente" style={styles.input} />
-
-            <Text style={styles.etiqueta}>LLAVE BRE-B</Text>
-            <TextInput value={pagos.breb} onChangeText={t => setPagos({ ...pagos, breb: t })}
-              placeholder="Tu llave Bre-B (opcional)" style={styles.input} />
-
-            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 8 }]} onPress={guardar} disabled={guardando}>
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={guardar} disabled={guardando}>
               {guardando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Guardar medios de pago</Text>}
             </TouchableOpacity>
           </View>
@@ -2406,6 +2460,9 @@ const styles = StyleSheet.create({
   switch: { backgroundColor: "#eee", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, minWidth: 44, alignItems: "center" },
   switchOn: { backgroundColor: "#187830" },
   pagoItem: { fontSize: 14, color: "#333", marginTop: 3 },
+  pasos: { flexDirection: "row", gap: 6, marginBottom: 12 },
+  paso: { flex: 1, backgroundColor: "#eee", borderRadius: 8, paddingVertical: 8, alignItems: "center" },
+  pasoActivo: { backgroundColor: "#187830" },
   statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },
