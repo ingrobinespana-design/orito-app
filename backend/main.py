@@ -111,8 +111,20 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
   <h1>Tuk<span>án</span></h1>
   <div class="sub">Carreras y domicilios amazónicos<br>Puerto Asís · Orito · Putumayo</div>
 
-  <a class="boton" href="/apk">⬇️ Descargar Tukán</a>
-  <div class="mini">App para Android · Descarga directa, no necesita Play Store</div>
+  <a class="boton" id="btn-descarga" href="/apk">⬇️ Descargar Tukán</a>
+  <div class="mini" id="nota-android">App para Android · Descarga directa, no necesita Play Store</div>
+  <div id="aviso-iphone" style="display:none;background:rgba(255,255,255,.1);border-radius:12px;padding:14px;font-size:14px;line-height:1.5">
+    🍎 Parece que tienes iPhone. Por ahora Tukán está disponible <b>solo para Android</b>
+    (Apple no permite instalar apps por fuera de su tienda).<br><br>
+    Déjanos tu número por WhatsApp y te avisamos cuando llegue a iPhone 👇
+  </div>
+  <script>
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {{
+      document.getElementById('btn-descarga').style.display = 'none';
+      document.getElementById('nota-android').style.display = 'none';
+      document.getElementById('aviso-iphone').style.display = 'block';
+    }}
+  </script>
 
   <div class="paso"><b>1. Descarga</b> — toca el botón naranja y espera a que baje el archivo.</div>
   <div class="paso"><b>2. Instala</b> — abre el archivo descargado. Si el teléfono pregunta, permite
