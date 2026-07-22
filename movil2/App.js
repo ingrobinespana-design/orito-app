@@ -1179,28 +1179,32 @@ function mapaHTML(lat, lon) {
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}
-  #pin{position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);z-index:1000;font-size:40px;pointer-events:none}
+  .pin-emoji{font-size:40px;line-height:40px;text-align:center}
   #aviso{position:absolute;top:8px;left:8px;right:8px;z-index:1000;background:#fff3cd;color:#8A5A00;
     font-family:sans-serif;font-size:12px;padding:8px;border-radius:6px;display:none;text-align:center}
 </style></head><body>
-<div id="map"></div><div id="pin">📍</div>
-<div id="aviso">El mapa no cargo. Puedes mover igual para ubicar, o cerrar y escribir la direccion.</div>
+<div id="map"></div>
+<div id="aviso">El mapa no cargo. Puedes cerrar y escribir la direccion.</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   if(!window.L){ document.getElementById('aviso').style.display='block'; }
-  var map = L.map('map',{zoomControl:false}).setView([${lat}, ${lon}], 16);
-  // Carto Voyager: calles con nombres, gratis y confiable dentro de un WebView
+  var map = L.map('map',{zoomControl:true}).setView([${lat}, ${lon}], 16);
   var capa = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
     {maxZoom:20, subdomains:'abcd'});
   var errores=0;
   capa.on('tileerror', function(){ errores++; if(errores>3) document.getElementById('aviso').style.display='block'; });
   capa.addTo(map);
+  // pin de verdad: se queda donde lo pones (tocando el mapa) y se puede arrastrar
+  var icono = L.divIcon({html:'📍', className:'pin-emoji', iconSize:[40,40], iconAnchor:[20,38]});
+  var pin = L.marker([${lat}, ${lon}], {draggable:true, icon:icono, autoPan:true}).addTo(map);
   function enviar(){
-    var c = map.getCenter();
-    if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({lat:c.lat, lon:c.lng}));
+    var p = pin.getLatLng();
+    if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({lat:p.lat, lon:p.lng}));
   }
-  map.on('moveend', enviar); enviar();
-  function irA(la, lo){ map.setView([la, lo], 16); }
+  pin.on('dragend', enviar);
+  map.on('click', function(e){ pin.setLatLng(e.latlng); enviar(); });  // tocar = mover el pin ahi
+  enviar();
+  function irA(la, lo){ pin.setLatLng([la, lo]); map.setView([la, lo], 16); enviar(); }
 </script></body></html>`;
 }
 
@@ -1240,7 +1244,7 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
             style={{ flex: 1 }}
           />
           <Text style={{ textAlign: "center", fontSize: 12, color: "#888", paddingVertical: 6 }}>
-            Mueve el mapa hasta que el pin quede en el punto exacto
+            Toca el mapa para poner el pin, o arrastralo al punto exacto
           </Text>
         </View>
         <View style={{ padding: 16, gap: 10 }}>
