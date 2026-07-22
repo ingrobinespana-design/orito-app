@@ -8,6 +8,7 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import { WebView } from 'react-native-webview';
+import * as Updates from 'expo-updates';
 
 // Produccion por defecto. Para probar contra un servidor local se arranca con
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
@@ -2123,6 +2124,40 @@ function AdminCarrerasScreen({ navigation }) {
 }
 
 export default function App() {
+  const [listo, setListo] = useState(false);
+
+  // al abrir, busca la ultima version y la aplica ANTES de mostrar la app, para
+  // que nadie quede atrasado con actualizaciones que no alcanzaron a bajar
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const u = await Promise.race([
+          Updates.checkForUpdateAsync(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+        ]);
+        if (u && u.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();   // reemplaza la app por la nueva version
+          return;
+        }
+      } catch (e) { /* sin conexion o en desarrollo: se sigue con lo que hay */ }
+      if (vivo) setListo(true);
+    })();
+    return () => { vivo = false; };
+  }, []);
+
+  if (!listo) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}>
+        <Text style={{ color: "#fff", fontSize: 26, fontWeight: "bold" }}>Orito Domi</Text>
+        <Text style={{ color: "rgba(255,255,255,0.85)", marginTop: 4, fontSize: 12 }}>Delivery Amazonico</Text>
+        <ActivityIndicator color="#fff" style={{ marginTop: 18 }} />
+        <Text style={{ color: "rgba(255,255,255,0.7)", marginTop: 10, fontSize: 12 }}>Buscando actualizaciones...</Text>
+      </View>
+    );
+  }
+
   return (
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
