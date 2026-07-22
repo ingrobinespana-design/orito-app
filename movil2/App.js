@@ -215,7 +215,7 @@ function LoginScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.header}>
           <Text style={styles.headerSub}>Bienvenido a</Text>
-          <Text style={styles.headerTitle}>Domicilios Orito</Text>
+          <Text style={styles.headerTitle}>Tukán 🦜</Text>
         </View>
         <View style={styles.card}>
           <View style={styles.tabs}>
@@ -2420,7 +2420,7 @@ function ConfiguracionScreen({ navigation, route }) {
     const p = await Notifications.getPermissionsAsync();
     setNotifOk(p.status === "granted");
     if (p.status === "granted") avisar("Listo", "Recibiras las carreras aunque tengas la app cerrada.");
-    else avisar("Activalas en el telefono", "Ve a Ajustes > Apps > Orito Domi > Notificaciones y activalas.");
+    else avisar("Activalas en el telefono", "Ve a Ajustes > Apps > Tukán > Notificaciones y activalas.");
   };
 
   useEffect(() => {
@@ -2606,8 +2606,8 @@ export default function App() {
   if (!listo) {
     return (
       <View style={{ flex: 1, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: "#fff", fontSize: 26, fontWeight: "bold" }}>Orito Domi</Text>
-        <Text style={{ color: "rgba(255,255,255,0.85)", marginTop: 4, fontSize: 12 }}>Delivery Amazonico</Text>
+        <Text style={{ color: "#fff", fontSize: 30, fontWeight: "bold" }}>Tukán 🦜</Text>
+        <Text style={{ color: "rgba(255,255,255,0.85)", marginTop: 4, fontSize: 12 }}>Domicilios y carreras amazónicas</Text>
         <ActivityIndicator color="#fff" style={{ marginTop: 18 }} />
         <Text style={{ color: "rgba(255,255,255,0.7)", marginTop: 10, fontSize: 12 }}>Buscando actualizaciones...</Text>
       </View>

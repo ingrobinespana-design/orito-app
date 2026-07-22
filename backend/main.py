@@ -21,7 +21,7 @@ cloudinary.config(
     api_secret=os.environ.get("CLOUDINARY_API_SECRET")
 )
 
-app = FastAPI(title="Orito App - API")
+app = FastAPI(title="Tukan - API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,7 +43,7 @@ def get_db():
 
 @app.get("/")
 def inicio():
-    return {"mensaje": "Bienvenido a Orito App"}
+    return {"mensaje": "Bienvenido a Tukan"}
 
 @app.post("/registro")
 def registrar_usuario(nombre: str, telefono: str, password: str, municipio: str = "Orito",
