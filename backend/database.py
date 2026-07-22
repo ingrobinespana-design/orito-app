@@ -82,6 +82,10 @@ class Lugar(Base):
     nombre = Column(String)
     municipio = Column(String, default="Orito")
     usos = Column(Integer, default=0)
+    # la lista aprende ubicaciones: cuando alguien marca este sitio en el mapa se
+    # guardan sus coordenadas, y el siguiente que lo elija ya no necesita el mapa.
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
     # "urbano" (casco del pueblo) o "rural" (veredas, a kilometros). El conductor
     # necesita saberlo ANTES de aceptar: no es lo mismo ir al parque que a una vereda.
     zona = Column(String, default="urbano")
@@ -295,7 +299,7 @@ def crear_tablas():
         except Exception:
             pass
     for columna in ("usos INTEGER DEFAULT 0", "zona VARCHAR DEFAULT 'urbano'",
-                    "municipio VARCHAR DEFAULT 'Orito'"):
+                    "municipio VARCHAR DEFAULT 'Orito'", "lat FLOAT", "lon FLOAT"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE lugares ADD COLUMN {columna}"))

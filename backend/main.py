@@ -94,6 +94,24 @@ def municipio_dict(m: Municipio, db: Session):
         "centro_lon": m.centro_lon,
     }
 
+@app.get("/ubicacion/municipio")
+def municipio_por_ubicacion(lat: float, lon: float, db: Session = Depends(get_db)):
+    """Dice en que pueblo estas segun tu GPS: el centro mas cercano dentro de un
+    radio razonable. Asi las opciones (solo carro en Orito, moto+carro en Puerto
+    Asis) salen de donde estas, no de donde te registraste."""
+    activos = db.query(Municipio).filter(Municipio.activo == "si").all()
+    mejor, mejor_km = None, None
+    for m in activos:
+        if m.centro_lat is None or m.centro_lon is None:
+            continue
+        km = tarifas.distancia_km(lat, lon, m.centro_lat, m.centro_lon)
+        if km is not None and (mejor_km is None or km < mejor_km):
+            mejor, mejor_km = m, km
+    # 40 km cubre el casco urbano y sus veredas sin confundir un pueblo con otro
+    if not mejor or mejor_km > 40:
+        raise HTTPException(status_code=404, detail="No pudimos ubicar tu municipio. Selecciónalo manualmente.")
+    return municipio_dict(mejor, db)
+
 @app.get("/municipios")
 def obtener_municipios(db: Session = Depends(get_db)):
     """La app arma con esto las opciones del registro: en Orito no debe
@@ -603,18 +621,21 @@ def buscar_lugar(nombre: str, municipio: str, db: Session):
         Lugar.municipio == municipio,
     ).first()
 
-def registrar_lugar(nombre: str, municipio: str, db: Session):
+def registrar_lugar(nombre: str, municipio: str, db: Session, lat=None, lon=None):
     """Guarda lo que escribio el usuario para sugerirselo al siguiente, dentro de
-    su municipio. Compara sin distinguir mayusculas para no duplicar."""
+    su municipio. Si viene con coordenadas y el lugar aun no las tiene, las
+    aprende: asi el proximo que lo elija de la lista no necesita marcar el mapa."""
     nombre = (nombre or "").strip()
     if len(nombre) < 3:
         return
     lugar = buscar_lugar(nombre, municipio, db)
     if lugar:
         lugar.usos = (lugar.usos or 0) + 1
+        if lat is not None and lon is not None and lugar.lat is None:
+            lugar.lat, lugar.lon = lat, lon
     else:
         # lo escrito a mano entra como urbano; si es vereda el admin lo corrige
-        db.add(Lugar(nombre=nombre, municipio=municipio, usos=1))
+        db.add(Lugar(nombre=nombre, municipio=municipio, usos=1, lat=lat, lon=lon))
 
 def zona_de_la_carrera(origen: str, destino: str, municipio: str, db: Session):
     """Si cualquiera de las dos puntas es vereda, la carrera es rural."""
@@ -686,7 +707,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
                   notas: str = None, vehiculo_pedido: str = None,
                   origen_lat: float = None, origen_lon: float = None,
                   destino_lat: float = None, destino_lon: float = None,
-                  tarifa_ofrecida: int = None,
+                  tarifa_ofrecida: int = None, municipio: str = None,
                   db: Session = Depends(get_db)):
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
     if not cliente:
@@ -698,7 +719,8 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     ).first()
     if activa:
         raise HTTPException(status_code=400, detail="Ya tienes una carrera en curso")
-    municipio = cliente.municipio or "Orito"
+    # el municipio viene de donde ESTA el cliente (GPS o manual), no de su registro
+    municipio = municipio or cliente.municipio or "Orito"
     permitidos = vehiculos_de(municipio, db)
     if vehiculo_pedido not in permitidos:
         raise HTTPException(
@@ -721,8 +743,8 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         zona=zona_de_la_carrera(origen, destino, municipio, db),
     )
     db.add(carrera)
-    registrar_lugar(origen, municipio, db)
-    registrar_lugar(destino, municipio, db)
+    registrar_lugar(origen, municipio, db, origen_lat, origen_lon)
+    registrar_lugar(destino, municipio, db, destino_lat, destino_lon)
     db.commit()
     db.refresh(carrera)
     tareas.add_task(avisar_carrera_nueva, carrera.id)

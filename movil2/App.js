@@ -1120,7 +1120,7 @@ function ElegirServicioScreen({ navigation, route }) {
 
 /** Campo de origen/destino: se puede escribir libre (nomenclatura, negocio, lo que sea)
  *  y va sugiriendo lo que otros ya han usado EN ESE MUNICIPIO (no mezcla pueblos). */
-function CampoLugar({ etiqueta, valor, onChange, placeholder, municipio }) {
+function CampoLugar({ etiqueta, valor, onChange, placeholder, municipio, onSeleccionar }) {
   const [sugerencias, setSugerencias] = useState([]);
   const [mostrar, setMostrar] = useState(false);
   const filtroMun = municipio ? `&municipio=${encodeURIComponent(municipio)}` : "";
@@ -1157,10 +1157,10 @@ function CampoLugar({ etiqueta, valor, onChange, placeholder, municipio }) {
             <TouchableOpacity
               key={l.id}
               style={styles.sugerenciaItem}
-              onPress={() => { onChange(l.nombre); setSugerencias([]); setMostrar(false); }}
+              onPress={() => { onChange(l.nombre); onSeleccionar && onSeleccionar(l); setSugerencias([]); setMostrar(false); }}
             >
               <Text style={{ fontSize: 13, color: "#333" }}>
-                {l.zona === "rural" ? "🌄 " : "📍 "}{l.nombre}
+                {(l.lat ? "✅ " : (l.zona === "rural" ? "🌄 " : "📍 "))}{l.nombre}
               </Text>
             </TouchableOpacity>
           ))}
@@ -1252,8 +1252,9 @@ function PedirCarreraScreen({ navigation, route }) {
   const [carrera, setCarrera] = useState(null);
   const [form, setForm] = useState({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
   const [vehiculo, setVehiculo] = useState(null);   // sin defecto: el cliente elige
-  const [vehiculosAqui, setVehiculosAqui] = useState(["carro"]);
-  const [muni, setMuni] = useState(null);           // datos del municipio (gps, tarifas, centro)
+  const [muni, setMuni] = useState(null);           // municipio ACTIVO de esta carrera
+  const [municipios, setMunicipios] = useState([]); // todos, para elegir manual
+  const [eligiendoMuni, setEligiendoMuni] = useState(false);
   const [origenCoords, setOrigenCoords] = useState(null);
   const [destinoCoords, setDestinoCoords] = useState(null);
   const [estimado, setEstimado] = useState(null);   // {distancia_km, tarifa_sugerida}
@@ -1262,17 +1263,29 @@ function PedirCarreraScreen({ navigation, route }) {
   const [contraofertas, setContraofertas] = useState([]);
   const [cargando, setCargando] = useState(false);
 
+  const vehiculosAqui = (muni && muni.vehiculos) || [];
+
+  // fija el municipio activo y ajusta el vehiculo si el actual no aplica alli
+  const aplicarMuni = (m) => {
+    setMuni(m);
+    const vs = m.vehiculos || [];
+    setVehiculo((v) => (vs.includes(v) ? v : (vs.length === 1 ? vs[0] : null)));
+  };
+
   useEffect(() => {
-    fetchReintento(`${API}/municipios`).then(r => r.json()).then(d => {
-      if (!Array.isArray(d)) return;
-      const mio = d.find(m => m.nombre === (usuario.municipio || "Orito"));
-      if (!mio) return;
-      setMuni(mio);
-      const vs = mio.vehiculos || ["carro"];
-      setVehiculosAqui(vs);
-      if (vs.length === 1) setVehiculo(vs[0]);   // si solo hay carro, no hay nada que elegir
-    }).catch(() => {});
+    fetchReintento(`${API}/municipios`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setMunicipios(d); }).catch(() => {});
   }, []);
+
+  // el municipio sale de DONDE ESTAS: cuando marcas el origen (GPS o mapa),
+  // el servidor dice en que pueblo caes. Si no logra ubicarte, se elige manual.
+  useEffect(() => {
+    if (!origenCoords) return;
+    fetch(`${API}/ubicacion/municipio?lat=${origenCoords.lat}&lon=${origenCoords.lon}`)
+      .then(r => r.json())
+      .then(d => { if (d && !d.detail) aplicarMuni(d); })
+      .catch(() => {});
+  }, [origenCoords]);
 
   // cuando hay origen, destino y vehiculo, estima distancia y tarifa sugerida
   useEffect(() => {
@@ -1340,6 +1353,7 @@ function PedirCarreraScreen({ navigation, route }) {
   }, []);
 
   const pedir = () => {
+    if (!muni) { avisar("Falta el municipio", "Marca donde estas o elige el municipio."); return; }
     if (!form.origen.trim()) { avisar("Falta el origen", "Dinos donde estas"); return; }
     if (!form.destino.trim()) { avisar("Falta el destino", "Dinos para donde vas"); return; }
     if (!form.origen_detalle.trim()) {
@@ -1347,14 +1361,14 @@ function PedirCarreraScreen({ navigation, route }) {
       return;
     }
     if (!vehiculo) { avisar("Falta el vehiculo", "Elige si quieres ir en moto o en carro"); return; }
-    if (muni && muni.usa_gps && (!origenCoords || !destinoCoords)) {
-      avisar("Falta ubicar en el mapa", "Marca en el mapa de donde a donde vas para calcular la tarifa"); return;
+    if (muni.usa_gps && (!origenCoords || !destinoCoords)) {
+      avisar("Falta ubicar en el mapa", "Marca de donde a donde vas para calcular la tarifa"); return;
     }
     setCargando(true);
     const datos = {
       cliente_id: usuario.id, origen: form.origen.trim(), destino: form.destino.trim(),
       origen_detalle: form.origen_detalle.trim(), destino_detalle: form.destino_detalle.trim(),
-      notas: form.notas.trim(), vehiculo_pedido: vehiculo,
+      notas: form.notas.trim(), vehiculo_pedido: vehiculo, municipio: muni.nombre,
     };
     if (origenCoords) { datos.origen_lat = origenCoords.lat; datos.origen_lon = origenCoords.lon; }
     if (destinoCoords) { datos.destino_lat = destinoCoords.lat; datos.destino_lon = destinoCoords.lon; }
@@ -1486,18 +1500,56 @@ function PedirCarreraScreen({ navigation, route }) {
           <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
         </TouchableOpacity>
         <View>
-          <Text style={styles.headerSub}>Transporte en Orito</Text>
+          <Text style={styles.headerSub}>{muni ? `Transporte en ${muni.nombre}` : "Transporte"}</Text>
           <Text style={styles.headerTitle}>Pedir carrera</Text>
         </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+        {/* 1. UBICACION: primero, porque de aqui se detecta el pueblo */}
         <View style={styles.card}>
+          <Text style={styles.etiqueta}>DONDE ESTAS</Text>
+          <TouchableOpacity style={[styles.botonGps]} onPress={usarUbicacionActual} disabled={buscandoGps}>
+            {buscandoGps
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={{ color: "#fff", fontWeight: "700" }}>📍 Usar mi ubicacion actual</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.botonMapa, origenCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("origen")}>
+            <Text style={{ color: origenCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
+              {origenCoords ? "✓ Ubicacion marcada — cambiar en el mapa" : "🗺️ O marcar en el mapa"}
+            </Text>
+          </TouchableOpacity>
+
+          {/* municipio detectado o a elegir manual */}
+          {muni ? (
+            <TouchableOpacity style={styles.muniBanner} onPress={() => setEligiendoMuni(true)}>
+              <Text style={{ fontSize: 13, color: "#185FA5", fontWeight: "600" }}>📌 Estas en {muni.nombre}</Text>
+              <Text style={{ fontSize: 12, color: "#888" }}>cambiar</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={[styles.muniBanner, { backgroundColor: "#FFF4E0" }]} onPress={() => setEligiendoMuni(true)}>
+              <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "600" }}>¿En que municipio estas?</Text>
+              <Text style={{ fontSize: 12, color: "#8A5A00" }}>elegir</Text>
+            </TouchableOpacity>
+          )}
+          {eligiendoMuni && (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              {municipios.map(m => (
+                <TouchableOpacity key={m.nombre}
+                  style={[styles.opcion, muni && muni.nombre === m.nombre && styles.opcionActiva]}
+                  onPress={() => { aplicarMuni(m); setEligiendoMuni(false); }}>
+                  <Text style={[styles.opcionTexto, muni && muni.nombre === m.nombre && styles.opcionTextoActivo]}>{m.nombre}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           <CampoLugar
-            etiqueta="DONDE ESTAS"
+            etiqueta="EL SITIO"
             valor={form.origen}
             onChange={(t) => setForm({ ...form, origen: t })}
             placeholder="Ej: Parque Central o Carrera 5a # 4-20"
-            municipio={usuario.municipio}
+            municipio={muni ? muni.nombre : usuario.municipio}
+            onSeleccionar={(l) => { if (l.lat != null) setOrigenCoords({ lat: l.lat, lon: l.lon }); }}
           />
           <TextInput
             value={form.origen_detalle}
@@ -1507,15 +1559,37 @@ function PedirCarreraScreen({ navigation, route }) {
             multiline
           />
           <Text style={styles.ayuda}>Entre mas claro, mas rapido te encuentra el conductor</Text>
+        </View>
 
-          <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
+        {/* 2. VEHICULO: segun el pueblo detectado (solo aparece cuando hay municipio) */}
+        {muni && vehiculosAqui.length > 1 && (
+          <View style={styles.card}>
+            <Text style={styles.etiqueta}>EN QUE QUIERES IR</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {[["moto", "🏍️ Moto"], ["carro", "🚗 Carro"]]
+                .filter(([v]) => vehiculosAqui.includes(v))
+                .map(([v, txt]) => (
+                <TouchableOpacity
+                  key={v}
+                  style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
+                  onPress={() => setVehiculo(v)}
+                >
+                  <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{txt}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
+        {/* 3. DESTINO */}
+        <View style={styles.card}>
           <CampoLugar
             etiqueta="PARA DONDE VAS"
             valor={form.destino}
             onChange={(t) => setForm({ ...form, destino: t })}
             placeholder="Ej: ESE Hospital Orito o Vereda Monserrate"
-            municipio={usuario.municipio}
+            municipio={muni ? muni.nombre : usuario.municipio}
+            onSeleccionar={(l) => { if (l.lat != null) setDestinoCoords({ lat: l.lat, lon: l.lon }); }}
           />
           <TextInput
             value={form.destino_detalle}
@@ -1524,67 +1598,31 @@ function PedirCarreraScreen({ navigation, route }) {
             style={styles.input}
             multiline
           />
-
+          <TouchableOpacity style={[styles.botonMapa, destinoCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("destino")}>
+            <Text style={{ color: destinoCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
+              {destinoCoords ? "✓ Destino marcado en el mapa" : "🏁 Marcar a donde vas en el mapa"}
+            </Text>
+          </TouchableOpacity>
           <TextInput
             value={form.notas}
             onChangeText={(t) => setForm({ ...form, notas: t })}
             placeholder="Algo mas que deba saber? (opcional)"
             style={styles.input}
           />
+        </View>
 
-          {vehiculosAqui.length > 1 && (
-            <>
-              <Text style={styles.etiqueta}>EN QUE QUIERES IR</Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {[["moto", "🏍️ Moto"], ["carro", "🚗 Carro"]]
-                  .filter(([v]) => vehiculosAqui.includes(v))
-                  .map(([v, txt]) => (
-                  <TouchableOpacity
-                    key={v}
-                    style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
-                    onPress={() => setVehiculo(v)}
-                  >
-                    <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{txt}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
-          )}
-
-          {muni && muni.usa_gps && (
-            <>
-              <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
-              <Text style={styles.etiqueta}>UBICACION EN EL MAPA</Text>
-              <TouchableOpacity style={[styles.botonGps]} onPress={usarUbicacionActual} disabled={buscandoGps}>
-                {buscandoGps
-                  ? <ActivityIndicator color="#fff" />
-                  : <Text style={{ color: "#fff", fontWeight: "700" }}>📍 Usar mi ubicacion actual</Text>}
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.botonMapa, origenCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("origen")}>
-                <Text style={{ color: origenCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
-                  {origenCoords ? "✓ Origen marcado — cambiar en el mapa" : "🗺️ O marcar de donde sales en el mapa"}
+        {/* 4. OFERTA */}
+        <View style={styles.card}>
+          {muni && muni.usa_gps && estimado && estimado.distancia_km && (
+            <View style={[styles.estimado, { marginBottom: 12 }]}>
+              <Text style={{ fontSize: 13, color: "#555" }}>Distancia: {estimado.distancia_km} km</Text>
+              {estimado.tarifa_sugerida ? (
+                <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                  La gente suele pagar ~${estimado.tarifa_sugerida.toLocaleString()}
                 </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.botonMapa, destinoCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("destino")}>
-                <Text style={{ color: destinoCoords ? "#2E7D32" : "#185FA5", fontWeight: "600" }}>
-                  {destinoCoords ? "✓ Destino marcado" : "🏁 Marcar a donde vas"}
-                </Text>
-              </TouchableOpacity>
-
-              {estimado && estimado.distancia_km && (
-                <View style={styles.estimado}>
-                  <Text style={{ fontSize: 13, color: "#555" }}>Distancia: {estimado.distancia_km} km</Text>
-                  {estimado.tarifa_sugerida ? (
-                    <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
-                      La gente suele pagar ~${estimado.tarifa_sugerida.toLocaleString()}
-                    </Text>
-                  ) : null}
-                </View>
-              )}
-            </>
+              ) : null}
+            </View>
           )}
-
-          <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
           <Text style={styles.etiqueta}>CUANTO OFRECES PAGAR</Text>
           <View style={styles.ofertaFila}>
             <Text style={{ fontSize: 22, fontWeight: "bold", color: "#185FA5" }}>$</Text>
@@ -2094,6 +2132,7 @@ const styles = StyleSheet.create({
   miniTxt: { fontSize: 11, color: "#888", marginTop: 2 },
   estadoBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   botonGps: { backgroundColor: "#185FA5", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
+  muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E6F1FB", borderRadius: 8, padding: 10, marginBottom: 12 },
   botonMapa: { borderWidth: 1, borderColor: "#185FA5", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F4F9FE" },
   botonMapaOk: { borderColor: "#2E7D32", backgroundColor: "#EAF6EC" },
   estimado: { backgroundColor: "#F4F9FE", borderRadius: 10, padding: 14, marginTop: 6, alignItems: "center" },
