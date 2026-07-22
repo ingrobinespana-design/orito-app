@@ -1178,14 +1178,23 @@ function mapaHTML(lat, lon) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  html,body,#map{height:100%;margin:0;padding:0}
+  html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}
   #pin{position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);z-index:1000;font-size:40px;pointer-events:none}
+  #aviso{position:absolute;top:8px;left:8px;right:8px;z-index:1000;background:#fff3cd;color:#8A5A00;
+    font-family:sans-serif;font-size:12px;padding:8px;border-radius:6px;display:none;text-align:center}
 </style></head><body>
 <div id="map"></div><div id="pin">📍</div>
+<div id="aviso">El mapa no cargo. Puedes mover igual para ubicar, o cerrar y escribir la direccion.</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+  if(!window.L){ document.getElementById('aviso').style.display='block'; }
   var map = L.map('map',{zoomControl:false}).setView([${lat}, ${lon}], 16);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  // Carto Voyager: calles con nombres, gratis y confiable dentro de un WebView
+  var capa = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+    {maxZoom:20, subdomains:'abcd'});
+  var errores=0;
+  capa.on('tileerror', function(){ errores++; if(errores>3) document.getElementById('aviso').style.display='block'; });
+  capa.addTo(map);
   function enviar(){
     var c = map.getCenter();
     if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({lat:c.lat, lon:c.lng}));
@@ -1361,9 +1370,9 @@ function PedirCarreraScreen({ navigation, route }) {
       return;
     }
     if (!vehiculo) { avisar("Falta el vehiculo", "Elige si quieres ir en moto o en carro"); return; }
-    if (muni.usa_gps && (!origenCoords || !destinoCoords)) {
-      avisar("Falta ubicar en el mapa", "Marca de donde a donde vas para calcular la tarifa"); return;
-    }
+    // las coordenadas NO son obligatorias: sirven para calcular la tarifa, pero
+    // quien no pueda usar GPS ni mapa igual pide escribiendo y negociando el precio
+    if (!oferta.trim()) { avisar("Falta tu oferta", "Escribe cuanto ofreces pagar"); return; }
     setCargando(true);
     const datos = {
       cliente_id: usuario.id, origen: form.origen.trim(), destino: form.destino.trim(),
