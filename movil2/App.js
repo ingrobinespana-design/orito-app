@@ -1558,8 +1558,22 @@ function PedirCarreraScreen({ navigation, route }) {
           ) : (
             <View style={[styles.card, { marginBottom: 12 }]}>
               <Text style={{ fontSize: 12, color: "#888" }}>Tu transportador</Text>
-              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333", marginTop: 2 }}>{carrera.conductor_nombre}</Text>
-              {carrera.conductor_vehiculo ? <Text style={{ fontSize: 14, color: "#555", marginTop: 4 }}>🚕 {carrera.conductor_vehiculo}</Text> : null}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 }}>
+                {carrera.conductor_foto ? (
+                  <Image source={{ uri: carrera.conductor_foto }} style={{ width: 56, height: 56, borderRadius: 28 }} />
+                ) : (
+                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: "#EAF6EC", alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ fontSize: 26 }}>👤</Text>
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
+                  {carrera.conductor_vehiculo ? <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>🚕 {carrera.conductor_vehiculo}</Text> : null}
+                </View>
+              </View>
+              {carrera.conductor_foto_vehiculo ? (
+                <Image source={{ uri: carrera.conductor_foto_vehiculo }} style={{ width: "100%", height: 140, borderRadius: 10, marginTop: 10 }} />
+              ) : null}
               {carrera.conductor_placa ? (
                 <View style={styles.placaBadge}><Text style={styles.placaTexto}>{carrera.conductor_placa}</Text></View>
               ) : null}
@@ -2239,6 +2253,20 @@ function AdminCarrerasScreen({ navigation }) {
                 </Text>
               </View>
             </View>
+            {c.fotos && (c.fotos.conductor || c.fotos.vehiculo || c.fotos.tarjeta) ? (
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                {[["conductor", "👤"], ["vehiculo", "🚗"], ["tarjeta", "📄"]].map(([t, ic]) => (
+                  <View key={t} style={{ flex: 1, alignItems: "center" }}>
+                    {c.fotos[t]
+                      ? <Image source={{ uri: c.fotos[t] }} style={{ width: "100%", height: 60, borderRadius: 8 }} />
+                      : <View style={{ width: "100%", height: 60, borderRadius: 8, backgroundColor: "#f2f2f2", alignItems: "center", justifyContent: "center" }}><Text>{ic}</Text></View>}
+                    <Text style={{ fontSize: 9, color: c.fotos[t] ? "#187830" : "#bbb", marginTop: 2 }}>{t === "tarjeta" ? "tarjeta" : t}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={{ fontSize: 11, color: "#C0392B", marginTop: 8 }}>⚠️ Sin fotos de verificacion</Text>
+            )}
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => registrarPago(c)}>
                 <Text style={[styles.buttonText, { fontSize: 13 }]}>Registrar pago</Text>
@@ -2337,6 +2365,8 @@ function ConfiguracionScreen({ navigation, route }) {
   const esConductor = usuario.rol === "conductor";
   const [pagos, setPagos] = useState({ efectivo: true, nequi: "", daviplata: "", bancolombia: "", breb: "" });
   const [activos, setActivos] = useState({ efectivo: true });   // cuales estan marcados
+  const [fotos, setFotos] = useState({ conductor: null, vehiculo: null, tarjeta: null });
+  const [subiendoFoto, setSubiendoFoto] = useState(null);       // "conductor" | "vehiculo" | "tarjeta"
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
 
@@ -2350,10 +2380,28 @@ function ConfiguracionScreen({ navigation, route }) {
             bancolombia: !!d.pagos.bancolombia, breb: !!d.pagos.breb,
           });
         }
+        if (d && d.fotos) setFotos(d.fotos);
       })
       .catch(() => {})
       .finally(() => setCargando(false));
   }, []);
+
+  const subirFoto = async (tipo) => {
+    const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permiso.granted) { avisar("Permiso requerido", "Necesitamos acceso a tus fotos."); return; }
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true,
+      aspect: tipo === "conductor" ? [1, 1] : [4, 3], quality: 0.6,
+    });
+    if (r.canceled) return;
+    setSubiendoFoto(tipo);
+    const fd = new FormData();
+    fd.append("file", { uri: r.assets[0].uri, type: "image/jpeg", name: `${tipo}.jpg` });
+    fetch(`${API}/usuarios/${usuario.id}/foto?tipo=${tipo}`, { method: "POST", body: fd, headers: { "Content-Type": "multipart/form-data" } })
+      .then(res => res.json())
+      .then(d => { setSubiendoFoto(null); if (d.url) setFotos(f => ({ ...f, [tipo]: d.url })); else avisar("Error", "No se pudo subir la foto."); })
+      .catch(() => { setSubiendoFoto(null); avisar("Sin conexion", "Intenta de nuevo."); });
+  };
 
   const guardar = () => {
     // si marco un medio con cuenta pero no puso el dato, se avisa
@@ -2397,6 +2445,24 @@ function ConfiguracionScreen({ navigation, route }) {
         </View>
 
         {cargando ? <ActivityIndicator color="#187830" /> : esConductor ? (
+          <>
+          <View style={[styles.card, { marginBottom: 14 }]}>
+            <Text style={styles.seccionTitulo}>Tus fotos</Text>
+            <Text style={styles.ayuda}>Tu foto y la del vehiculo le dan confianza al cliente. La tarjeta de propiedad es para verificacion.</Text>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
+              {[["conductor", "Tu foto", 1], ["vehiculo", "Vehiculo", 1.3], ["tarjeta", "Tarjeta prop.", 1.3]].map(([tipo, lbl]) => (
+                <TouchableOpacity key={tipo} style={{ flex: 1, alignItems: "center" }} onPress={() => subirFoto(tipo)} disabled={!!subiendoFoto}>
+                  <View style={styles.fotoBox}>
+                    {subiendoFoto === tipo ? <ActivityIndicator color="#187830" />
+                      : fotos[tipo] ? <Image source={{ uri: fotos[tipo] }} style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                      : <Text style={{ fontSize: 26 }}>{tipo === "conductor" ? "👤" : tipo === "vehiculo" ? "🚗" : "📄"}</Text>}
+                  </View>
+                  <Text style={{ fontSize: 11, color: "#666", marginTop: 4 }}>{lbl}</Text>
+                  <Text style={{ fontSize: 10, color: "#187830" }}>{fotos[tipo] ? "cambiar" : "subir"}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
           <View style={styles.card}>
             <Text style={styles.seccionTitulo}>Medios de pago que aceptas</Text>
             <Text style={styles.ayuda}>Marca los que aceptas. El cliente vera solo esos para pagarte directo. La app no cobra ni maneja tu plata.</Text>
@@ -2425,6 +2491,7 @@ function ConfiguracionScreen({ navigation, route }) {
               {guardando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Guardar medios de pago</Text>}
             </TouchableOpacity>
           </View>
+          </>
         ) : (
           <View style={styles.card}>
             <Text style={styles.seccionTitulo}>Pagos</Text>
@@ -2542,6 +2609,7 @@ const styles = StyleSheet.create({
   tabBar: { flexDirection: "row", borderTopWidth: 0.5, borderTopColor: "#ddd", backgroundColor: "#fff", paddingBottom: 6, paddingTop: 8 },
   tabBarItem: { flex: 1, alignItems: "center" },
   log: { backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: "#187830", elevation: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 },
+  fotoBox: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: "#F1F8F1", borderWidth: 1, borderColor: "#187830", borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },

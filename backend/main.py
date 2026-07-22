@@ -391,6 +391,8 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "conductor_placa": conductor.placa if conductor else None,
         "conductor_vehiculo": conductor.vehiculo if conductor else None,
         "conductor_pagos": medios_pago(conductor) if conductor else None,
+        "conductor_foto": conductor.foto_conductor if conductor else None,
+        "conductor_foto_vehiculo": conductor.foto_vehiculo if conductor else None,
         "estado": c.estado,
         "zona": c.zona,
         "municipio": c.municipio,
@@ -968,6 +970,9 @@ def medios_pago(u: Usuario):
         "breb": u.pago_breb or "",
     }
 
+def fotos_de(u: Usuario):
+    return {"conductor": u.foto_conductor, "vehiculo": u.foto_vehiculo, "tarjeta": u.foto_tarjeta}
+
 @app.get("/usuarios/{usuario_id}/perfil")
 def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
     u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
@@ -975,7 +980,25 @@ def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return {"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
             "municipio": u.municipio, "tipo_vehiculo": u.tipo_vehiculo, "placa": u.placa,
-            "vehiculo": u.vehiculo, "pagos": medios_pago(u)}
+            "vehiculo": u.vehiculo, "pagos": medios_pago(u), "fotos": fotos_de(u)}
+
+@app.post("/usuarios/{usuario_id}/foto")
+async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = File(...),
+                               db: Session = Depends(get_db)):
+    """Sube foto del conductor, del vehiculo o de la tarjeta de propiedad."""
+    if tipo not in ("conductor", "vehiculo", "tarjeta"):
+        raise HTTPException(status_code=400, detail="tipo debe ser conductor, vehiculo o tarjeta")
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    contenido = await file.read()
+    resultado = cloudinary.uploader.upload(
+        contenido, folder="orito-app/conductores",
+        public_id=f"{tipo}_{usuario_id}", overwrite=True)
+    url = resultado["secure_url"]
+    setattr(u, f"foto_{tipo}", url)
+    db.commit()
+    return {"url": url}
 
 @app.put("/usuarios/{usuario_id}/pagos")
 def guardar_pagos(usuario_id: int, efectivo: str = None, nequi: str = None, daviplata: str = None,
@@ -1005,7 +1028,8 @@ def obtener_conductores(db: Session = Depends(get_db)):
              "tipo_vehiculo": u.tipo_vehiculo, "municipio": u.municipio,
              "suscripcion_hasta": u.suscripcion_hasta,
              "dias_restantes": dias_restantes(u),
-             "al_dia": suscripcion_al_dia(u, db)} for u in conductores]
+             "al_dia": suscripcion_al_dia(u, db),
+             "fotos": fotos_de(u)} for u in conductores]
 
 @app.get("/conductores/{conductor_id}/estado-cuenta")
 def estado_cuenta(conductor_id: int, db: Session = Depends(get_db)):

@@ -44,6 +44,11 @@ class Usuario(Base):
     pago_daviplata = Column(String, nullable=True)      # numero Daviplata
     pago_bancolombia = Column(String, nullable=True)    # cuenta / llave
     pago_breb = Column(String, nullable=True)           # llave Bre-B
+    # fotos del conductor (Cloudinary). La tarjeta de propiedad es para que el
+    # dueño verifique; la del conductor y el vehiculo el cliente las ve.
+    foto_conductor = Column(String, nullable=True)
+    foto_vehiculo = Column(String, nullable=True)
+    foto_tarjeta = Column(String, nullable=True)
 
 class Restaurante(Base):
     __tablename__ = "restaurantes"
@@ -303,7 +308,8 @@ def crear_tablas():
                     "suscripcion_hasta TIMESTAMP", "municipio VARCHAR DEFAULT 'Orito'",
                     "tipo_vehiculo VARCHAR DEFAULT 'carro'", "pago_efectivo VARCHAR DEFAULT 'si'",
                     "pago_nequi VARCHAR", "pago_daviplata VARCHAR", "pago_bancolombia VARCHAR",
-                    "pago_breb VARCHAR"):
+                    "pago_breb VARCHAR", "foto_conductor VARCHAR", "foto_vehiculo VARCHAR",
+                    "foto_tarjeta VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
