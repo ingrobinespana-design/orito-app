@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -20,6 +20,19 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 const animar = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+
+// abrir el marcador del telefono o WhatsApp con un numero colombiano
+const soloDigitos = (n) => (n || "").replace(/\D/g, "");
+function llamar(num) {
+  const n = soloDigitos(num);
+  if (n) Linking.openURL(`tel:${n}`).catch(() => {});
+}
+function whatsapp(num) {
+  let n = soloDigitos(num);
+  if (!n) return;
+  if (n.length === 10) n = "57" + n;   // celular colombiano sin indicativo
+  Linking.openURL(`https://wa.me/${n}`).catch(() => {});
+}
 
 /** distancia en km en linea recta entre dos puntos {lat,lon} (Haversine) */
 function kmEntre(a, b) {
@@ -1577,8 +1590,14 @@ function PedirCarreraScreen({ navigation, route }) {
               {carrera.conductor_placa ? (
                 <View style={styles.placaBadge}><Text style={styles.placaTexto}>{carrera.conductor_placa}</Text></View>
               ) : null}
-              <Text style={{ fontSize: 17, fontWeight: "600", color: "#187830", marginTop: 10 }}>📞 {carrera.conductor_telefono}</Text>
-              <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Llamalo si necesitas explicarle mejor donde estas</Text>
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={() => llamar(carrera.conductor_telefono)}>
+                  <Text style={[styles.buttonText, { fontSize: 15 }]}>📞 Llamar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#25D366" }]} onPress={() => whatsapp(carrera.conductor_telefono)}>
+                  <Text style={[styles.buttonText, { fontSize: 15 }]}>💬 WhatsApp</Text>
+                </TouchableOpacity>
+              </View>
 
               {carrera.conductor_pagos && (
                 <View style={{ marginTop: 12, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 12 }}>
@@ -1912,6 +1931,17 @@ function ConductorScreen({ navigation, route }) {
         </Text>
       ) : null}
       <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {c.cliente_nombre} · 📞 {c.cliente_telefono}</Text>
+
+      {propia && (
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+          <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => llamar(c.cliente_telefono)}>
+            <Text style={[styles.buttonText, { fontSize: 14 }]}>📞 Llamar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#25D366", padding: 10 }]} onPress={() => whatsapp(c.cliente_telefono)}>
+            <Text style={[styles.buttonText, { fontSize: 14 }]}>💬 WhatsApp</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {!propia && (
         c.tarifa_ofrecida ? (
@@ -2367,8 +2397,21 @@ function ConfiguracionScreen({ navigation, route }) {
   const [activos, setActivos] = useState({ efectivo: true });   // cuales estan marcados
   const [fotos, setFotos] = useState({ conductor: null, vehiculo: null, tarjeta: null });
   const [subiendoFoto, setSubiendoFoto] = useState(null);       // "conductor" | "vehiculo" | "tarjeta"
+  const [notifOk, setNotifOk] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    Notifications.getPermissionsAsync().then(p => setNotifOk(p.status === "granted")).catch(() => {});
+  }, []);
+
+  const activarNotificaciones = async () => {
+    await registrarNotificaciones(usuario.id);
+    const p = await Notifications.getPermissionsAsync();
+    setNotifOk(p.status === "granted");
+    if (p.status === "granted") avisar("Listo", "Recibiras las carreras aunque tengas la app cerrada.");
+    else avisar("Activalas en el telefono", "Ve a Ajustes > Apps > Orito Domi > Notificaciones y activalas.");
+  };
 
   useEffect(() => {
     fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
@@ -2442,6 +2485,26 @@ function ConfiguracionScreen({ navigation, route }) {
               {usuario.tipo_vehiculo === "moto" ? "🏍️ Moto" : "🚗 Carro"}{usuario.placa ? ` · ${usuario.placa}` : ""}
             </Text>
           ) : null}
+        </View>
+
+        {/* notificaciones: recibir servicios aunque la app este cerrada */}
+        <View style={[styles.card, { marginBottom: 14 }]}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>🔔 Notificaciones</Text>
+            <View style={[styles.estadoBadge, { backgroundColor: notifOk ? "#E8F5E9" : "#FBECEC" }]}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: notifOk ? "#187830" : "#C0392B" }}>{notifOk === null ? "..." : notifOk ? "Activas" : "Apagadas"}</Text>
+            </View>
+          </View>
+          <Text style={{ fontSize: 13, color: "#666", marginTop: 6 }}>
+            {esConductor
+              ? "Recibe las carreras aunque tengas la app cerrada o en segundo plano."
+              : "Te avisamos cuando un conductor acepte o te proponga precio, aunque cierres la app."}
+          </Text>
+          {!notifOk && (
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10 }]} onPress={activarNotificaciones}>
+              <Text style={styles.buttonText}>Activar notificaciones</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {cargando ? <ActivityIndicator color="#187830" /> : esConductor ? (
