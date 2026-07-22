@@ -322,6 +322,13 @@ def crear_tablas():
                 conn.execute(text(f"ALTER TABLE lugares ADD COLUMN {columna}"))
         except Exception:
             pass
+    # la tabla original exigia nombre unico GLOBAL; ahora "Hospital" puede existir
+    # en los dos pueblos. Sin esto, escribir un nombre repetido tumbaba la carrera.
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE lugares DROP CONSTRAINT IF EXISTS lugares_nombre_key"))
+    except Exception:
+        pass
     for columna in ("zona VARCHAR DEFAULT 'urbano'", "municipio VARCHAR DEFAULT 'Orito'",
                     "vehiculo_pedido VARCHAR", "origen_lat FLOAT", "origen_lon FLOAT",
                     "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
