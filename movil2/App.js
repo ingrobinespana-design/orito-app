@@ -21,6 +21,16 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 }
 const animar = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
+// construye el query string a mano con encodeURIComponent: el URLSearchParams de
+// React Native a veces arma mal la URL y el fetch falla como si fuera "sin conexion"
+function qs(obj) {
+  // se filtran solo null/undefined; el string vacio SI se envia (p. ej. borrar un medio de pago)
+  return Object.entries(obj)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+}
+
 // abrir el marcador del telefono o WhatsApp con un numero colombiano
 const soloDigitos = (n) => (n || "").replace(/\D/g, "");
 function llamar(num) {
@@ -1373,12 +1383,12 @@ function PedirCarreraScreen({ navigation, route }) {
   // cuando hay origen, destino y vehiculo, estima distancia y tarifa sugerida
   useEffect(() => {
     if (!muni || !muni.usa_gps || !origenCoords || !destinoCoords || !vehiculo) { setEstimado(null); return; }
-    const p = new URLSearchParams({
+    const p = qs({
       municipio: muni.nombre, vehiculo,
       origen_lat: origenCoords.lat, origen_lon: origenCoords.lon,
       destino_lat: destinoCoords.lat, destino_lon: destinoCoords.lon,
     });
-    fetch(`${API}/tarifa?${p.toString()}`).then(r => r.json())
+    fetch(`${API}/tarifa?${p}`).then(r => r.json())
       .then(d => {
         if (d && !d.detail) {
           setEstimado(d);
@@ -1466,12 +1476,12 @@ function PedirCarreraScreen({ navigation, route }) {
     if (destinoCoords) { datos.destino_lat = destinoCoords.lat; datos.destino_lon = destinoCoords.lon; }
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
-    const p = new URLSearchParams(datos);
-    fetchReintento(`${API}/carreras?${p.toString()}`, { method: "POST" })
-      .then(r => r.json())
-      .then(d => {
+    fetchReintento(`${API}/carreras?${qs(datos)}`, { method: "POST" })
+      .then(async (r) => {
         setCargando(false);
-        if (d.detail) { avisar("No se pudo pedir", d.detail); return; }
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo pedir", (d && d.detail) || `El servidor respondio ${r.status}`); return; }
+        if (!d || !d.id) { avisar("Error", "Respuesta inesperada del servidor."); return; }
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
         setOrigenCoords(null); setDestinoCoords(null); setEstimado(null); setOferta("");
         setCarrera(d);
@@ -2458,7 +2468,7 @@ function ConfiguracionScreen({ navigation, route }) {
     for (const m of METODOS_PAGO) {
       if (m.cuenta) datos[m.key] = activos[m.key] ? (pagos[m.key] || "") : "";  // desmarcar borra el dato
     }
-    fetch(`${API}/usuarios/${usuario.id}/pagos?${new URLSearchParams(datos).toString()}`, { method: "PUT" })
+    fetch(`${API}/usuarios/${usuario.id}/pagos?${qs(datos)}`, { method: "PUT" })
       .then(r => r.json())
       .then(d => { setGuardando(false); if (d.ok) avisar("Guardado", "Tus medios de pago quedaron actualizados."); else avisar("Error", "No se pudo guardar."); })
       .catch(() => { setGuardando(false); avisar("Sin conexion", "Intenta de nuevo."); });
