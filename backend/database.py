@@ -133,6 +133,14 @@ class Oferta(Base):
     estado = Column(String, default="pendiente")   # pendiente / aceptada / descartada
     fecha = Column(DateTime, default=datetime.now)
 
+class Evento(Base):
+    """Metricas de difusion: cada visita a la pagina de descarga y cada
+    descarga del APK, para medir el embudo visitas -> descargas -> registros."""
+    __tablename__ = "eventos"
+    id = Column(Integer, primary_key=True, index=True)
+    tipo = Column(String)   # "visita_pagina" | "descarga_apk"
+    fecha = Column(DateTime, default=datetime.now)
+
 class Config(Base):
     """Ajustes que el dueño cambia desde el panel sin tocar codigo."""
     __tablename__ = "config"

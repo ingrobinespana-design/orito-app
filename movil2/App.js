@@ -2277,6 +2277,20 @@ function AdminCarrerasScreen({ navigation }) {
         {pestana === "numeros" && gStats && (
           <>
             <View style={[styles.card, { marginBottom: 12 }]}>
+              <Text style={styles.seccionTitulo}>📣 Difusión de la app</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-around", alignItems: "center" }}>
+                {[["Visitas", gStats.visitas_hoy, gStats.visitas_total], ["Descargas", gStats.descargas_hoy, gStats.descargas_total], ["Registros", null, (gStats.clientes || 0) + (gStats.conductores || 0)]].map(([lbl, hoyV, totV]) => (
+                  <View key={lbl} style={{ alignItems: "center" }}>
+                    <Text style={{ fontSize: 24, fontWeight: "bold", color: "#F06000" }}>{totV ?? 0}</Text>
+                    <Text style={{ fontSize: 11, color: "#888" }}>{lbl}</Text>
+                    {hoyV != null && <Text style={{ fontSize: 10, color: "#187830", fontWeight: "600" }}>+{hoyV} hoy</Text>}
+                  </View>
+                ))}
+              </View>
+              <Text style={[styles.ayuda, { textAlign: "center", marginTop: 8 }]}>Embudo: quien visita la página → descarga el APK → se registra</Text>
+            </View>
+
+            <View style={[styles.card, { marginBottom: 12 }]}>
               <Text style={styles.seccionTitulo}>Plata movida (carreras finalizadas)</Text>
               {[["Hoy", gStats.hoy], ["Esta semana", gStats.semana], ["Este mes", gStats.mes], ["Este año", gStats.anio], ["Total historico", gStats.total]].map(([lbl, d]) => (
                 <View key={lbl} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 0.5, borderBottomColor: "#eee" }}>

@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -55,15 +55,32 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 def logo():
     return FileResponse("logo_tukan.png", media_type="image/png")
 
+# los robots que generan la vista previa del link (WhatsApp, Facebook, etc.)
+# visitan la pagina cada vez que alguien COMPARTE el link; no son personas
+_BOTS = ("whatsapp", "facebookexternalhit", "facebot", "telegrambot", "twitterbot",
+         "bot", "crawler", "spider", "preview", "curl", "python")
+
+def registrar_evento(tipo: str, request: Request, db: Session):
+    try:
+        ua = (request.headers.get("user-agent") or "").lower()
+        if any(b in ua for b in _BOTS):
+            return
+        db.add(Evento(tipo=tipo))
+        db.commit()
+    except Exception:
+        pass   # una metrica jamas puede tumbar la pagina
+
 @app.get("/apk")
-def descargar_apk(db: Session = Depends(get_db)):
+def descargar_apk(request: Request, db: Session = Depends(get_db)):
     url = leer_config("apk_url", db, "")
     if not url:
         raise HTTPException(status_code=404, detail="APK no disponible todavia")
+    registrar_evento("descarga_apk", request, db)
     return RedirectResponse(url)
 
 @app.get("/app", response_class=HTMLResponse)
-def pagina_descarga(request: Request):
+def pagina_descarga(request: Request, db: Session = Depends(get_db)):
+    registrar_evento("visita_pagina", request, db)
     base = str(request.base_url).rstrip("/")
     return f"""<!DOCTYPE html>
 <html lang="es"><head>
@@ -1037,6 +1054,11 @@ def estadisticas_globales(db: Session = Depends(get_db)):
     resumen = {p: _resumen(finalizadas, desde) for p, desde in periodos.items()}
     todas = db.query(Carrera).all()
     conductores = db.query(Usuario).filter(Usuario.rol == "conductor").all()
+    # embudo de difusion: visitas a /app y descargas del APK, hoy y total
+    hoy = periodos["hoy"]
+    eventos = db.query(Evento).all()
+    def cuenta(tipo, desde):
+        return sum(1 for e in eventos if e.tipo == tipo and e.fecha and e.fecha >= desde)
     return {
         **resumen,
         "clientes": db.query(Usuario).filter(Usuario.rol == "cliente").count(),
@@ -1045,6 +1067,10 @@ def estadisticas_globales(db: Session = Depends(get_db)):
         "carreras_totales": len(todas),
         "canceladas": sum(1 for c in todas if c.estado == "cancelada"),
         "en_curso": sum(1 for c in todas if c.estado in ("buscando", "aceptada", "en_camino")),
+        "visitas_hoy": cuenta("visita_pagina", hoy),
+        "visitas_total": cuenta("visita_pagina", datetime.min),
+        "descargas_hoy": cuenta("descarga_apk", hoy),
+        "descargas_total": cuenta("descarga_apk", datetime.min),
     }
 
 @app.get("/carreras")
