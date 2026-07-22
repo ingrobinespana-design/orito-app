@@ -692,14 +692,40 @@ def cambiar_zona_lugar(lugar_id: int, zona: str, db: Session = Depends(get_db)):
             "usos": lugar.usos, "activo": lugar.activo}
 
 @app.post("/lugares")
-def crear_lugar(nombre: str, db: Session = Depends(get_db)):
-    if db.query(Lugar).filter(Lugar.nombre == nombre).first():
-        raise HTTPException(status_code=400, detail="Ese lugar ya existe")
-    lugar = Lugar(nombre=nombre)
+def crear_lugar(nombre: str, municipio: str = "Orito", zona: str = "urbano",
+                lat: float = None, lon: float = None, db: Session = Depends(get_db)):
+    """Alta de lugares (tambien para importar puntos de OpenStreetMap con coordenadas)."""
+    if zona not in ("urbano", "rural"):
+        raise HTTPException(status_code=400, detail="Zona invalida: urbano o rural")
+    if buscar_lugar(nombre, municipio, db):
+        raise HTTPException(status_code=400, detail="Ese lugar ya existe en ese municipio")
+    lugar = Lugar(nombre=nombre.strip(), municipio=municipio, zona=zona, lat=lat, lon=lon)
     db.add(lugar)
     db.commit()
     db.refresh(lugar)
     return lugar
+
+@app.put("/lugares/{lugar_id}")
+def editar_lugar(lugar_id: int, zona: str = None, lat: float = None, lon: float = None,
+                 activo: str = None, db: Session = Depends(get_db)):
+    """Corregir un lugar: zona, coordenadas o desactivarlo."""
+    lugar = db.query(Lugar).filter(Lugar.id == lugar_id).first()
+    if not lugar:
+        raise HTTPException(status_code=404, detail="Lugar no encontrado")
+    if zona is not None:
+        if zona not in ("urbano", "rural"):
+            raise HTTPException(status_code=400, detail="Zona invalida: urbano o rural")
+        lugar.zona = zona
+    if activo is not None:
+        if activo not in ("si", "no"):
+            raise HTTPException(status_code=400, detail="activo solo acepta si o no")
+        lugar.activo = activo
+    if lat is not None: lugar.lat = lat
+    if lon is not None: lugar.lon = lon
+    db.commit()
+    db.refresh(lugar)
+    return {"id": lugar.id, "nombre": lugar.nombre, "municipio": lugar.municipio,
+            "zona": lugar.zona, "lat": lugar.lat, "lon": lugar.lon, "activo": lugar.activo}
 
 @app.delete("/lugares/{lugar_id}")
 def eliminar_lugar(lugar_id: int, db: Session = Depends(get_db)):
