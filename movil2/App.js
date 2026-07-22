@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -14,6 +14,12 @@ import * as Updates from 'expo-updates';
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
+
+// animaciones de layout suaves (aparecer/desaparecer solicitudes) en Android
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+const animar = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
 /** distancia en km en linea recta entre dos puntos {lat,lon} (Haversine) */
 function kmEntre(a, b) {
@@ -1785,7 +1791,7 @@ function ConductorScreen({ navigation, route }) {
   const cargar = () => {
     // con conductor_id el servidor filtra por municipio y tipo de vehiculo
     fetch(`${API}/carreras/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setDisponibles(d); }).catch(() => {});
+      .then(d => { if (Array.isArray(d)) { animar(); setDisponibles(d); } }).catch(() => {});
     fetch(`${API}/carreras/conductor/${usuario.id}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setMias(d.filter(c => ["aceptada", "en_camino"].includes(c.estado))); })
       .catch(() => {});
@@ -1866,77 +1872,56 @@ function ConductorScreen({ navigation, route }) {
   const tarjeta = (c, propia) => {
     // distancia del conductor al punto de recogida (si sabemos ambas ubicaciones)
     const kmAlOrigen = !propia && miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
-    // "precio justo": la oferta esta a la altura de lo sugerido
-    const justo = c.tarifa_ofrecida && c.tarifa_sugerida && c.tarifa_ofrecida >= c.tarifa_sugerida * 0.9;
-    const bajo = c.tarifa_ofrecida && c.tarifa_sugerida && c.tarifa_ofrecida < c.tarifa_sugerida * 0.9;
     return (
-    <View key={c.id} style={[styles.card, { marginBottom: 12 }]}>
-      {/* linea superior estilo inDrive: distancia/tiempo + precio grande */}
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <View>
-          {kmAlOrigen != null && <Text style={{ fontSize: 13, color: "#888" }}>~{kmAlOrigen.toFixed(1)} km de ti</Text>}
-          <Text style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{haceCuanto(c.fecha)}</Text>
-        </View>
+    <View key={c.id} style={styles.log}>
+      {/* fila de encabezado tipo log: distancia · tiempo — precio */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Text style={{ fontSize: 12, color: "#999" }}>
+          {kmAlOrigen != null ? `~${kmAlOrigen.toFixed(1)} km · ` : ""}{haceCuanto(c.fecha)}
+          {c.zona === "rural" ? "  🌄 vereda" : ""}
+        </Text>
         {!propia && c.tarifa_ofrecida ? (
-          <View style={{ alignItems: "flex-end" }}>
-            <Text style={{ fontSize: 26, fontWeight: "bold", color: "#333" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
-            {justo && <Text style={{ fontSize: 12, color: "#8E44AD", fontWeight: "600" }}>◇ Precio justo</Text>}
-            {bajo && <Text style={{ fontSize: 12, color: "#C0392B", fontWeight: "600" }}>▽ Bajo lo usual</Text>}
-          </View>
+          <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
         ) : null}
       </View>
 
-      {c.zona === "rural" && (
-        <View style={[styles.avisoRural, { marginTop: 8 }]}><Text style={styles.avisoRuralTexto}>🌄 Fuera del pueblo</Text></View>
-      )}
-
-      <View style={{ marginTop: 12 }}>
-        <View style={{ flexDirection: "row" }}>
-          <Text style={{ marginRight: 6 }}>🟢</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.origen}</Text>
-            {c.origen_detalle ? <Text style={{ fontSize: 13, color: "#888" }}>{c.origen_detalle}</Text> : null}
-          </View>
-        </View>
-        <View style={{ flexDirection: "row", marginTop: 8 }}>
-          <Text style={{ marginRight: 6 }}>🔴</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{c.destino}</Text>
-            {c.destino_detalle ? <Text style={{ fontSize: 13, color: "#888" }}>{c.destino_detalle}</Text> : null}
-          </View>
-        </View>
-      </View>
-
-      {c.distancia_km ? <Text style={{ fontSize: 12, color: "#888", marginTop: 8 }}>Recorrido ~{c.distancia_km} km{c.tarifa_sugerida ? ` · sugerido $${c.tarifa_sugerida.toLocaleString()}` : ""}</Text> : null}
-      {c.notas ? <Text style={{ fontSize: 13, color: "#888", marginTop: 6, fontStyle: "italic" }}>💬 {c.notas}</Text> : null}
-
-      <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
-      <Text style={{ fontSize: 13, color: "#888" }}>👤 {c.cliente_nombre}</Text>
-      <Text style={{ fontSize: 15, fontWeight: "600", color: "#187830", marginTop: 2 }}>📞 {c.cliente_telefono}</Text>
+      {/* ruta compacta origen -> destino */}
+      <Text style={{ fontSize: 14, color: "#333", marginTop: 6 }} numberOfLines={1}>
+        🟢 {c.origen}
+      </Text>
+      <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }} numberOfLines={1}>
+        🔴 {c.destino}
+      </Text>
+      {(c.origen_detalle || c.notas) ? (
+        <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }} numberOfLines={2}>
+          {c.origen_detalle || ""}{c.origen_detalle && c.notas ? " · " : ""}{c.notas || ""}
+        </Text>
+      ) : null}
+      <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {c.cliente_nombre} · 📞 {c.cliente_telefono}</Text>
 
       {!propia && (
         c.tarifa_ofrecida ? (
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={() => aceptar(c)}>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptar(c)}>
               <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar ${c.tarifa_ofrecida.toLocaleString()}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830" }]} onPress={() => { setMontoOferta(String(c.tarifa_ofrecida)); setContraofertando(c); }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoOferta(String(c.tarifa_ofrecida)); setContraofertando(c); }}>
               <Text style={{ color: "#187830", fontWeight: "600", fontSize: 14 }}>Proponer otro</Text>
             </TouchableOpacity>
           </View>
         ) : (
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={() => aceptar(c)}>
-            <Text style={styles.buttonText}>Tomar esta carrera</Text>
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => aceptar(c)}>
+            <Text style={styles.buttonText}>Tomar</Text>
           </TouchableOpacity>
         )
       )}
       {propia && c.estado === "aceptada" && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={() => cambiarEstado(c, "en_camino")}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => cambiarEstado(c, "en_camino")}>
           <Text style={styles.buttonText}>Ya lo recogi — En camino</Text>
         </TouchableOpacity>
       )}
       {propia && c.estado === "en_camino" && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={() => finalizar(c)}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => finalizar(c)}>
           <Text style={styles.buttonText}>Carrera terminada</Text>
         </TouchableOpacity>
       )}
@@ -2042,41 +2027,13 @@ function ConductorScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* ===== PESTAÑA CARTERA: suscripcion ===== */}
-        {tab === "cartera" && (
-          <View style={styles.card}>
-            <Text style={styles.seccionTitulo}>Tu suscripción</Text>
-            {cuenta && !cuenta.cobro_activo ? (
-              <Text style={{ fontSize: 14, color: "#187830", fontWeight: "600" }}>Gratis por ahora 🎉{"\n"}
-                <Text style={{ fontWeight: "400", color: "#666", fontSize: 13 }}>Trabajas sin costo durante el lanzamiento.</Text>
-              </Text>
-            ) : cuenta ? (
-              <>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontSize: 14, color: "#333" }}>Estado</Text>
-                  <View style={[styles.estadoBadge, { backgroundColor: cuenta.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
-                    <Text style={{ fontSize: 12, fontWeight: "600", color: cuenta.al_dia ? "#187830" : "#C0392B" }}>{cuenta.al_dia ? "Al día" : "Vencida"}</Text>
-                  </View>
-                </View>
-                {cuenta.al_dia && <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>Te quedan {cuenta.dias_restantes} días</Text>}
-                <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>Valor: ${cuenta.valor_mensual.toLocaleString()} / mes</Text>
-                {!cuenta.al_dia && cuenta.nequi_pagos ? (
-                  <View style={{ backgroundColor: "#FFF4E0", borderRadius: 8, padding: 10, marginTop: 10 }}>
-                    <Text style={{ fontSize: 13, color: "#8A5A00" }}>Renueva pagando a Nequi:</Text>
-                    <Text style={{ fontSize: 16, fontWeight: "bold", color: "#8A5A00" }}>{cuenta.nequi_pagos}</Text>
-                  </View>
-                ) : null}
-              </>
-            ) : <ActivityIndicator color="#187830" />}
-          </View>
-        )}
       </ScrollView>
 
-      {/* barra de pestañas estilo inDrive */}
+      {/* barra de pestañas: solo lo necesario */}
       <View style={styles.tabBar}>
-        {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
+        {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
           <TouchableOpacity key={k} style={styles.tabBarItem}
-            onPress={() => k === "salir" ? navigation.replace("Login") : setTab(k)}>
+            onPress={() => k === "salir" ? navigation.replace("Login") : (animar(), setTab(k))}>
             <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
             <Text style={{ fontSize: 11, marginTop: 2, color: tab === k ? "#187830" : "#999", fontWeight: tab === k ? "700" : "400" }}>{lbl}</Text>
           </TouchableOpacity>
@@ -2554,6 +2511,7 @@ const styles = StyleSheet.create({
   pasoActivo: { backgroundColor: "#187830" },
   tabBar: { flexDirection: "row", borderTopWidth: 0.5, borderTopColor: "#ddd", backgroundColor: "#fff", paddingBottom: 6, paddingTop: 8 },
   tabBarItem: { flex: 1, alignItems: "center" },
+  log: { backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: "#187830", elevation: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 },
   statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },
