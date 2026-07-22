@@ -131,7 +131,9 @@ class Config(Base):
 # clientes. Cuando el servicio ya se gano solo, se prende desde el panel.
 CONFIG_INICIAL = {
     "cobro_activo": "no",
-    "valor_mensual": "30000",
+    # suscripcion mensual por tipo de vehiculo
+    "valor_mensual_moto": "39900",
+    "valor_mensual_carro": "59900",
     "nequi_pagos": "",
 }
 

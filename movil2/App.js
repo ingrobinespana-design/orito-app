@@ -2097,12 +2097,24 @@ function AdminCarrerasScreen({ navigation }) {
               <Text style={styles.buttonText}>{config.cobro_activo === "si" ? "Desactivar cobro" : "Activar cobro"}</Text>
             </TouchableOpacity>
 
-            <Text style={[styles.etiqueta, { marginTop: 20 }]}>VALOR MENSUAL</Text>
+            <Text style={[styles.etiqueta, { marginTop: 20 }]}>SUSCRIPCION MENSUAL — CARRO</Text>
             <TextInput
-              defaultValue={config.valor_mensual}
+              defaultValue={config.valor_mensual_carro}
+              placeholder="Ej: 59900"
               onEndEditing={(e) => {
                 const v = e.nativeEvent.text.replace(/\D/g, "");
-                if (v) fetch(`${API}/config?clave=valor_mensual&valor=${v}`, { method: "PUT" }).then(cargar);
+                if (v) fetch(`${API}/config?clave=valor_mensual_carro&valor=${v}`, { method: "PUT" }).then(cargar);
+              }}
+              keyboardType="number-pad"
+              style={styles.input}
+            />
+            <Text style={styles.etiqueta}>SUSCRIPCION MENSUAL — MOTO</Text>
+            <TextInput
+              defaultValue={config.valor_mensual_moto}
+              placeholder="Ej: 39900"
+              onEndEditing={(e) => {
+                const v = e.nativeEvent.text.replace(/\D/g, "");
+                if (v) fetch(`${API}/config?clave=valor_mensual_moto&valor=${v}`, { method: "PUT" }).then(cargar);
               }}
               keyboardType="number-pad"
               style={styles.input}

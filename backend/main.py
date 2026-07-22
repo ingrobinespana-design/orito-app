@@ -430,17 +430,23 @@ def dias_restantes(conductor: Usuario):
         return 0
     return max(0, (conductor.suscripcion_hasta - datetime.now()).days)
 
+def valor_mensual_de(conductor: Usuario, db: Session):
+    """La suscripcion vale distinto por vehiculo: carro mas que moto."""
+    clave = "valor_mensual_moto" if (conductor.tipo_vehiculo == "moto") else "valor_mensual_carro"
+    return int(leer_config(clave, db, "0") or 0)
+
 @app.get("/config")
 def obtener_config(db: Session = Depends(get_db)):
     return {c.clave: c.valor for c in db.query(Config).all()}
 
 @app.put("/config")
 def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db)):
-    if clave not in ("cobro_activo", "valor_mensual", "nequi_pagos"):
+    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos")
+    if clave not in permitidas:
         raise HTTPException(status_code=400, detail="Ajuste no permitido")
     if clave == "cobro_activo" and valor not in ("si", "no"):
         raise HTTPException(status_code=400, detail="cobro_activo solo acepta si o no")
-    if clave == "valor_mensual" and not valor.isdigit():
+    if clave.startswith("valor_mensual") and not valor.isdigit():
         raise HTTPException(status_code=400, detail="El valor mensual debe ser un numero")
     fila = db.query(Config).filter(Config.clave == clave).first()
     if fila:
@@ -923,7 +929,8 @@ def estado_cuenta(conductor_id: int, db: Session = Depends(get_db)):
         "al_dia": suscripcion_al_dia(conductor, db),
         "dias_restantes": dias_restantes(conductor),
         "cobro_activo": leer_config("cobro_activo", db, "no") == "si",
-        "valor_mensual": int(leer_config("valor_mensual", db, "0") or 0),
+        "valor_mensual": valor_mensual_de(conductor, db),   # segun su vehiculo
+        "tipo_vehiculo": conductor.tipo_vehiculo,
         "nequi_pagos": leer_config("nequi_pagos", db, ""),
     }
 
