@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking } from 'react-native';
@@ -1392,18 +1392,29 @@ function mapaSeguimientoHTML(lat, lon) {
 
 function MapaSeguimiento({ punto, conductor }) {
   const webRef = useRef(null);
+  const [listo, setListo] = useState(false);
+  // el HTML se genera UNA sola vez por montaje: si se regenerara en cada
+  // refresco, el WebView recargaria el mapa y se "congelaria" perdiendo el 🚗
+  const html = useMemo(() => {
+    const c = punto && punto.lat != null ? punto : conductor;
+    return c && c.lat != null ? mapaSeguimientoHTML(c.lat, c.lon) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // cada vez que llega posicion nueva (o el mapa termina de cargar), se inyecta
   useEffect(() => {
-    if (conductor && conductor.lat != null && webRef.current) {
+    if (!listo || !webRef.current) return;
+    if (conductor && conductor.lat != null) {
       webRef.current.injectJavaScript(`conductor(${conductor.lat}, ${conductor.lon}); true;`);
     }
-  }, [conductor && conductor.lat, conductor && conductor.lon]);
-  if (!punto || punto.lat == null) return null;
+  }, [listo, conductor && conductor.lat, conductor && conductor.lon]);
+  if (!html) return null;
   return (
     <View style={{ height: 240, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
       <WebView
         ref={webRef}
         originWhitelist={["*"]}
-        source={{ html: mapaSeguimientoHTML(punto.lat, punto.lon), baseUrl: "https://orito.app/" }}
+        source={{ html, baseUrl: "https://orito.app/" }}
+        onLoadEnd={() => setListo(true)}
         javaScriptEnabled domStorageEnabled mixedContentMode="always"
         setSupportMultipleWindows={false} androidLayerType="hardware"
         style={{ flex: 1 }}
@@ -1662,7 +1673,7 @@ function PedirCarreraScreen({ navigation, route }) {
               const dist = punto && cond ? kmEntre(cond, punto) : null;
               return (
                 <>
-                  <MapaSeguimiento punto={punto || cond} conductor={cond} />
+                  <MapaSeguimiento key={carrera.estado} punto={punto || cond} conductor={cond} />
                   {dist != null && (
                     <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
                       <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
@@ -1979,6 +1990,7 @@ function ConductorScreen({ navigation, route }) {
         if (p.status !== "granted") return;
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (!vivo) return;
+        setMiUbic({ lat: pos.coords.latitude, lon: pos.coords.longitude });   // alimenta su propio mapa
         fetch(`${API}/conductores/${usuario.id}/ubicacion?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`, { method: "PUT" }).catch(() => {});
       } catch (e) {}
     };
@@ -2157,6 +2169,28 @@ function ConductorScreen({ navigation, route }) {
             {mias.length > 0 && (
               <>
                 <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
+                {(() => {
+                  // el conductor tambien ve su ruta: al punto de recogida
+                  // (aceptada) o al destino (en_camino), con su 🚗 moviendose
+                  const c = mias[0];
+                  const punto = c.estado === "aceptada"
+                    ? (c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null)
+                    : (c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null);
+                  if (!punto && !miUbic) return null;
+                  const dist = punto && miUbic ? kmEntre(miUbic, punto) : null;
+                  return (
+                    <>
+                      <MapaSeguimiento key={"cond-" + c.estado} punto={punto || miUbic} conductor={miUbic} />
+                      {dist != null && (
+                        <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 8, marginBottom: 10, alignItems: "center" }}>
+                          <Text style={{ fontSize: 14, fontWeight: "700", color: "#187830" }}>
+                            {c.estado === "aceptada" ? "📍 Al punto de recogida" : "🏁 Al destino"}: ~{dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}
+                          </Text>
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
                 {mias.map(c => tarjeta(c, true))}
                 <View style={{ height: 8 }} />
               </>
