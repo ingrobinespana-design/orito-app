@@ -1420,24 +1420,57 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
 }
 
 /** Mapa de seguimiento: el cliente ve al conductor 🚗 acercarse a su punto 📍.
- *  El HTML no trae coordenadas quemadas: TODO llega inyectado desde la app
- *  (punto de referencia y posicion del conductor). Asi el mapa funciona aunque
- *  la carrera se haya pedido de la lista, sin pin, y los datos lleguen tarde. */
+ *  La camara SIGUE al carro de cerca (como Uber/inDrive): se ve avanzar por la
+ *  calle en vez de mostrar toda la ruta alejada. El carrito se desliza suave
+ *  entre cada posicion. Botones para "seguir" o "ver toda la ruta".
+ *  El HTML no trae coordenadas quemadas: todo llega inyectado desde la app. */
 function mapaSeguimientoHTML() {
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<style>html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}.em{font-size:34px;line-height:34px;text-align:center}</style>
+<style>
+  html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}
+  .em{font-size:34px;line-height:34px;text-align:center}
+  .em.carro{filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+  #btns{position:absolute;top:10px;right:10px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+  #btns button{border:none;border-radius:22px;padding:9px 13px;font-size:13px;font-weight:700;
+    box-shadow:0 2px 6px rgba(0,0,0,.25);background:#fff;color:#187830}
+  #btns button.on{background:#187830;color:#fff}
+</style>
 </head><body><div id="map"></div>
+<div id="btns">
+  <button id="bSeguir" class="on" onclick="modoSeguir()">📍 Seguir</button>
+  <button id="bRuta" onclick="modoRuta()">🗺️ Ruta</button>
+</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
-  var icoCarro = L.divIcon({html:'🚗', className:'em', iconSize:[34,34], iconAnchor:[17,17]});
-  var pin = null, carro = null, linea = null, rutaCapa = null, ajustado = false, ultimaRuta = null;
-  var dLat = null, dLon = null;   // punto de referencia (origen o destino), llega inyectado
+  var icoCarro = L.divIcon({html:'🚗', className:'em carro', iconSize:[34,34], iconAnchor:[17,17]});
+  var pin = null, carro = null, linea = null, rutaCapa = null, ultimaRuta = null;
+  var dLat = null, dLon = null;   // punto de referencia (origen o destino), inyectado
+  var seguir = true, primera = true, animId = null;
+  var ZOOM = 16;                  // que tan cerca sigue al carro
+
+  function botones(){
+    document.getElementById('bSeguir').className = seguir ? 'on' : '';
+    document.getElementById('bRuta').className = seguir ? '' : 'on';
+  }
+  function modoSeguir(){
+    seguir = true; botones();
+    if(carro){ map.setView(carro.getLatLng(), Math.max(map.getZoom(), ZOOM), {animate:true}); }
+  }
+  function modoRuta(){
+    seguir = false; botones();
+    if(rutaCapa){ map.fitBounds(rutaCapa.getBounds().pad(0.15)); }
+    else if(carro && dLat != null){ map.fitBounds(L.latLngBounds([carro.getLatLng(), [dLat, dLon]]).pad(0.25)); }
+  }
+  // si el usuario arrastra el mapa a mano, dejamos de perseguir el carro para no
+  // pelearle la camara; puede volver a "Seguir" con el boton
+  map.on('dragstart', function(){ if(seguir){ seguir = false; botones(); } });
+
   function recta(la, lo){
     if(linea){ map.removeLayer(linea); linea = null; }
     if(dLat == null) return;
@@ -1459,33 +1492,43 @@ function mapaSeguimientoHTML() {
       if(window.ReactNativeWebView){
         window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)}));
       }
-      // la camara acompaña el avance: se reencuadra al tramo que queda, con tope
-      // de zoom para no acercarse demasiado — se VE la ruta acortandose
-      map.fitBounds(rutaCapa.getBounds().pad(0.18), {maxZoom: 17});
-      ajustado = true;
+      // OJO: ya NO se reencuadra a toda la ruta en cada refresco — eso es lo que
+      // alejaba el mapa y hacia que el carro se viera quieto
     }).catch(function(){ recta(la, lo); });
   }
-  function encuadrar(){
-    if(carro && dLat != null){ map.fitBounds(L.latLngBounds([carro.getLatLng(), [dLat, dLon]]).pad(0.25)); }
-    else if(dLat != null){ map.setView([dLat, dLon], 16); }
-    else if(carro){ map.setView(carro.getLatLng(), 16); }
-    ajustado = true;
+  // desliza el carrito de A a B en ~1.4s para que se vea moverse, no saltar
+  function animarCarro(desde, hasta){
+    if(animId) cancelAnimationFrame(animId);
+    var t0 = performance.now(), dur = 1400;
+    function paso(now){
+      var t = Math.min(1, (now - t0) / dur);
+      var la = desde[0] + (hasta[0]-desde[0])*t;
+      var lo = desde[1] + (hasta[1]-desde[1])*t;
+      carro.setLatLng([la, lo]);
+      if(seguir){ map.panTo([la, lo], {animate:false}); }   // camara pegada al carro
+      if(t < 1){ animId = requestAnimationFrame(paso); }
+    }
+    animId = requestAnimationFrame(paso);
   }
   function punto(la, lo){
     dLat = la; dLon = lo;
     if(!pin){ pin = L.marker([la, lo], {icon:icoPin}).addTo(map); }
     else { pin.setLatLng([la, lo]); }
     ultimaRuta = null;   // referencia nueva: la ruta se recalcula
-    encuadrar();
-    if(carro){ var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
+    if(!carro){ map.setView([la, lo], ZOOM); }
+    else { var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
   }
   function conductor(la, lo){
-    if(!carro){ carro = L.marker([la, lo], {icon:icoCarro}).addTo(map); }
-    else { carro.setLatLng([la, lo]); }
+    if(!carro){
+      carro = L.marker([la, lo], {icon:icoCarro}).addTo(map);
+      if(primera){ map.setView([la, lo], ZOOM); primera = false; }   // arranca CERCA del carro
+    } else {
+      var p = carro.getLatLng();
+      animarCarro([p.lat, p.lng], [la, lo]);
+    }
     // recalcular la ruta solo si se movio ~90m o es la primera vez (no saturar)
     var mover = !ultimaRuta || Math.sqrt(Math.pow(la-ultimaRuta[0],2) + Math.pow(lo-ultimaRuta[1],2)) > 0.0008;
     if(mover){ pedirRuta(la, lo); }
-    if(!ajustado){ encuadrar(); }
   }
 </script></body></html>`;
 }
