@@ -1379,18 +1379,41 @@ function mapaSeguimientoHTML(lat, lon) {
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
   var icoCarro = L.divIcon({html:'🚗', className:'em', iconSize:[34,34], iconAnchor:[17,17]});
   var pin = L.marker([${lat}, ${lon}], {icon:icoPin}).addTo(map);
-  var carro = null, linea = null, ajustado = false;
+  var carro = null, linea = null, rutaCapa = null, ajustado = false, ultimaRuta = null;
+  function recta(la, lo){
+    if(linea){ map.removeLayer(linea); }
+    linea = L.polyline([[la, lo], [${lat}, ${lon}]], {color:'#187830', weight:3, dashArray:'6 8'}).addTo(map);
+  }
+  // ruta REAL por las calles (OSRM, gratis). Se recalcula cuando el conductor
+  // avanza, asi la linea se va "consumiendo" en tiempo real como en Uber.
+  function pedirRuta(la, lo){
+    var url = 'https://router.project-osrm.org/route/v1/driving/' + lo + ',' + la + ';' + ${lon} + ',' + ${lat} + '?overview=full&geometries=geojson';
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if(!d.routes || !d.routes[0]) throw 0;
+      var r = d.routes[0];
+      var pts = r.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
+      if(rutaCapa){ map.removeLayer(rutaCapa); }
+      if(linea){ map.removeLayer(linea); linea = null; }
+      rutaCapa = L.polyline(pts, {color:'#187830', weight:5, opacity:0.85}).addTo(map);
+      ultimaRuta = [la, lo];
+      if(window.ReactNativeWebView){
+        window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)}));
+      }
+      if(!ajustado){ map.fitBounds(rutaCapa.getBounds().pad(0.15)); ajustado = true; }
+    }).catch(function(){ recta(la, lo); });
+  }
   function conductor(la, lo){
     if(!carro){ carro = L.marker([la, lo], {icon:icoCarro}).addTo(map); }
     else { carro.setLatLng([la, lo]); }
-    if(linea){ map.removeLayer(linea); }
-    linea = L.polyline([[la, lo], [${lat}, ${lon}]], {color:'#187830', weight:3, dashArray:'6 8'}).addTo(map);
+    // recalcular la ruta solo si se movio ~90m o es la primera vez (no saturar)
+    var mover = !ultimaRuta || Math.sqrt(Math.pow(la-ultimaRuta[0],2) + Math.pow(lo-ultimaRuta[1],2)) > 0.0008;
+    if(mover){ pedirRuta(la, lo); }
     if(!ajustado){ map.fitBounds(L.latLngBounds([[la,lo],[${lat},${lon}]]).pad(0.25)); ajustado = true; }
   }
 </script></body></html>`;
 }
 
-function MapaSeguimiento({ punto, conductor }) {
+function MapaSeguimiento({ punto, conductor, onInfo }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
   // el HTML se genera UNA sola vez por montaje: si se regenerara en cada
@@ -1415,12 +1438,20 @@ function MapaSeguimiento({ punto, conductor }) {
         originWhitelist={["*"]}
         source={{ html, baseUrl: "https://orito.app/" }}
         onLoadEnd={() => setListo(true)}
+        onMessage={(e) => { try { const d = JSON.parse(e.nativeEvent.data); if (d && d.km != null && onInfo) onInfo(d); } catch (_) {} }}
         javaScriptEnabled domStorageEnabled mixedContentMode="always"
         setSupportMultipleWindows={false} androidLayerType="hardware"
         style={{ flex: 1 }}
       />
     </View>
   );
+}
+
+/** abre Google Maps con navegacion por voz hacia un punto (gratis: usa la app
+ *  de Maps que ya tiene el celular) */
+function navegarGoogleMaps(lat, lon) {
+  Linking.openURL(`google.navigation:q=${lat},${lon}`)
+    .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`).catch(() => {}));
 }
 
 function PedirCarreraScreen({ navigation, route }) {
@@ -1437,6 +1468,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
   const [contraofertas, setContraofertas] = useState([]);
+  const [rutaInfo, setRutaInfo] = useState(null);    // {km, min} reales por calle (OSRM)
   const [cargando, setCargando] = useState(false);
 
   const vehiculosAqui = (muni && muni.vehiculos) || [];
@@ -1693,13 +1725,17 @@ function PedirCarreraScreen({ navigation, route }) {
                 : (carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null);
               const cond = carrera.conductor_lat != null ? { lat: carrera.conductor_lat, lon: carrera.conductor_lon } : null;
               const dist = punto && cond ? kmEntre(cond, punto) : null;
+              const info = rutaInfo;   // km/min reales por calle si OSRM respondio
               return (
                 <>
-                  <MapaSeguimiento key={carrera.estado} punto={punto || cond} conductor={cond} />
-                  {dist != null && (
+                  <MapaSeguimiento key={carrera.estado} punto={punto || cond} conductor={cond} onInfo={setRutaInfo} />
+                  {(info || dist != null) && (
                     <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
                       <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
-                        🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"} ~{dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}
+                        🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"}{" "}
+                        {info
+                          ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
+                          : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
                       </Text>
                       {carrera.conductor_ubic_fecha && (Date.now() - new Date(carrera.conductor_ubic_fecha).getTime()) > 90000 && (
                         <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicacion de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
@@ -1955,6 +1991,7 @@ function ConductorScreen({ navigation, route }) {
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("solicitudes");
   const [miUbic, setMiUbic] = useState(null);   // ubicacion del conductor, para calcular distancia a cada carrera
+  const [rutaCond, setRutaCond] = useState(null);   // {km, min} de su ruta por calles
 
   // ubicacion del conductor una vez, para mostrar "a X km" de cada solicitud
   useEffect(() => {
@@ -2200,16 +2237,27 @@ function ConductorScreen({ navigation, route }) {
                     : (c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null);
                   if (!punto && !miUbic) return null;
                   const dist = punto && miUbic ? kmEntre(miUbic, punto) : null;
+                  const info = rutaCond;
                   return (
                     <>
-                      <MapaSeguimiento key={"cond-" + c.estado} punto={punto || miUbic} conductor={miUbic} />
-                      {dist != null && (
-                        <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 8, marginBottom: 10, alignItems: "center" }}>
-                          <Text style={{ fontSize: 14, fontWeight: "700", color: "#187830" }}>
-                            {c.estado === "aceptada" ? "📍 Al punto de recogida" : "🏁 Al destino"}: ~{dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}
-                          </Text>
-                        </View>
-                      )}
+                      <MapaSeguimiento key={"cond-" + c.estado} punto={punto || miUbic} conductor={miUbic} onInfo={setRutaCond} />
+                      <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                        {(info || dist != null) && (
+                          <View style={{ flex: 1, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, alignItems: "center", justifyContent: "center" }}>
+                            <Text style={{ fontSize: 13, fontWeight: "700", color: "#187830" }}>
+                              {c.estado === "aceptada" ? "📍 Recogida" : "🏁 Destino"}:{" "}
+                              {info
+                                ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
+                                : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
+                            </Text>
+                          </View>
+                        )}
+                        {punto && (
+                          <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMaps(punto.lat, punto.lon)}>
+                            <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Navegar</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     </>
                   );
                 })()}
