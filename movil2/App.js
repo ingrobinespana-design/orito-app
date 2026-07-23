@@ -1364,8 +1364,10 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
 }
 
 /** Mapa de seguimiento: el cliente ve al conductor 🚗 acercarse a su punto 📍.
- *  Se actualiza inyectando la nueva posicion cada vez que llega del servidor. */
-function mapaSeguimientoHTML(lat, lon) {
+ *  El HTML no trae coordenadas quemadas: TODO llega inyectado desde la app
+ *  (punto de referencia y posicion del conductor). Asi el mapa funciona aunque
+ *  la carrera se haya pedido de la lista, sin pin, y los datos lleguen tarde. */
+function mapaSeguimientoHTML() {
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -1374,20 +1376,22 @@ function mapaSeguimientoHTML(lat, lon) {
 </head><body><div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  var map = L.map('map',{zoomControl:false}).setView([${lat}, ${lon}], 16);
+  var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
   var icoCarro = L.divIcon({html:'🚗', className:'em', iconSize:[34,34], iconAnchor:[17,17]});
-  var pin = L.marker([${lat}, ${lon}], {icon:icoPin}).addTo(map);
-  var carro = null, linea = null, rutaCapa = null, ajustado = false, ultimaRuta = null;
+  var pin = null, carro = null, linea = null, rutaCapa = null, ajustado = false, ultimaRuta = null;
+  var dLat = null, dLon = null;   // punto de referencia (origen o destino), llega inyectado
   function recta(la, lo){
-    if(linea){ map.removeLayer(linea); }
-    linea = L.polyline([[la, lo], [${lat}, ${lon}]], {color:'#187830', weight:3, dashArray:'6 8'}).addTo(map);
+    if(linea){ map.removeLayer(linea); linea = null; }
+    if(dLat == null) return;
+    linea = L.polyline([[la, lo], [dLat, dLon]], {color:'#187830', weight:3, dashArray:'6 8'}).addTo(map);
   }
   // ruta REAL por las calles (OSRM, gratis). Se recalcula cuando el conductor
   // avanza, asi la linea se va "consumiendo" en tiempo real como en Uber.
   function pedirRuta(la, lo){
-    var url = 'https://router.project-osrm.org/route/v1/driving/' + lo + ',' + la + ';' + ${lon} + ',' + ${lat} + '?overview=full&geometries=geojson';
+    if(dLat == null) return;   // sin referencia no hay a donde trazar
+    var url = 'https://router.project-osrm.org/route/v1/driving/' + lo + ',' + la + ';' + dLon + ',' + dLat + '?overview=full&geometries=geojson';
     fetch(url).then(function(r){ return r.json(); }).then(function(d){
       if(!d.routes || !d.routes[0]) throw 0;
       var r = d.routes[0];
@@ -1405,13 +1409,27 @@ function mapaSeguimientoHTML(lat, lon) {
       ajustado = true;
     }).catch(function(){ recta(la, lo); });
   }
+  function encuadrar(){
+    if(carro && dLat != null){ map.fitBounds(L.latLngBounds([carro.getLatLng(), [dLat, dLon]]).pad(0.25)); }
+    else if(dLat != null){ map.setView([dLat, dLon], 16); }
+    else if(carro){ map.setView(carro.getLatLng(), 16); }
+    ajustado = true;
+  }
+  function punto(la, lo){
+    dLat = la; dLon = lo;
+    if(!pin){ pin = L.marker([la, lo], {icon:icoPin}).addTo(map); }
+    else { pin.setLatLng([la, lo]); }
+    ultimaRuta = null;   // referencia nueva: la ruta se recalcula
+    encuadrar();
+    if(carro){ var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
+  }
   function conductor(la, lo){
     if(!carro){ carro = L.marker([la, lo], {icon:icoCarro}).addTo(map); }
     else { carro.setLatLng([la, lo]); }
     // recalcular la ruta solo si se movio ~90m o es la primera vez (no saturar)
     var mover = !ultimaRuta || Math.sqrt(Math.pow(la-ultimaRuta[0],2) + Math.pow(lo-ultimaRuta[1],2)) > 0.0008;
     if(mover){ pedirRuta(la, lo); }
-    if(!ajustado){ map.fitBounds(L.latLngBounds([[la,lo],[${lat},${lon}]]).pad(0.25)); ajustado = true; }
+    if(!ajustado){ encuadrar(); }
   }
 </script></body></html>`;
 }
@@ -1419,21 +1437,29 @@ function mapaSeguimientoHTML(lat, lon) {
 function MapaSeguimiento({ punto, conductor, onInfo }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
-  // el HTML se genera UNA sola vez por montaje: si se regenerara en cada
-  // refresco, el WebView recargaria el mapa y se "congelaria" perdiendo el 🚗
-  const html = useMemo(() => {
-    const c = punto && punto.lat != null ? punto : conductor;
-    return c && c.lat != null ? mapaSeguimientoHTML(c.lat, c.lon) : null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // el HTML es FIJO (sin coordenadas) y se genera una sola vez por montaje: si
+  // se regenerara en cada refresco, el WebView recargaria el mapa y se
+  // "congelaria" perdiendo el 🚗. Las posiciones llegan siempre inyectadas —
+  // antes, si la carrera se pedia sin pin, el HTML nacia null y el mapa no
+  // aparecia NUNCA aunque el conductor ya estuviera reportando su ubicacion.
+  const html = useMemo(() => mapaSeguimientoHTML(), []);
   // cada vez que llega posicion nueva (o el mapa termina de cargar), se inyecta
+  useEffect(() => {
+    if (!listo || !webRef.current) return;
+    if (punto && punto.lat != null) {
+      webRef.current.injectJavaScript(`punto(${punto.lat}, ${punto.lon}); true;`);
+    }
+  }, [listo, punto && punto.lat, punto && punto.lon]);
   useEffect(() => {
     if (!listo || !webRef.current) return;
     if (conductor && conductor.lat != null) {
       webRef.current.injectJavaScript(`conductor(${conductor.lat}, ${conductor.lon}); true;`);
     }
   }, [listo, conductor && conductor.lat, conductor && conductor.lon]);
-  if (!html) return null;
+  // chequeo VIVO en cada render: el mapa se muestra apenas exista alguna
+  // coordenada, sin importar cuando llego
+  const hayDatos = (punto && punto.lat != null) || (conductor && conductor.lat != null);
+  if (!hayDatos) return null;
   return (
     <View style={{ height: 240, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
       <WebView
@@ -1750,7 +1776,7 @@ function PedirCarreraScreen({ navigation, route }) {
               const info = rutaInfo;   // km/min reales por calle si OSRM respondio
               return (
                 <>
-                  <MapaSeguimiento key={carrera.estado} punto={punto || cond} conductor={cond} onInfo={setRutaInfo} />
+                  <MapaSeguimiento key={carrera.estado} punto={punto} conductor={cond} onInfo={setRutaInfo} />
                   {(info || dist != null) && (
                     <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
                       <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
@@ -2262,7 +2288,7 @@ function ConductorScreen({ navigation, route }) {
                   const info = rutaCond;
                   return (
                     <>
-                      <MapaSeguimiento key={"cond-" + c.estado} punto={punto || miUbic} conductor={miUbic} onInfo={setRutaCond} />
+                      <MapaSeguimiento key={"cond-" + c.estado} punto={punto} conductor={miUbic} onInfo={setRutaCond} />
                       <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                         {(info || dist != null) && (
                           <View style={{ flex: 1, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, alignItems: "center", justifyContent: "center" }}>

@@ -902,6 +902,17 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
             detail=f"En {municipio} solo hay servicio de {' o '.join(permitidos) or 'ninguno'}")
     if tarifa_ofrecida is not None and tarifa_ofrecida <= 0:
         raise HTTPException(status_code=400, detail="La oferta debe ser mayor que cero")
+    # si el punto vino de la lista o escrito (sin pin en el mapa), se heredan las
+    # coordenadas que ese lugar ya aprendio: asi el seguimiento en vivo y la
+    # tarifa sugerida funcionan igual que con pin
+    if origen_lat is None:
+        conocido = buscar_lugar(origen, municipio, db)
+        if conocido and conocido.lat is not None:
+            origen_lat, origen_lon = conocido.lat, conocido.lon
+    if destino_lat is None:
+        conocido = buscar_lugar(destino, municipio, db)
+        if conocido and conocido.lat is not None:
+            destino_lat, destino_lon = conocido.lat, conocido.lon
     # donde hay GPS se calcula distancia y tarifa sugerida; donde no, quedan vacias
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)
