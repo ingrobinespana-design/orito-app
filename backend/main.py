@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, VEHICULOS_VALIDOS
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -313,8 +313,8 @@ def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
         raise HTTPException(status_code=404, detail="Municipio no encontrado")
     if vehiculos is not None:
         pedidos = [v.strip() for v in vehiculos.split(",") if v.strip()]
-        if not pedidos or any(v not in ("moto", "carro") for v in pedidos):
-            raise HTTPException(status_code=400, detail="Vehiculos validos: moto, carro")
+        if not pedidos or any(v not in VEHICULOS_VALIDOS for v in pedidos):
+            raise HTTPException(status_code=400, detail=f"Vehiculos validos: {', '.join(VEHICULOS_VALIDOS)}")
         m.vehiculos = ",".join(pedidos)
     for campo, valor in (("activo", activo), ("usa_gps", usa_gps)):
         if valor is not None:
@@ -483,8 +483,8 @@ def cambiar_rol(telefono: str, rol: str, restaurante_id: int = None,
     if rol == "conductor":
         elegido = tipo_vehiculo or usuario.tipo_vehiculo
         permitidos = vehiculos_de(usuario.municipio or "Orito", db)
-        if elegido not in ("moto", "carro"):
-            raise HTTPException(status_code=400, detail="Para hacerlo conductor tienes que indicar si maneja moto o carro")
+        if elegido not in VEHICULOS_VALIDOS:
+            raise HTTPException(status_code=400, detail="Para hacerlo conductor tienes que indicar que vehiculo maneja")
         if elegido not in permitidos:
             raise HTTPException(
                 status_code=400,
@@ -1258,8 +1258,8 @@ def actualizar_conductor(conductor_id: int, placa: str = None, vehiculo: str = N
     conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
     if not conductor:
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
-    if tipo_vehiculo is not None and tipo_vehiculo not in ("moto", "carro"):
-        raise HTTPException(status_code=400, detail="Tipo de vehiculo invalido: moto o carro")
+    if tipo_vehiculo is not None and tipo_vehiculo not in VEHICULOS_VALIDOS:
+        raise HTTPException(status_code=400, detail="Tipo de vehiculo invalido")
     if placa is not None:
         conductor.placa = placa
     if vehiculo is not None:

@@ -214,13 +214,22 @@ class Municipio(Base):
     centro_lat = Column(Float, nullable=True)
     centro_lon = Column(Float, nullable=True)
 
+# Tipos de vehiculo que maneja la app. "personas" son las carreras normales;
+# "carga" es el modulo de trasteos/acarreos (mudanzas, mercancia, etc.). Todos
+# se piden y negocian igual; lo unico que cambia es el tipo.
+VEHICULOS_PERSONAS = ("moto", "carro")
+VEHICULOS_CARGA = ("motocarguero", "camioneta", "camion", "furgon", "planchon", "grua")
+VEHICULOS_VALIDOS = VEHICULOS_PERSONAS + VEHICULOS_CARGA
+_CARGA_CSV = ",".join(VEHICULOS_CARGA)
+
 # (vehiculos, usa_gps, tarifa_base, valor_km, tarifa_minima, centro_lat, centro_lon)
 # Los valores son un punto de partida: el dueño los ajusta desde el panel.
 # Orito arranca sin tarifa por km (valor_km=0): el mapa ubica pero no sugiere
-# precio hasta que se definan las tarifas de alla.
+# precio hasta que se definan las tarifas de alla. Ambos pueblos llevan los
+# vehiculos de carga desde el arranque (trasteos se ven en todo el Putumayo).
 MUNICIPIOS_INICIALES = {
-    "Orito": ("carro", "si", 0, 0, 0, 0.6668, -76.8719),
-    "Puerto Asis": ("moto,carro", "si", 3000, 1500, 4000, 0.5083, -76.4972),
+    "Orito": ("carro," + _CARGA_CSV, "si", 0, 0, 0, 0.6668, -76.8719),
+    "Puerto Asis": ("moto,carro," + _CARGA_CSV, "si", 3000, 1500, 4000, 0.5083, -76.4972),
 }
 
 # Semilla minima de Puerto Asis: solo referencias obvias, sin inventar negocios.
@@ -388,6 +397,17 @@ def crear_tablas():
                     if n not in existentes_m]
         if nuevos_m:
             db.add_all(nuevos_m)
+        # trasteos/acarreos: agrega los vehiculos de carga a los municipios que
+        # YA existian en produccion (el seed de arriba no los pisa). Corre UNA
+        # sola vez — marcada con una config — para respetar que despues el admin
+        # pueda quitar los que no aplican en su pueblo.
+        if not db.query(Config).filter(Config.clave == "migracion_carga_v1").first():
+            for m in db.query(Municipio).all():
+                actuales = [v.strip() for v in (m.vehiculos or "").split(",") if v.strip()]
+                faltan = [v for v in VEHICULOS_CARGA if v not in actuales]
+                if faltan:
+                    m.vehiculos = ",".join(actuales + faltan)
+            db.add(Config(clave="migracion_carga_v1", valor="si"))
         # tarifas por municipio+vehiculo que falten
         existentes_t = {(t.municipio, t.vehiculo) for t in db.query(Tarifa).all()}
         nuevas_t = [Tarifa(municipio=mu, vehiculo=ve, base=b, valor_km=vk, minima=mi)

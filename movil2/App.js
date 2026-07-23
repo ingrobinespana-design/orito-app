@@ -88,6 +88,26 @@ function qs(obj) {
     .join("&");
 }
 
+// catalogo de vehiculos: "personas" = carreras normales; "carga" = trasteos y
+// acarreos (mudanzas, mercancia). Todos se piden y negocian igual. Fuente unica
+// para etiquetas e iconos en toda la app.
+const VEHICULOS = {
+  moto:         { label: "Moto",         icono: "🏍️", grupo: "personas" },
+  carro:        { label: "Carro",        icono: "🚗", grupo: "personas" },
+  motocarguero: { label: "Motocarguero", icono: "🛺", grupo: "carga" },
+  camioneta:    { label: "Camioneta",    icono: "🛻", grupo: "carga" },
+  camion:       { label: "Camion",       icono: "🚚", grupo: "carga" },
+  furgon:       { label: "Furgon",       icono: "🚐", grupo: "carga" },
+  planchon:     { label: "Planchon",     icono: "🚛", grupo: "carga" },
+  grua:         { label: "Grua",         icono: "🏗️", grupo: "carga" },
+};
+const vehLabel = (t) => (VEHICULOS[t] ? VEHICULOS[t].label : (t || ""));
+const vehIcono = (t) => (VEHICULOS[t] ? VEHICULOS[t].icono : "🚗");
+const esCarga = (t) => VEHICULOS[t] && VEHICULOS[t].grupo === "carga";
+// orden de aparicion: primero personas, luego carga
+const ordenVehiculos = (tipos) =>
+  Object.keys(VEHICULOS).filter((t) => tipos.includes(t));
+
 // abrir el marcador del telefono o WhatsApp con un numero colombiano
 const soloDigitos = (n) => (n || "").replace(/\D/g, "");
 function llamar(num) {
@@ -315,19 +335,39 @@ function LoginScreen({ navigation }) {
               )}
 
               <Text style={styles.etiqueta}>COMO TE REGISTRAS</Text>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                {[["cliente", "Cliente"], ["moto", "🏍️ Moto"], ["carro", "🚗 Carro"]]
-                  .filter(([v]) => v === "cliente" || vehiculosAqui.includes(v))
-                  .map(([v, txt]) => (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                <TouchableOpacity
+                  style={[styles.opcion, form.comoMe === "cliente" && styles.opcionActiva]}
+                  onPress={() => setForm({ ...form, comoMe: "cliente" })}
+                >
+                  <Text style={[styles.opcionTexto, form.comoMe === "cliente" && styles.opcionTextoActivo]}>Cliente</Text>
+                </TouchableOpacity>
+                {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => (
                   <TouchableOpacity
                     key={v}
                     style={[styles.opcion, form.comoMe === v && styles.opcionActiva]}
                     onPress={() => setForm({ ...form, comoMe: v })}
                   >
-                    <Text style={[styles.opcionTexto, form.comoMe === v && styles.opcionTextoActivo]}>{txt}</Text>
+                    <Text style={[styles.opcionTexto, form.comoMe === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
+              {ordenVehiculos(vehiculosAqui).some(esCarga) && (
+                <>
+                  <Text style={[styles.ayuda, { marginBottom: 6 }]}>🚚 Trasteos y acarreos (carga)</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
+                      <TouchableOpacity
+                        key={v}
+                        style={[styles.opcion, form.comoMe === v && styles.opcionActiva]}
+                        onPress={() => setForm({ ...form, comoMe: v })}
+                      >
+                        <Text style={[styles.opcionTexto, form.comoMe === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
               {form.comoMe !== "cliente" && (
                 <>
                   <TextInput
@@ -1750,7 +1790,7 @@ function PedirCarreraScreen({ navigation, route }) {
     const destinoListo = form.destino.trim() || destinoCoords;
     if (!origenListo) { avisar("Falta el origen", "Escribe donde estas, elige de la lista o marcalo en el mapa"); return; }
     if (!destinoListo) { avisar("Falta el destino", "Escribe para donde vas, elige de la lista o marcalo en el mapa"); return; }
-    if (!vehiculo) { avisar("Falta el vehiculo", "Elige si quieres ir en moto o en carro"); return; }
+    if (!vehiculo) { avisar("Falta el vehiculo", "Elige que necesitas: carrera o trasteo"); return; }
     if (!oferta.trim()) { avisar("Falta tu oferta", "Escribe cuanto ofreces pagar"); return; }
     setCargando(true);
     const datos = {
@@ -1884,7 +1924,7 @@ function PedirCarreraScreen({ navigation, route }) {
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: "600", fontSize: 15 }}>{of.conductor_nombre}</Text>
                           <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-                            {of.conductor_tipo === "moto" ? "🏍️" : "🚗"} {of.conductor_placa || ""}
+                            {vehIcono(of.conductor_tipo)} {of.conductor_placa || ""}
                           </Text>
                         </View>
                         <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${of.monto.toLocaleString()}</Text>
@@ -2039,23 +2079,42 @@ function PedirCarreraScreen({ navigation, route }) {
           />
         </View>
 
-        {/* 2. VEHICULO: segun el pueblo detectado (solo aparece cuando hay municipio) */}
-        {muni && vehiculosAqui.length > 1 && (
+        {/* 2. VEHICULO: personas (carrera) y carga (trasteo/acarreo), segun el pueblo */}
+        {muni && vehiculosAqui.length > 0 && (
           <View style={styles.card}>
-            <Text style={styles.etiqueta}>EN QUE QUIERES IR</Text>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              {[["moto", "🏍️ Moto"], ["carro", "🚗 Carro"]]
-                .filter(([v]) => vehiculosAqui.includes(v))
-                .map(([v, txt]) => (
-                <TouchableOpacity
-                  key={v}
-                  style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
-                  onPress={() => setVehiculo(v)}
-                >
-                  <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{txt}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {ordenVehiculos(vehiculosAqui).some((v) => !esCarga(v)) && (
+              <>
+                <Text style={styles.etiqueta}>QUE NECESITAS</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
+                      onPress={() => setVehiculo(v)}
+                    >
+                      <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+            {ordenVehiculos(vehiculosAqui).some(esCarga) && (
+              <>
+                <Text style={[styles.etiqueta, { marginTop: 14 }]}>🚚 TRASTEO O ACARREO</Text>
+                <Text style={styles.ayuda}>Para mudanzas, mercancia o carga</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                  {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
+                      onPress={() => setVehiculo(v)}
+                    >
+                      <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
           </View>
         )}
 
@@ -2957,7 +3016,7 @@ function ConfiguracionScreen({ navigation, route }) {
           {usuario.municipio ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {usuario.municipio}</Text> : null}
           {esConductor ? (
             <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
-              {usuario.tipo_vehiculo === "moto" ? "🏍️ Moto" : "🚗 Carro"}{usuario.placa ? ` · ${usuario.placa}` : ""}
+              {vehIcono(usuario.tipo_vehiculo)} {vehLabel(usuario.tipo_vehiculo)}{usuario.placa ? ` · ${usuario.placa}` : ""}
             </Text>
           ) : null}
           <Text style={{ fontSize: 11, color: "#bbb", marginTop: 6 }}>
