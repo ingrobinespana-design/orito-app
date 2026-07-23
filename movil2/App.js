@@ -2257,7 +2257,7 @@ function ConductorScreen({ navigation, route }) {
                         )}
                         {punto && (
                           <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMaps(punto.lat, punto.lon)}>
-                            <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Navegar</Text>
+                            <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Iniciar ruta</Text>
                           </TouchableOpacity>
                         )}
                       </View>
