@@ -1399,7 +1399,10 @@ function mapaSeguimientoHTML(lat, lon) {
       if(window.ReactNativeWebView){
         window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)}));
       }
-      if(!ajustado){ map.fitBounds(rutaCapa.getBounds().pad(0.15)); ajustado = true; }
+      // la camara acompaña el avance: se reencuadra al tramo que queda, con tope
+      // de zoom para no acercarse demasiado — se VE la ruta acortandose
+      map.fitBounds(rutaCapa.getBounds().pad(0.18), {maxZoom: 17});
+      ajustado = true;
     }).catch(function(){ recta(la, lo); });
   }
   function conductor(la, lo){
