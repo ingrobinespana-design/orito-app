@@ -1533,7 +1533,7 @@ function mapaSeguimientoHTML() {
 </script></body></html>`;
 }
 
-function MapaSeguimiento({ punto, conductor, onInfo }) {
+function MapaSeguimiento({ punto, conductor, onInfo, lleno }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
   // el HTML es FIJO (sin coordenadas) y se genera una sola vez por montaje: si
@@ -1560,7 +1560,10 @@ function MapaSeguimiento({ punto, conductor, onInfo }) {
   const hayDatos = (punto && punto.lat != null) || (conductor && conductor.lat != null);
   if (!hayDatos) return null;
   return (
-    <View style={{ height: 240, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
+    // "lleno": ocupa todo el alto del contenedor (mapa fijo arriba, fuera de la
+    // lista deslizable) para que el dedo pueda hacer zoom y arrastrar sin que el
+    // scroll de la pantalla le robe el gesto. Si no, el recuadro chico de 240.
+    <View style={lleno ? { flex: 1 } : { height: 240, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
       <WebView
         ref={webRef}
         originWhitelist={["*"]}
@@ -1569,6 +1572,7 @@ function MapaSeguimiento({ punto, conductor, onInfo }) {
         onMessage={(e) => { try { const d = JSON.parse(e.nativeEvent.data); if (d && d.km != null && onInfo) onInfo(d); } catch (_) {} }}
         javaScriptEnabled domStorageEnabled mixedContentMode="always"
         setSupportMultipleWindows={false} androidLayerType="hardware"
+        nestedScrollEnabled
         style={{ flex: 1 }}
       />
     </View>
@@ -1808,12 +1812,30 @@ function PedirCarreraScreen({ navigation, route }) {
       aceptada: "Tu conductor va en camino",
       en_camino: "En viaje a tu destino",
     }[carrera.estado] || "Tu carrera";
+    // mientras viene a recogerte, el punto de referencia es tu ORIGEN;
+    // ya con vos a bordo, el DESTINO
+    const punto = carrera.estado === "aceptada"
+      ? (carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null)
+      : (carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null);
+    const cond = carrera.conductor_lat != null ? { lat: carrera.conductor_lat, lon: carrera.conductor_lon } : null;
+    const dist = punto && cond ? kmEntre(cond, punto) : null;
+    const info = rutaInfo;   // km/min reales por calle si OSRM respondio
+    // el mapa va FIJO arriba (fuera del scroll) para que se pueda hacer zoom y
+    // arrastrar con el dedo — dentro de la lista, el scroll le robaba el gesto
+    const hayMapa = !buscando && (punto || cond);
     return (
       <SafeAreaView style={styles.container}>
         <View style={[styles.header, { backgroundColor: "#187830" }]}>
           <Text style={styles.headerSub}>Carrera #{carrera.id}</Text>
           <Text style={styles.headerTitle}>{tituloEstado}</Text>
         </View>
+
+        {hayMapa && (
+          <View style={{ height: 300, backgroundColor: "#e8e8e8" }}>
+            <MapaSeguimiento key={carrera.estado} punto={punto} conductor={cond} onInfo={setRutaInfo} lleno />
+          </View>
+        )}
+
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           {!buscando && (
             <View style={styles.pasos}>
@@ -1826,6 +1848,19 @@ function PedirCarreraScreen({ navigation, route }) {
                   </View>
                 );
               })}
+            </View>
+          )}
+          {hayMapa && (info || dist != null) && (
+            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
+              <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
+                🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"}{" "}
+                {info
+                  ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
+                  : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
+              </Text>
+              {carrera.conductor_ubic_fecha && (Date.now() - new Date(carrera.conductor_ubic_fecha).getTime()) > 90000 && (
+                <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicacion de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
+              )}
             </View>
           )}
           {buscando ? (
@@ -1864,34 +1899,6 @@ function PedirCarreraScreen({ navigation, route }) {
             </>
           ) : (
             <>
-            {(() => {
-              // mientras viene a recogerte, el punto de referencia es tu ORIGEN;
-              // ya con vos a bordo, el DESTINO
-              const punto = carrera.estado === "aceptada"
-                ? (carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null)
-                : (carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null);
-              const cond = carrera.conductor_lat != null ? { lat: carrera.conductor_lat, lon: carrera.conductor_lon } : null;
-              const dist = punto && cond ? kmEntre(cond, punto) : null;
-              const info = rutaInfo;   // km/min reales por calle si OSRM respondio
-              return (
-                <>
-                  <MapaSeguimiento key={carrera.estado} punto={punto} conductor={cond} onInfo={setRutaInfo} />
-                  {(info || dist != null) && (
-                    <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
-                      <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
-                        🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"}{" "}
-                        {info
-                          ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
-                          : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
-                      </Text>
-                      {carrera.conductor_ubic_fecha && (Date.now() - new Date(carrera.conductor_ubic_fecha).getTime()) > 90000 && (
-                        <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicacion de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
-                      )}
-                    </View>
-                  )}
-                </>
-              );
-            })()}
             <View style={[styles.card, { marginBottom: 12 }]}>
               <Text style={{ fontSize: 12, color: "#888" }}>Tu transportador</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 }}>
