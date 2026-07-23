@@ -938,8 +938,9 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
 @app.get("/carreras/disponibles")
 def carreras_disponibles(conductor_id: int = None, db: Session = Depends(get_db)):
     """Lo que ve el conductor: carreras libres de SU municipio y que le sirven
-    segun su vehiculo. Sin conductor_id devuelve todas (para el panel admin)."""
-    carreras = db.query(Carrera).filter(Carrera.estado == "buscando").order_by(Carrera.fecha).all()
+    segun su vehiculo. Sin conductor_id devuelve todas (para el panel admin).
+    De la mas reciente a la mas antigua (feed en vivo tipo log)."""
+    carreras = db.query(Carrera).filter(Carrera.estado == "buscando").order_by(Carrera.fecha.desc()).all()
     if conductor_id:
         conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
         if not conductor:

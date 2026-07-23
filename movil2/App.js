@@ -2195,9 +2195,9 @@ function ConductorScreen({ navigation, route }) {
 
   useEffect(() => {
     cargar();
-    // refresco en vivo cada 4s (mas la notificacion push instantanea) para que
-    // las carreras nuevas aparezcan casi al momento
-    const intervalo = setInterval(cargar, 4000);
+    // refresco en vivo cada 3s (mas la notificacion push instantanea) para que
+    // las carreras nuevas aparezcan casi al momento y las tomadas desaparezcan ya
+    const intervalo = setInterval(cargar, 3000);
     const aviso = Notifications.addNotificationReceivedListener(cargar);
     const toque = Notifications.addNotificationResponseReceivedListener(cargar);
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
@@ -2233,15 +2233,20 @@ function ConductorScreen({ navigation, route }) {
   }, [tieneCarreraActiva]);
 
   const aceptar = (c) => {
+    // se quita YA del listado (no espera al refresco) para que no la vuelva a
+    // tocar y no haya duplicidad; si algo falla, cargar() restaura el estado real
+    animar();
+    setDisponibles((prev) => prev.filter((x) => x.id !== c.id));
     fetch(`${API}/carreras/${c.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" })
       .then(async (r) => {
         const d = await r.json();
-        if (r.status === 409) { avisar("Muy tarde", "Otro transportador ya tomo esa carrera."); cargar(); return; }
+        if (r.status === 409) { avisar("Servicio ya tomado", "Otro transportador lo tomo primero."); cargar(); return; }
         if (r.status === 402) { avisar("Suscripcion vencida", d.detail); cargar(); return; }
-        if (d.detail) { avisar("No se pudo", d.detail); return; }
+        if (d.detail) { avisar("No se pudo", d.detail); cargar(); return; }
+        avisar("✅ Servicio asignado", "La carrera es tuya. Ve por el pasajero.");
         cargar();
       })
-      .catch(() => avisar("Error", "No hay conexion. Intenta de nuevo."));
+      .catch(() => { avisar("Error", "No hay conexion. Intenta de nuevo."); cargar(); });
   };
 
   // Alert.prompt solo existe en iPhone, asi que la ventana del cobro es propia
@@ -2287,15 +2292,22 @@ function ConductorScreen({ navigation, route }) {
   };
 
   const tarjeta = (c, propia) => {
-    // distancia del conductor al punto de recogida (si sabemos ambas ubicaciones)
-    const kmAlOrigen = !propia && miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
+    // dos distancias para decidir ANTES de aceptar:
+    //  1) del conductor al punto de recogida (con su GPS)
+    //  2) el recorrido del viaje: recogida -> destino (del servidor, con factor
+    //     de calle; si no viene, se estima en linea recta con las coordenadas)
+    const kmAlOrigen = miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
+    const kmViaje = c.distancia_km != null ? c.distancia_km
+      : (c.origen_lat != null && c.destino_lat != null
+          ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon })
+          : null);
+    const fmtKm = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
     return (
     <View key={c.id} style={styles.log}>
-      {/* fila de encabezado tipo log: distancia · tiempo — precio */}
+      {/* fila de encabezado tipo log: tiempo — precio */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontSize: 12, color: "#999" }}>
-          {kmAlOrigen != null ? `~${kmAlOrigen.toFixed(1)} km · ` : ""}{haceCuanto(c.fecha)}
-          {c.zona === "rural" ? "  🌄 vereda" : ""}
+          {haceCuanto(c.fecha)}{c.zona === "rural" ? "  🌄 vereda" : ""}
         </Text>
         {!propia && c.tarifa_ofrecida ? (
           <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
@@ -2309,6 +2321,23 @@ function ConductorScreen({ navigation, route }) {
       <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }} numberOfLines={1}>
         🔴 {c.destino}
       </Text>
+
+      {/* las dos distancias, bien visibles antes de aceptar */}
+      {!propia && (kmAlOrigen != null || kmViaje != null) && (
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          {kmAlOrigen != null && (
+            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+              <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>📍 A ~{fmtKm(kmAlOrigen)} de ti</Text>
+            </View>
+          )}
+          {kmViaje != null && (
+            <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+              <Text style={{ fontSize: 12, color: "#B85C00", fontWeight: "600" }}>🛣️ Viaje ~{fmtKm(kmViaje)}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
       {(c.origen_detalle || c.notas) ? (
         <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }} numberOfLines={2}>
           {c.origen_detalle || ""}{c.origen_detalle && c.notas ? " · " : ""}{c.notas || ""}
