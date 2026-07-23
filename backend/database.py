@@ -195,6 +195,8 @@ class Carrera(Base):
     zona = Column(String, default="urbano")
     tarifa = Column(Integer, nullable=True)
     notas = Column(Text, nullable=True)
+    # solo trasteos/carga: hora agendada de recogida. Null = lo antes posible
+    recogida = Column(DateTime, nullable=True)
     fecha = Column(DateTime, default=datetime.now)
 
 class Municipio(Base):
@@ -358,7 +360,7 @@ def crear_tablas():
     for columna in ("zona VARCHAR DEFAULT 'urbano'", "municipio VARCHAR DEFAULT 'Orito'",
                     "vehiculo_pedido VARCHAR", "origen_lat FLOAT", "origen_lon FLOAT",
                     "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
-                    "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER"):
+                    "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER", "recogida TIMESTAMP"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))

@@ -545,6 +545,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "tarifa_ofrecida": c.tarifa_ofrecida,
         "tarifa": c.tarifa,
         "notas": c.notas,
+        "recogida": c.recogida,
         "fecha": c.fecha,
     }
 
@@ -882,10 +883,18 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
                   origen_lat: float = None, origen_lon: float = None,
                   destino_lat: float = None, destino_lon: float = None,
                   tarifa_ofrecida: int = None, municipio: str = None,
-                  db: Session = Depends(get_db)):
+                  recogida: str = None, db: Session = Depends(get_db)):
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    # trasteos: hora agendada de recogida (texto ISO local). Si no viene o no
+    # se puede leer, queda "lo antes posible" (None) sin tumbar la carrera
+    recogida_dt = None
+    if recogida:
+        try:
+            recogida_dt = datetime.fromisoformat(recogida)
+        except (ValueError, TypeError):
+            recogida_dt = None
     # una carrera activa a la vez, para que no pida cinco taxis al tiempo
     activa = db.query(Carrera).filter(
         Carrera.cliente_id == cliente_id,
@@ -926,6 +935,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         destino_lat=destino_lat, destino_lon=destino_lon,
         distancia_km=km, tarifa_sugerida=sugerida, tarifa_ofrecida=tarifa_ofrecida,
         zona=zona_de_la_carrera(origen, destino, municipio, db),
+        recogida=recogida_dt,
     )
     db.add(carrera)
     registrar_lugar(origen, municipio, db, origen_lat, origen_lon)

@@ -108,6 +108,48 @@ const esCarga = (t) => VEHICULOS[t] && VEHICULOS[t].grupo === "carga";
 const ordenVehiculos = (tipos) =>
   Object.keys(VEHICULOS).filter((t) => tipos.includes(t));
 
+// --- agendar recogida (solo trasteos). Todo con Date nativo, SIN modulos
+//     nativos de calendario, para que viaje por OTA sin recompilar.
+const DIAS_ABR = ["dom", "lun", "mar", "mie", "jue", "vie", "sab"];
+function diasProximos() {
+  const arr = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i); d.setHours(0, 0, 0, 0);
+    const lbl = i === 0 ? "Hoy" : i === 1 ? "Manana" : `${DIAS_ABR[d.getDay()]} ${d.getDate()}`;
+    arr.push({ key: `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`, d, lbl });
+  }
+  return arr;
+}
+function horasDelDia() {
+  const arr = [];
+  for (let h = 6; h <= 20; h++) {
+    for (const m of [0, 30]) {
+      const ampm = h < 12 ? "am" : "pm";
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      arr.push({ h, m, lbl: `${h12}:${String(m).padStart(2, "0")} ${ampm}` });
+    }
+  }
+  return arr;
+}
+// string ISO LOCAL (sin zona: hora de Colombia tal cual), para que el backend
+// la guarde y la app la vuelva a leer igual
+function isoLocal(d, h, m) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(h)}:${p(m)}:00`;
+}
+function fmtRecogida(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const dd = new Date(d); dd.setHours(0, 0, 0, 0);
+  const difd = Math.round((dd - hoy) / 86400000);
+  const dia = difd === 0 ? "hoy" : difd === 1 ? "manana" : `${DIAS_ABR[d.getDay()]} ${d.getDate()}`;
+  const h = d.getHours(), m = d.getMinutes();
+  const ampm = h < 12 ? "am" : "pm"; const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${dia} ${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
 // abrir el marcador del telefono o WhatsApp con un numero colombiano
 const soloDigitos = (n) => (n || "").replace(/\D/g, "");
 function llamar(num) {
@@ -1642,8 +1684,15 @@ function PedirCarreraScreen({ navigation, route }) {
   const [contraofertas, setContraofertas] = useState([]);
   const [rutaInfo, setRutaInfo] = useState(null);    // {km, min} reales por calle (OSRM)
   const [cargando, setCargando] = useState(false);
+  // agendar recogida (solo trasteos): "lo antes posible" (default) o dia+hora
+  const [programar, setProgramar] = useState(false);
+  const [progDia, setProgDia] = useState(null);
+  const [progHora, setProgHora] = useState(null);   // {h, m}
 
   const vehiculosAqui = (muni && muni.vehiculos) || [];
+  // hora agendada final; solo aplica a carga y cuando el cliente eligio dia+hora
+  const recogidaISO = (esCarga(vehiculo) && programar && progDia && progHora)
+    ? isoLocal(progDia, progHora.h, progHora.m) : null;
 
   // fija el municipio activo y ajusta el vehiculo si el actual no aplica alli
   const aplicarMuni = (m) => {
@@ -1791,6 +1840,10 @@ function PedirCarreraScreen({ navigation, route }) {
     if (!origenListo) { avisar("Falta el origen", "Escribe donde estas, elige de la lista o marcalo en el mapa"); return; }
     if (!destinoListo) { avisar("Falta el destino", "Escribe para donde vas, elige de la lista o marcalo en el mapa"); return; }
     if (!vehiculo) { avisar("Falta el vehiculo", "Elige que necesitas: carrera o trasteo"); return; }
+    // en trasteos, si eligio "programar" pero no completo dia y hora, se avisa
+    if (esCarga(vehiculo) && programar && !recogidaISO) {
+      avisar("Falta la hora", "Elige el dia y la hora de recogida, o toca 'Lo antes posible'."); return;
+    }
     if (!oferta.trim()) { avisar("Falta tu oferta", "Escribe cuanto ofreces pagar"); return; }
     setCargando(true);
     const datos = {
@@ -1804,6 +1857,7 @@ function PedirCarreraScreen({ navigation, route }) {
     if (destinoCoords) { datos.destino_lat = destinoCoords.lat; datos.destino_lon = destinoCoords.lon; }
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
+    if (recogidaISO) datos.recogida = recogidaISO;
     fetchReintento(`${API}/carreras?${qs(datos)}`, { method: "POST" })
       .then(async (r) => {
         setCargando(false);
@@ -1812,6 +1866,7 @@ function PedirCarreraScreen({ navigation, route }) {
         if (!d || !d.id) { avisar("Error", "Respuesta inesperada del servidor."); return; }
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
         setOrigenCoords(null); setDestinoCoords(null); setEstimado(null); setOferta("");
+        setProgramar(false); setProgDia(null); setProgHora(null);
         setCarrera(d);
       })
       .catch(() => { setCargando(false); avisar("Sin conexion", "No pudimos enviar tu carrera. Verifica tu internet e intenta de nuevo."); });
@@ -1984,6 +2039,18 @@ function PedirCarreraScreen({ navigation, route }) {
           )}
 
           <View style={styles.card}>
+            {(esCarga(carrera.vehiculo_pedido) || carrera.recogida) && (
+              <View style={{ marginBottom: 10, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: "#444" }}>
+                  {vehIcono(carrera.vehiculo_pedido)} {vehLabel(carrera.vehiculo_pedido)}
+                </Text>
+                {carrera.recogida && (
+                  <View style={{ backgroundColor: "#FFF7E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                    <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>⏰ Recogida: {fmtRecogida(carrera.recogida)}</Text>
+                  </View>
+                )}
+              </View>
+            )}
             <Text style={styles.etiqueta}>DESDE</Text>
             <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{carrera.origen}</Text>
             {carrera.origen_detalle ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{carrera.origen_detalle}</Text> : null}
@@ -2113,6 +2180,66 @@ function PedirCarreraScreen({ navigation, route }) {
                     </TouchableOpacity>
                   ))}
                 </View>
+              </>
+            )}
+          </View>
+        )}
+
+        {/* 2b. AGENDAR: solo en trasteos/carga se puede programar la recogida */}
+        {muni && esCarga(vehiculo) && (
+          <View style={styles.card}>
+            <Text style={styles.etiqueta}>PARA CUANDO</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TouchableOpacity
+                style={[styles.opcion, !programar && styles.opcionActiva]}
+                onPress={() => setProgramar(false)}
+              >
+                <Text style={[styles.opcionTexto, !programar && styles.opcionTextoActivo]}>Lo antes posible</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.opcion, programar && styles.opcionActiva]}
+                onPress={() => setProgramar(true)}
+              >
+                <Text style={[styles.opcionTexto, programar && styles.opcionTextoActivo]}>Programar</Text>
+              </TouchableOpacity>
+            </View>
+            {programar && (
+              <>
+                <Text style={[styles.ayuda, { marginTop: 12 }]}>Dia</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
+                    {diasProximos().map((x) => {
+                      const act = progDia && progDia.toDateString() === x.d.toDateString();
+                      return (
+                        <TouchableOpacity key={x.key} onPress={() => setProgDia(x.d)}
+                          style={[styles.chip, act && styles.chipOn]}>
+                          <Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+                <Text style={[styles.ayuda, { marginTop: 8 }]}>Hora</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
+                    {horasDelDia().map((x) => {
+                      const act = progHora && progHora.h === x.h && progHora.m === x.m;
+                      return (
+                        <TouchableOpacity key={x.lbl} onPress={() => setProgHora({ h: x.h, m: x.m })}
+                          style={[styles.chip, act && styles.chipOn]}>
+                          <Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+                {recogidaISO ? (
+                  <View style={{ marginTop: 12, backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10 }}>
+                    <Text style={{ color: "#187830", fontWeight: "700", fontSize: 14 }}>⏰ Recogida: {fmtRecogida(recogidaISO)}</Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.ayuda, { marginTop: 10 }]}>Elige el dia y la hora</Text>
+                )}
               </>
             )}
           </View>
@@ -2372,6 +2499,19 @@ function ConductorScreen({ navigation, route }) {
           <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
         ) : null}
       </View>
+
+      {/* tipo de vehiculo pedido (util sobre todo en trasteos) */}
+      <Text style={{ fontSize: 14, fontWeight: "700", color: "#444", marginTop: 6 }}>
+        {vehIcono(c.vehiculo_pedido)} {vehLabel(c.vehiculo_pedido)}
+        {esCarga(c.vehiculo_pedido) ? "  ·  trasteo" : ""}
+      </Text>
+
+      {/* hora agendada de recogida (solo trasteos que la programaron) */}
+      {c.recogida && (
+        <View style={{ backgroundColor: "#FFF7E6", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 8, alignSelf: "flex-start", marginTop: 6 }}>
+          <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>⏰ Recogida: {fmtRecogida(c.recogida)}</Text>
+        </View>
+      )}
 
       {/* ruta compacta origen -> destino */}
       <Text style={{ fontSize: 14, color: "#333", marginTop: 6 }} numberOfLines={1}>
@@ -3226,6 +3366,11 @@ const styles = StyleSheet.create({
   opcionActiva: { backgroundColor: "#E7F3E9", borderColor: "#187830" },
   opcionTexto: { fontSize: 13, color: "#888" },
   opcionTextoActivo: { color: "#187830", fontWeight: "600" },
+  // chips de ancho automatico para el scroll horizontal de dia/hora
+  chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: "#ddd", backgroundColor: "#fff" },
+  chipOn: { backgroundColor: "#187830", borderColor: "#187830" },
+  chipTxt: { fontSize: 13, color: "#555" },
+  chipTxtOn: { color: "#fff", fontWeight: "700" },
   fondoModal: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
   ventanaModal: { backgroundColor: "#fff", borderRadius: 16, padding: 20 },
   restauranteCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
