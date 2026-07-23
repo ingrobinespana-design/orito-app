@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tukán",
     "slug": "movil2",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,15 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.darwine.movil2",
-      "permissions": ["POST_NOTIFICATIONS", "VIBRATE", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "VIBRATE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -37,7 +45,9 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Orito usa tu ubicacion para marcar de donde sales y calcular la tarifa."
+          "locationAlwaysAndWhenInUsePermission": "Tukán usa tu ubicacion para marcar de donde sales, calcular la tarifa y que el cliente vea venir su transporte.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ]
     ],

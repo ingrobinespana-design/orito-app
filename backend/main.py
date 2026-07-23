@@ -1222,13 +1222,18 @@ def obtener_conductores(db: Session = Depends(get_db)):
 @app.put("/conductores/{conductor_id}/ubicacion")
 def reportar_ubicacion(conductor_id: int, lat: float, lon: float, db: Session = Depends(get_db)):
     """El conductor reporta donde va (cada pocos segundos mientras tiene carrera
-    activa y la app abierta). El cliente lo ve venir en el mapa."""
+    activa, incluso con la app en segundo plano). El cliente lo ve venir en el
+    mapa. La respuesta avisa si aun tiene carrera activa: cuando ya no, el
+    servicio de rastreo del telefono se apaga solo y no gasta bateria."""
     u = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
     if not u:
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     u.ubic_lat, u.ubic_lon, u.ubic_fecha = lat, lon, datetime.now()
     db.commit()
-    return {"ok": True}
+    activa = db.query(Carrera).filter(
+        Carrera.conductor_id == conductor_id,
+        Carrera.estado.in_(["aceptada", "en_camino"])).first() is not None
+    return {"ok": True, "carrera_activa": activa}
 
 @app.get("/conductores/{conductor_id}/estado-cuenta")
 def estado_cuenta(conductor_id: int, db: Session = Depends(get_db)):

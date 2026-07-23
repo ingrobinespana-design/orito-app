@@ -7,6 +7,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { WebView } from 'react-native-webview';
 import * as Updates from 'expo-updates';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +16,61 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
+
+// ===== rastreo en SEGUNDO PLANO del conductor con carrera activa =====
+// Un servicio de Android (notificacion fija "carrera en curso") sigue enviando
+// la ubicacion aunque el conductor cierre Tukan, bloquee el telefono o navegue
+// con Google Maps: el cliente lo ve venir en tiempo real pase lo que pase.
+const TAREA_UBICACION = "tukan-ubicacion-carrera";
+let conductorRastreado = null;   // id del conductor; lo fija ConductorScreen
+
+try {
+  TaskManager.defineTask(TAREA_UBICACION, ({ data, error }) => {
+    if (error || !conductorRastreado) return;
+    const locs = data && data.locations;
+    if (!locs || !locs.length) return;
+    const p = locs[locs.length - 1].coords;
+    fetch(`${API}/conductores/${conductorRastreado}/ubicacion?lat=${p.latitude}&lon=${p.longitude}`,
+      { method: "PUT" })
+      .then((r) => r.json())
+      .then((d) => {
+        // la carrera termino (o el cliente cancelo) con la app en segundo plano:
+        // el servicio se apaga solo para no gastar bateria
+        if (d && d.carrera_activa === false) detenerRastreoFondo();
+      })
+      .catch(() => {});
+  });
+} catch (e) {}   // en web no existe TaskManager y no hace falta
+
+async function iniciarRastreoFondo(conductorId) {
+  try {
+    conductorRastreado = conductorId;
+    if (Platform.OS === "web") return false;
+    const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
+    if (ya) return true;
+    // el permiso "todo el tiempo" es lo ideal; si no lo dan, el servicio en
+    // primer plano igual funciona en la mayoria de Androids modernos
+    await Location.requestBackgroundPermissionsAsync().catch(() => {});
+    await Location.startLocationUpdatesAsync(TAREA_UBICACION, {
+      accuracy: Location.Accuracy.Balanced,
+      timeInterval: 8000,          // cada ~8s
+      distanceInterval: 20,        // o cada ~20m, lo que pase primero
+      foregroundService: {
+        notificationTitle: "Tukán — carrera en curso",
+        notificationBody: "Compartiendo tu ubicacion para que el cliente te vea venir",
+        notificationColor: "#187830",
+      },
+    });
+    return true;
+  } catch (e) { return false; }   // sin permiso: sigue el reporte con app abierta
+}
+
+async function detenerRastreoFondo() {
+  try {
+    const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
+    if (ya) await Location.stopLocationUpdatesAsync(TAREA_UBICACION);
+  } catch (e) {}
+}
 
 // animaciones de layout suaves (aparecer/desaparecer solicitudes) en Android
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -2040,6 +2096,24 @@ function ConductorScreen({ navigation, route }) {
   const [tab, setTab] = useState("solicitudes");
   const [miUbic, setMiUbic] = useState(null);   // ubicacion del conductor, para calcular distancia a cada carrera
   const [rutaCond, setRutaCond] = useState(null);   // {km, min} de su ruta por calles
+  const [permisoFondo, setPermisoFondo] = useState(true);   // "todo el tiempo": para transmitir con la app cerrada
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    Location.getBackgroundPermissionsAsync()
+      .then((p) => setPermisoFondo(p.status === "granted"))
+      .catch(() => {});
+  }, []);
+
+  const pedirPermisoFondo = async () => {
+    try {
+      const p = await Location.requestBackgroundPermissionsAsync();
+      if (p.status === "granted") { setPermisoFondo(true); return; }
+      // Android moderno manda a Ajustes: se le explica que debe elegir alli
+      avisar("Un paso mas", 'En la pantalla que se abre, entra a "Permisos" > "Ubicacion" y elige "Permitir todo el tiempo".');
+      Linking.openSettings().catch(() => {});
+    } catch (e) {}
+  };
 
   // ubicacion del conductor una vez, para mostrar "a X km" de cada solicitud
   useEffect(() => {
@@ -2085,11 +2159,13 @@ function ConductorScreen({ navigation, route }) {
     fetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
   };
 
-  // mientras tiene carrera activa, reporta su ubicacion cada 8s para que el
-  // cliente lo vea venir en el mapa (solo con la app abierta; asi cuida bateria)
+  // mientras tiene carrera activa: el servicio en SEGUNDO PLANO transmite la
+  // ubicacion (aunque cierre la app o navegue con Google Maps) y ademas, con la
+  // app abierta, un refresco cada 8s alimenta su propio mapa en pantalla
   const tieneCarreraActiva = mias.length > 0;
   useEffect(() => {
-    if (!tieneCarreraActiva) return;
+    if (!tieneCarreraActiva) { detenerRastreoFondo(); return; }
+    iniciarRastreoFondo(usuario.id);
     let vivo = true;
     const reportar = async () => {
       try {
@@ -2273,6 +2349,17 @@ function ConductorScreen({ navigation, route }) {
         {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
         {tab === "solicitudes" && (
           <>
+            {!permisoFondo && Platform.OS !== "web" && (
+              <TouchableOpacity
+                style={[styles.card, { backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D", marginBottom: 12 }]}
+                onPress={pedirPermisoFondo}>
+                <Text style={{ fontWeight: "700", color: "#8A5A00", fontSize: 14 }}>🛰️ Activa "Ubicacion todo el tiempo"</Text>
+                <Text style={{ fontSize: 12, color: "#8A5A00", marginTop: 4 }}>
+                  Para que el cliente te vea venir en el mapa aunque tengas Tukán cerrada o
+                  estes navegando con Google Maps. Toca aqui y elige "Permitir todo el tiempo".
+                </Text>
+              </TouchableOpacity>
+            )}
             {mias.length > 0 && (
               <>
                 <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
@@ -2398,7 +2485,7 @@ function ConductorScreen({ navigation, route }) {
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
           <TouchableOpacity key={k} style={styles.tabBarItem}
-            onPress={() => k === "salir" ? navigation.replace("Login") : (animar(), setTab(k))}>
+            onPress={() => k === "salir" ? (detenerRastreoFondo(), navigation.replace("Login")) : (animar(), setTab(k))}>
             <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
             <Text style={{ fontSize: 11, marginTop: 2, color: tab === k ? "#187830" : "#999", fontWeight: tab === k ? "700" : "400" }}>{lbl}</Text>
           </TouchableOpacity>
