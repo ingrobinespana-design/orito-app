@@ -1537,12 +1537,28 @@ function PedirCarreraScreen({ navigation, route }) {
     return muni && muni.centro_lat ? { lat: muni.centro_lat, lon: muni.centro_lon } : null;
   };
 
+  // convierte el pin en un nombre real: sitio conocido cercano ("Gimnasio X")
+  // o la nomenclatura ("Carrera 5 # 4-20"). Solo pisa la etiqueta generica.
+  const esGenerico = (t) => !t.trim() || t.includes("Punto marcado") || t.includes("Mi ubicacion actual") || t.startsWith("📍") || t.startsWith("🏁");
+  const nombrarPunto = (coords, cual) => {
+    const p = qs({ lat: coords.lat, lon: coords.lon, municipio: muni ? muni.nombre : null });
+    fetch(`${API}/ubicacion/direccion?${p}`).then(r => r.json()).then(d => {
+      if (!d || !d.nombre) return;
+      setForm(f => {
+        const actual = cual === "origen" ? f.origen : f.destino;
+        if (!esGenerico(actual)) return f;   // lo que escribio la persona manda
+        return cual === "origen" ? { ...f, origen: `📍 ${d.nombre}` } : { ...f, destino: `🏁 ${d.nombre}` };
+      });
+    }).catch(() => {});
+  };
+
   const confirmarPunto = (coords) => {
     // marcar en el mapa ya deja el punto listo; si no habia texto, se pone una
     // etiqueta para que el conductor tenga referencia y no quede vacio
     if (mapaAbierto === "origen") {
       setOrigenCoords(coords);
       if (!form.origen.trim()) setForm(f => ({ ...f, origen: "📍 Punto marcado en el mapa" }));
+      nombrarPunto(coords, "origen");
       // aviso de cordura: marcaste un origen lejisimos de donde estas parado
       if (gpsRapido) {
         const lejos = kmEntre(coords, gpsRapido);
@@ -1553,6 +1569,7 @@ function PedirCarreraScreen({ navigation, route }) {
     } else if (mapaAbierto === "destino") {
       setDestinoCoords(coords);
       if (!form.destino.trim()) setForm(f => ({ ...f, destino: "🏁 Punto marcado en el mapa" }));
+      nombrarPunto(coords, "destino");
     }
     setMapaAbierto(null);
   };
@@ -1568,8 +1585,10 @@ function PedirCarreraScreen({ navigation, route }) {
         return;
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      setOrigenCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      const coords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      setOrigenCoords(coords);
       if (!form.origen.trim()) setForm(f => ({ ...f, origen: "📍 Mi ubicacion actual" }));
+      nombrarPunto(coords, "origen");
     } catch (e) {
       avisar("GPS", "No pudimos tomar tu ubicacion. Marca el punto en el mapa.");
     } finally { setBuscandoGps(false); }

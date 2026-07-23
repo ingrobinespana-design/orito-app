@@ -207,6 +207,47 @@ def municipio_por_ubicacion(lat: float, lon: float, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="No pudimos ubicar tu municipio. Selecciónalo manualmente.")
     return municipio_dict(mejor, db)
 
+@app.get("/ubicacion/direccion")
+def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Session = Depends(get_db)):
+    """Nombre legible para un pin del mapa: primero un sitio conocido de nuestra
+    base a <=120m (ej. 'Gimnasio X'); si no, la nomenclatura via Nominatim
+    (OpenStreetMap, gratis). Si nada responde, la app deja su etiqueta generica."""
+    q = db.query(Lugar).filter(Lugar.activo == "si", Lugar.lat.isnot(None))
+    if municipio:
+        q = q.filter(Lugar.municipio == municipio)
+    mejor, mejor_km = None, None
+    for l in q.all():
+        km = tarifas.distancia_km(lat, lon, l.lat, l.lon)
+        if km is not None and (mejor_km is None or km < mejor_km):
+            mejor, mejor_km = l, km
+    if mejor and mejor_km is not None and mejor_km <= 0.12:
+        return {"nombre": mejor.nombre, "fuente": "lugar"}
+    try:
+        import urllib.request as _ur, json as _json
+        url = (f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}"
+               f"&format=jsonv2&zoom=18&accept-language=es")
+        req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
+        with _ur.urlopen(req, timeout=5) as r:
+            d = _json.loads(r.read().decode("utf-8"))
+        a = d.get("address", {})
+        nombre = (d.get("name") or "").strip()
+        via = a.get("road") or ""
+        numero = a.get("house_number") or ""
+        barrio = a.get("neighbourhood") or a.get("suburb") or ""
+        partes = []
+        if nombre:
+            partes.append(nombre)
+        elif via:
+            partes.append(f"{via} # {numero}" if numero else via)
+        if barrio and barrio not in partes:
+            partes.append(barrio)
+        etiqueta = ", ".join(partes[:2]).strip()
+        if etiqueta:
+            return {"nombre": etiqueta, "fuente": "direccion"}
+    except Exception:
+        pass
+    return {"nombre": None, "fuente": None}
+
 @app.get("/municipios")
 def obtener_municipios(db: Session = Depends(get_db)):
     """La app arma con esto las opciones del registro: en Orito no debe
