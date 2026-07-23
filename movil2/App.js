@@ -379,18 +379,18 @@ function LoginScreen({ navigation }) {
               <Text style={styles.etiqueta}>COMO TE REGISTRAS</Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
                 <TouchableOpacity
-                  style={[styles.opcion, form.comoMe === "cliente" && styles.opcionActiva]}
+                  style={[styles.chip, form.comoMe === "cliente" && styles.chipOn]}
                   onPress={() => setForm({ ...form, comoMe: "cliente" })}
                 >
-                  <Text style={[styles.opcionTexto, form.comoMe === "cliente" && styles.opcionTextoActivo]}>Cliente</Text>
+                  <Text style={[styles.chipTxt, form.comoMe === "cliente" && styles.chipTxtOn]}>Cliente</Text>
                 </TouchableOpacity>
                 {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => (
                   <TouchableOpacity
                     key={v}
-                    style={[styles.opcion, form.comoMe === v && styles.opcionActiva]}
+                    style={[styles.chip, form.comoMe === v && styles.chipOn]}
                     onPress={() => setForm({ ...form, comoMe: v })}
                   >
-                    <Text style={[styles.opcionTexto, form.comoMe === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                    <Text style={[styles.chipTxt, form.comoMe === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -401,10 +401,10 @@ function LoginScreen({ navigation }) {
                     {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
                       <TouchableOpacity
                         key={v}
-                        style={[styles.opcion, form.comoMe === v && styles.opcionActiva]}
+                        style={[styles.chip, form.comoMe === v && styles.chipOn]}
                         onPress={() => setForm({ ...form, comoMe: v })}
                       >
-                        <Text style={[styles.opcionTexto, form.comoMe === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                        <Text style={[styles.chipTxt, form.comoMe === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -2156,10 +2156,10 @@ function PedirCarreraScreen({ navigation, route }) {
                   {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => (
                     <TouchableOpacity
                       key={v}
-                      style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
+                      style={[styles.chip, vehiculo === v && styles.chipOn]}
                       onPress={() => setVehiculo(v)}
                     >
-                      <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                      <Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -2173,10 +2173,10 @@ function PedirCarreraScreen({ navigation, route }) {
                   {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
                     <TouchableOpacity
                       key={v}
-                      style={[styles.opcion, vehiculo === v && styles.opcionActiva]}
+                      style={[styles.chip, vehiculo === v && styles.chipOn]}
                       onPress={() => setVehiculo(v)}
                     >
-                      <Text style={[styles.opcionTexto, vehiculo === v && styles.opcionTextoActivo]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                      <Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -2185,10 +2185,20 @@ function PedirCarreraScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* 2b. AGENDAR: solo en trasteos/carga se puede programar la recogida */}
+        {/* 2b. TRASTEO: descripcion de la carga + hora de recogida (solo carga) */}
         {muni && esCarga(vehiculo) && (
           <View style={styles.card}>
-            <Text style={styles.etiqueta}>PARA CUANDO</Text>
+            <Text style={styles.etiqueta}>DESCRIPCION DE LA CARGA</Text>
+            <TextInput
+              value={form.notas}
+              onChangeText={(t) => setForm({ ...form, notas: t })}
+              placeholder="Ej: dos neveras, una lavadora y varias cajas"
+              style={[styles.input, { minHeight: 60 }]}
+              multiline
+            />
+            <Text style={[styles.ayuda, { marginTop: -2 }]}>Asi el transportador sabe que va a mover y con que ayuda</Text>
+
+            <Text style={[styles.etiqueta, { marginTop: 8 }]}>PARA CUANDO</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <TouchableOpacity
                 style={[styles.opcion, !programar && styles.opcionActiva]}
@@ -2269,12 +2279,15 @@ function PedirCarreraScreen({ navigation, route }) {
             style={styles.input}
             multiline
           />
-          <TextInput
-            value={form.notas}
-            onChangeText={(t) => setForm({ ...form, notas: t })}
-            placeholder="Algo mas que deba saber? (opcional)"
-            style={styles.input}
-          />
+          {/* en carga la descripcion va arriba; aqui solo para carreras de personas */}
+          {!esCarga(vehiculo) && (
+            <TextInput
+              value={form.notas}
+              onChangeText={(t) => setForm({ ...form, notas: t })}
+              placeholder="Algo mas que deba saber? (opcional)"
+              style={styles.input}
+            />
+          )}
         </View>
 
         {/* 4. OFERTA */}
