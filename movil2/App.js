@@ -2124,18 +2124,26 @@ function PedirCarreraScreen({ navigation, route }) {
           )}
 
           <View style={styles.card}>
-            {(esCarga(carrera.vehiculo_pedido) || carrera.recogida) && (
-              <View style={{ marginBottom: 10, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontSize: 14, fontWeight: "700", color: "#444" }}>
-                  {vehIcono(carrera.vehiculo_pedido)} {vehLabel(carrera.vehiculo_pedido)}
-                </Text>
-                {carrera.recogida && (
-                  <View style={{ backgroundColor: "#FFF7E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
-                    <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>⏰ Recogida: {fmtRecogida(carrera.recogida)}</Text>
-                  </View>
-                )}
-              </View>
-            )}
+            {/* el cliente tambien ve el recorrido y, si va en camino, lo que falta */}
+            <View style={{ marginBottom: 10, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+              <Text style={{ fontSize: 14, fontWeight: "700", color: "#444" }}>
+                {vehIcono(carrera.vehiculo_pedido)} {vehLabel(carrera.vehiculo_pedido)}
+              </Text>
+              {carrera.distancia_km != null && (
+                <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                  <Text style={{ fontSize: 13, color: "#B85C00", fontWeight: "700" }}>
+                    🛣️ Recorrido ~{carrera.distancia_km < 1
+                      ? `${Math.round(carrera.distancia_km * 1000)} m`
+                      : `${carrera.distancia_km.toFixed(1)} km`}
+                  </Text>
+                </View>
+              )}
+              {carrera.recogida && (
+                <View style={{ backgroundColor: "#FFF7E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                  <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>⏰ Recogida: {fmtRecogida(carrera.recogida)}</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.etiqueta}>DESDE</Text>
             <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{carrera.origen}</Text>
             {carrera.origen_detalle ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{carrera.origen_detalle}</Text> : null}
@@ -2631,12 +2639,15 @@ function ConductorScreen({ navigation, route }) {
         🔴 {c.destino}
       </Text>
 
-      {/* las dos distancias, bien visibles antes de aceptar */}
-      {!propia && (kmAlOrigen != null || kmViaje != null) && (
+      {/* las dos distancias: antes de aceptar para decidir, y DESPUES tambien
+          mientras hace el servicio (no desaparecen al tomar la carrera) */}
+      {(kmAlOrigen != null || kmViaje != null) && (
         <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
           {kmAlOrigen != null && (
             <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
-              <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>📍 A ~{fmtKm(kmAlOrigen)} de ti</Text>
+              <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>
+                📍 {propia ? "Recogida a" : "A"} ~{fmtKm(kmAlOrigen)} de ti
+              </Text>
             </View>
           )}
           {kmViaje != null && (
