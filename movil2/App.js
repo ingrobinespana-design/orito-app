@@ -287,7 +287,9 @@ async function registrarNotificaciones(usuarioId) {
 
 function LoginScreen({ navigation }) {
   const [modo, setModo] = useState("login");
-  const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "Orito", comoMe: "cliente", placa: "" });
+  // categoria: que va a hacer -> "cliente" | "carreras" (personas) | "acarreos" (carga)
+  // comoMe: el vehiculo exacto (o "cliente"). Se elige en 2 pasos.
+  const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "Orito", categoria: "cliente", comoMe: "cliente", placa: "" });
   const [municipios, setMunicipios] = useState([]);
   const [cargandoMun, setCargandoMun] = useState(true);
 
@@ -302,17 +304,34 @@ function LoginScreen({ navigation }) {
 
   // en Orito no hay mototaxi: la opcion de moto ni siquiera se muestra alla
   const vehiculosAqui = (municipios.find(m => m.nombre === form.municipio) || {}).vehiculos || ["carro"];
+  const personasAqui = ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v));
+  const cargaAqui = ordenVehiculos(vehiculosAqui).filter(esCarga);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
+  // paso 1 del registro: elegir que va a hacer. Si en la categoria solo hay un
+  // vehiculo posible (ej. Orito carreras = solo carro), se selecciona solo.
+  const elegirCategoria = (cat) => {
+    if (cat === "cliente") { setForm((f) => ({ ...f, categoria: "cliente", comoMe: "cliente" })); return; }
+    const lista = cat === "carreras" ? personasAqui : cargaAqui;
+    setForm((f) => ({ ...f, categoria: cat, comoMe: lista.length === 1 ? lista[0] : "" }));
+  };
+
   const handleSubmit = () => {
+    // si eligio ser conductor/acarreador, tiene que decir con que vehiculo
+    if (modo === "registro" && form.categoria !== "cliente" && !form.comoMe) {
+      setError(form.categoria === "carreras"
+        ? "Elige si haras carreras en moto o carro"
+        : "Elige el vehiculo de carga con el que trabajaras");
+      return;
+    }
     setCargando(true);
     setError("");
     const url = modo === "login"
       ? `${API}/login?telefono=${form.telefono}&password=${form.password}`
       : `${API}/registro?nombre=${form.nombre}&telefono=${form.telefono}&password=${form.password}`
         + `&municipio=${encodeURIComponent(form.municipio)}`
-        + (form.comoMe === "cliente" ? "" :
+        + (form.comoMe === "cliente" || !form.comoMe ? "" :
            `&tipo_vehiculo=${form.comoMe}&placa=${encodeURIComponent(form.placa)}`);
     fetchReintento(url, { method: "POST" })
       .then((res) => res.json())
@@ -365,9 +384,9 @@ function LoginScreen({ navigation }) {
                       key={m.nombre}
                       style={[styles.opcion, form.municipio === m.nombre && styles.opcionActiva]}
                       onPress={() => {
-                        // si venia con moto elegida y en el nuevo pueblo no hay, se limpia
+                        // al cambiar de pueblo, si el vehiculo elegido no existe alla, se limpia
                         const permite = (m.vehiculos || []).includes(form.comoMe);
-                        setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : "cliente" });
+                        setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : (form.categoria === "cliente" ? "cliente" : "") });
                       }}
                     >
                       <Text style={[styles.opcionTexto, form.municipio === m.nombre && styles.opcionTextoActivo]}>{m.nombre}</Text>
@@ -376,41 +395,75 @@ function LoginScreen({ navigation }) {
                 </View>
               )}
 
-              <Text style={styles.etiqueta}>COMO TE REGISTRAS</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+              {/* PASO 1: que va a hacer */}
+              <Text style={styles.etiqueta}>QUE VAS A HACER</Text>
+              <View style={{ gap: 8, marginBottom: 12 }}>
                 <TouchableOpacity
-                  style={[styles.chip, form.comoMe === "cliente" && styles.chipOn]}
-                  onPress={() => setForm({ ...form, comoMe: "cliente" })}
+                  style={[styles.catBoton, form.categoria === "cliente" && styles.catBotonOn]}
+                  onPress={() => elegirCategoria("cliente")}
                 >
-                  <Text style={[styles.chipTxt, form.comoMe === "cliente" && styles.chipTxtOn]}>Cliente</Text>
+                  <Text style={styles.catEmoji}>🧍</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.catTitulo, form.categoria === "cliente" && styles.catTituloOn]}>Soy cliente</Text>
+                    <Text style={styles.catSub}>Quiero pedir carreras o acarreos</Text>
+                  </View>
                 </TouchableOpacity>
-                {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => (
+                {personasAqui.length > 0 && (
                   <TouchableOpacity
-                    key={v}
-                    style={[styles.chip, form.comoMe === v && styles.chipOn]}
-                    onPress={() => setForm({ ...form, comoMe: v })}
+                    style={[styles.catBoton, form.categoria === "carreras" && styles.catBotonOn]}
+                    onPress={() => elegirCategoria("carreras")}
                   >
-                    <Text style={[styles.chipTxt, form.comoMe === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                    <Text style={styles.catEmoji}>🚗</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.catTitulo, form.categoria === "carreras" && styles.catTituloOn]}>Hago carreras</Text>
+                      <Text style={styles.catSub}>Llevo personas en {personasAqui.map(vehLabel).join(" o ").toLowerCase()}</Text>
+                    </View>
                   </TouchableOpacity>
-                ))}
+                )}
+                {cargaAqui.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.catBoton, form.categoria === "acarreos" && styles.catBotonOn]}
+                    onPress={() => elegirCategoria("acarreos")}
+                  >
+                    <Text style={styles.catEmoji}>🚚</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.catTitulo, form.categoria === "acarreos" && styles.catTituloOn]}>Hago acarreos</Text>
+                      <Text style={styles.catSub}>Trasteos, mudanzas y carga</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
               </View>
-              {ordenVehiculos(vehiculosAqui).some(esCarga) && (
+
+              {/* PASO 2: el vehiculo exacto de esa categoria */}
+              {form.categoria === "carreras" && (
                 <>
-                  <Text style={[styles.ayuda, { marginBottom: 6 }]}>🚚 Trasteos y acarreos (carga)</Text>
+                  <Text style={styles.etiqueta}>TU VEHICULO</Text>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-                    {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
-                      <TouchableOpacity
-                        key={v}
+                    {personasAqui.map((v) => (
+                      <TouchableOpacity key={v}
                         style={[styles.chip, form.comoMe === v && styles.chipOn]}
-                        onPress={() => setForm({ ...form, comoMe: v })}
-                      >
+                        onPress={() => setForm({ ...form, comoMe: v })}>
                         <Text style={[styles.chipTxt, form.comoMe === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </>
               )}
-              {form.comoMe !== "cliente" && (
+              {form.categoria === "acarreos" && (
+                <>
+                  <Text style={styles.etiqueta}>TU VEHICULO DE CARGA</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    {cargaAqui.map((v) => (
+                      <TouchableOpacity key={v}
+                        style={[styles.chip, form.comoMe === v && styles.chipOn]}
+                        onPress={() => setForm({ ...form, comoMe: v })}>
+                        <Text style={[styles.chipTxt, form.comoMe === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              {form.categoria !== "cliente" && form.comoMe ? (
                 <>
                   <TextInput
                     placeholder="Placa de tu vehiculo"
@@ -421,7 +474,7 @@ function LoginScreen({ navigation }) {
                   />
                   <Text style={styles.ayuda}>El cliente ve tu placa para reconocerte</Text>
                 </>
-              )}
+              ) : null}
             </>
           )}
           <TextInput placeholder="Telefono" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
@@ -3384,6 +3437,13 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: "#187830", borderColor: "#187830" },
   chipTxt: { fontSize: 13, color: "#555" },
   chipTxtOn: { color: "#fff", fontWeight: "700" },
+  // tarjetas de categoria del registro (cliente / carreras / acarreos)
+  catBoton: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12, backgroundColor: "#fff" },
+  catBotonOn: { borderColor: "#187830", backgroundColor: "#EAF6EC", borderWidth: 2 },
+  catEmoji: { fontSize: 26 },
+  catTitulo: { fontSize: 15, fontWeight: "700", color: "#333" },
+  catTituloOn: { color: "#187830" },
+  catSub: { fontSize: 12, color: "#888", marginTop: 1 },
   fondoModal: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
   ventanaModal: { backgroundColor: "#fff", borderRadius: 16, padding: 20 },
   restauranteCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
