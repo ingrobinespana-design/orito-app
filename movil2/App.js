@@ -1481,9 +1481,24 @@ function PedirCarreraScreen({ navigation, route }) {
       }).catch(() => {});
   }, [origenCoords, destinoCoords, muni, vehiculo]);
 
+  // el mapa de marcar abre DONDE ESTAS (GPS), como Uber; si no hay GPS, en el
+  // centro del pueblo. Asi el pin queda cerca tuyo y las distancias son reales.
+  const [gpsRapido, setGpsRapido] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await Location.getForegroundPermissionsAsync();
+        if (p.status !== "granted") return;
+        const pos = await Location.getLastKnownPositionAsync();
+        if (pos) setGpsRapido({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      } catch (e) {}
+    })();
+  }, []);
+
   const centroMapa = (punto) => {
     if (punto === "origen" && origenCoords) return origenCoords;
     if (punto === "destino" && destinoCoords) return destinoCoords;
+    if (gpsRapido) return gpsRapido;
     return muni && muni.centro_lat ? { lat: muni.centro_lat, lon: muni.centro_lon } : null;
   };
 
@@ -1493,6 +1508,13 @@ function PedirCarreraScreen({ navigation, route }) {
     if (mapaAbierto === "origen") {
       setOrigenCoords(coords);
       if (!form.origen.trim()) setForm(f => ({ ...f, origen: "📍 Punto marcado en el mapa" }));
+      // aviso de cordura: marcaste un origen lejisimos de donde estas parado
+      if (gpsRapido) {
+        const lejos = kmEntre(coords, gpsRapido);
+        if (lejos != null && lejos > 30) {
+          avisar("Punto muy lejano", `Marcaste el origen a ~${Math.round(lejos)} km de donde estas. Si es un error, vuelve a abrir el mapa y usa "Usar mi ubicacion".`);
+        }
+      }
     } else if (mapaAbierto === "destino") {
       setDestinoCoords(coords);
       if (!form.destino.trim()) setForm(f => ({ ...f, destino: "🏁 Punto marcado en el mapa" }));
