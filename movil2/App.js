@@ -1737,6 +1737,10 @@ function PedirCarreraScreen({ navigation, route }) {
   const [contraofertas, setContraofertas] = useState([]);
   const [rutaInfo, setRutaInfo] = useState(null);    // {km, min} reales por calle (OSRM)
   const [cargando, setCargando] = useState(false);
+  // solicitudes activas del cliente y si esta mirando el formulario en vez del
+  // seguimiento: un acarreo puede quedar horas esperando y no debe dejarlo preso
+  const [activas, setActivas] = useState([]);
+  const [verForm, setVerForm] = useState(false);
   // agendar recogida (solo trasteos): "lo antes posible" (default) o dia+hora
   const [programar, setProgramar] = useState(false);
   const [progDia, setProgDia] = useState(null);
@@ -1870,7 +1874,10 @@ function PedirCarreraScreen({ navigation, route }) {
       .then(r => r.json())
       .then(d => {
         if (!Array.isArray(d)) return;
-        setCarrera(d.find(c => ["buscando", "aceptada", "en_camino"].includes(c.estado)) || null);
+        const act = d.filter(c => ["buscando", "aceptada", "en_camino"].includes(c.estado));
+        setActivas(act);
+        // se conserva la que se esta mirando; si ya termino, pasa a la siguiente
+        setCarrera(prev => (prev && act.find(c => c.id === prev.id)) || act[0] || null);
       })
       .catch(() => {});
   };
@@ -1920,7 +1927,7 @@ function PedirCarreraScreen({ navigation, route }) {
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
         setOrigenCoords(null); setDestinoCoords(null); setEstimado(null); setOferta("");
         setProgramar(false); setProgDia(null); setProgHora(null);
-        setCarrera(d);
+        setCarrera(d); setVerForm(false);   // muestra el seguimiento de la recien pedida
       })
       .catch(() => { setCargando(false); avisar("Sin conexion", "No pudimos enviar tu carrera. Verifica tu internet e intenta de nuevo."); });
   };
@@ -1952,8 +1959,9 @@ function PedirCarreraScreen({ navigation, route }) {
       "Aceptar");
   };
 
-  // --- ya tiene una carrera en curso: se le hace seguimiento
-  if (carrera) {
+  // --- ya tiene una solicitud en curso: se le hace seguimiento (salvo que haya
+  //     tocado "pedir otro servicio" y este mirando el formulario)
+  if (carrera && !verForm) {
     const buscando = carrera.estado === "buscando";
     const tituloEstado = {
       buscando: "Buscando transportador...",
@@ -1985,6 +1993,19 @@ function PedirCarreraScreen({ navigation, route }) {
         )}
 
         <ScrollView contentContainerStyle={{ padding: 16 }}>
+          {/* si tiene varias solicitudes abiertas, puede saltar entre ellas */}
+          {activas.length > 1 && (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {activas.map((a) => (
+                <TouchableOpacity key={a.id} onPress={() => { setCarrera(a); setRutaInfo(null); }}
+                  style={[styles.chip, carrera.id === a.id && styles.chipOn]}>
+                  <Text style={[styles.chipTxt, carrera.id === a.id && styles.chipTxtOn]}>
+                    {vehIcono(a.vehiculo_pedido)} #{a.id}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
           {!buscando && (
             <View style={styles.pasos}>
               {[["aceptada", "✓ Aceptada"], ["en_camino", "🚗 En camino"], ["finalizada", "🏁 Fin"]].map(([est, lbl], i) => {
@@ -2019,9 +2040,20 @@ function PedirCarreraScreen({ navigation, route }) {
                   {carrera.tarifa_ofrecida
                     ? `Ofreciste $${carrera.tarifa_ofrecida.toLocaleString()}. Esperando que un conductor acepte o te proponga otro precio.`
                     : "Avisamos a los transportadores disponibles."}
-                  {"\n"}No cierres la app.
+                  {"\n"}
+                  {esCarga(carrera.vehiculo_pedido)
+                    ? "Tu solicitud queda publicada hasta que alguien la tome. Te avisamos por notificacion."
+                    : "No cierres la app."}
                 </Text>
               </View>
+
+              {/* la solicitud sigue viva; el cliente no queda preso en esta pantalla */}
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", marginBottom: 12 }]}
+                onPress={() => setVerForm(true)}
+              >
+                <Text style={{ color: "#187830", fontWeight: "700" }}>＋ Pedir otro servicio</Text>
+              </TouchableOpacity>
 
               {contraofertas.length > 0 && (
                 <>
@@ -2143,6 +2175,18 @@ function PedirCarreraScreen({ navigation, route }) {
         </View>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+        {/* sus solicitudes siguen vivas mientras pide otra cosa */}
+        {activas.length > 0 && (
+          <TouchableOpacity
+            style={{ backgroundColor: "#EAF6EC", borderWidth: 1, borderColor: "#187830", borderRadius: 10, padding: 12, marginBottom: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+            onPress={() => setVerForm(false)}
+          >
+            <Text style={{ color: "#187830", fontWeight: "700", fontSize: 13, flex: 1 }}>
+              🔔 Tienes {activas.length} solicitud{activas.length > 1 ? "es" : ""} en curso
+            </Text>
+            <Text style={{ color: "#187830", fontSize: 12 }}>ver ›</Text>
+          </TouchableOpacity>
+        )}
         {/* 1. UBICACION: primero, porque de aqui se detecta el pueblo */}
         <View style={styles.card}>
           <Text style={styles.etiqueta}>DONDE ESTAS</Text>

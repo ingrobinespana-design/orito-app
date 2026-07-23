@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, VEHICULOS_VALIDOS
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, VEHICULOS_VALIDOS, VEHICULOS_CARGA
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -233,10 +233,17 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
         nombre = (d.get("name") or "").strip()
         via = a.get("road") or ""
         numero = a.get("house_number") or ""
-        barrio = a.get("neighbourhood") or a.get("suburb") or ""
+        # se amplia lo que sirve de referencia: en pueblo y vereda casi nunca hay
+        # nomenclatura, pero si suele haber barrio, caserio o vereda
+        barrio = (a.get("neighbourhood") or a.get("suburb") or a.get("quarter")
+                  or a.get("residential") or a.get("hamlet") or a.get("village")
+                  or a.get("town") or "")
+        sitio = a.get("amenity") or a.get("shop") or a.get("building") or ""
         partes = []
         if nombre:
             partes.append(nombre)
+        elif sitio:
+            partes.append(sitio)
         elif via:
             partes.append(f"{via} # {numero}" if numero else via)
         if barrio and barrio not in partes:
@@ -246,6 +253,14 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
             return {"nombre": etiqueta, "fuente": "direccion"}
     except Exception:
         pass
+    # ultimo recurso: referenciarlo contra el sitio conocido mas cercano. En zona
+    # sin mapear "Cerca de la Alcaldia" le sirve mucho mas al conductor que
+    # "Punto marcado en el mapa"
+    if mejor and mejor_km is not None and mejor_km <= 1.5:
+        cerca = f"Cerca de {mejor.nombre}"
+        if mejor_km >= 0.3:
+            cerca += f" (~{int(round(mejor_km * 1000, -1))} m)"
+        return {"nombre": cerca, "fuente": "cercano"}
     return {"nombre": None, "fuente": None}
 
 @app.get("/municipios")
@@ -895,13 +910,20 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
             recogida_dt = datetime.fromisoformat(recogida)
         except (ValueError, TypeError):
             recogida_dt = None
-    # una carrera activa a la vez, para que no pida cinco taxis al tiempo
-    activa = db.query(Carrera).filter(
+    # Una solicitud activa POR CATEGORIA: sigue sin poder pedir cinco taxis a la
+    # vez, pero un acarreo (que puede quedar dias esperando, sobre todo si es
+    # programado) ya no le bloquea pedir una carrera normal, ni al reves.
+    es_carga_nueva = vehiculo_pedido in VEHICULOS_CARGA
+    activas = db.query(Carrera).filter(
         Carrera.cliente_id == cliente_id,
         Carrera.estado.in_(["buscando", "aceptada", "en_camino"])
-    ).first()
-    if activa:
-        raise HTTPException(status_code=400, detail="Ya tienes una carrera en curso")
+    ).all()
+    for a in activas:
+        if (a.vehiculo_pedido in VEHICULOS_CARGA) == es_carga_nueva:
+            raise HTTPException(
+                status_code=400,
+                detail="Ya tienes un acarreo en curso. Espera a que lo tomen o cancelalo."
+                if es_carga_nueva else "Ya tienes una carrera en curso")
     # el municipio viene de donde ESTA el cliente (GPS o manual), no de su registro
     municipio = municipio or cliente.municipio or "Orito"
     permitidos = vehiculos_de(municipio, db)
