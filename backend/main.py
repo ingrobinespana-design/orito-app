@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import logging
 import push
 import tarifas
+import legal
 import cloudinary
 import cloudinary.uploader
 import os
@@ -228,8 +229,20 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
   <div style="margin-top:18px;font-size:14px">¿Dudas o ayuda para instalar?<br>
   <a class="wa" href="https://wa.me/573156009728">💬 Escríbenos al WhatsApp 315 600 9728</a></div>
 
+  <div style="margin-top:16px;font-size:12px">
+    <a href="/terminos" style="color:#A9CBB4">Términos</a> ·
+    <a href="/privacidad" style="color:#A9CBB4">Privacidad y Habeas Data</a>
+  </div>
   <div class="pie">Tukán · Delivery amazónico · Hecho en Putumayo 🦜</div>
 </div></body></html>"""
+
+@app.get("/terminos", response_class=HTMLResponse)
+def pagina_terminos():
+    return legal.terminos_html()
+
+@app.get("/privacidad", response_class=HTMLResponse)
+def pagina_privacidad():
+    return legal.privacidad_html()
 
 @app.post("/registro")
 def registrar_usuario(request: Request, nombre: str, telefono: str, password: str, municipio: str = "Orito",

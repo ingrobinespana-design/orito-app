@@ -500,6 +500,14 @@ function LoginScreen({ navigation }) {
           <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={cargando}>
             {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{modo === "login" ? "Ingresar" : "Crear cuenta"}</Text>}
           </TouchableOpacity>
+          {modo === "registro" && (
+            <Text style={{ fontSize: 11, color: "#888", textAlign: "center", marginTop: 10, lineHeight: 16 }}>
+              Al crear tu cuenta aceptas los{" "}
+              <Text style={{ color: "#187830", fontWeight: "600" }} onPress={() => Linking.openURL(`${API}/terminos`)}>Términos</Text>
+              {" "}y la{" "}
+              <Text style={{ color: "#187830", fontWeight: "600" }} onPress={() => Linking.openURL(`${API}/privacidad`)}>Política de Privacidad y Habeas Data</Text>.
+            </Text>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
