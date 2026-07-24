@@ -1292,6 +1292,17 @@ def actualizar_conductor(conductor_id: int, placa: str = None, vehiculo: str = N
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     if tipo_vehiculo is not None and tipo_vehiculo not in VEHICULOS_VALIDOS:
         raise HTTPException(status_code=400, detail="Tipo de vehiculo invalido")
+    # cambiar de pueblo solo sirve si alla se permite su vehiculo: un mototaxista
+    # en Orito no veria ni una carrera, y creeria que la app esta dañada
+    if municipio is not None:
+        permitidos = vehiculos_de(municipio, db)
+        if not permitidos:
+            raise HTTPException(status_code=400, detail=f"Todavia no operamos en {municipio}")
+        futuro = tipo_vehiculo or conductor.tipo_vehiculo
+        if futuro and futuro not in permitidos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"En {municipio} todavia no hay servicio de {futuro}. No recibirias solicitudes alla.")
     if placa is not None:
         conductor.placa = placa
     if vehiculo is not None:

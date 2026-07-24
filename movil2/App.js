@@ -3195,10 +3195,35 @@ function ConfiguracionScreen({ navigation, route }) {
   const [notifOk, setNotifOk] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
+  // zona de trabajo del conductor: puede mudarse o trabajar en el otro pueblo
+  const [municipios, setMunicipios] = useState([]);
+  const [miMuni, setMiMuni] = useState(usuario.municipio);
+  const [cambiandoMuni, setCambiandoMuni] = useState(false);
 
   useEffect(() => {
     Notifications.getPermissionsAsync().then(p => setNotifOk(p.status === "granted")).catch(() => {});
+    if (esConductor) {
+      fetch(`${API}/municipios`).then(r => r.json())
+        .then(d => { if (Array.isArray(d)) setMunicipios(d); }).catch(() => {});
+    }
   }, []);
+
+  const cambiarMunicipio = (nombre) => {
+    if (nombre === miMuni) return;
+    confirmar("Cambiar zona de trabajo", `Solo veras solicitudes de ${nombre}. Seguro?`, () => {
+      setCambiandoMuni(true);
+      fetch(`${API}/conductores/${usuario.id}?municipio=${encodeURIComponent(nombre)}`, { method: "PUT" })
+        .then(async (r) => {
+          const d = await r.json();
+          setCambiandoMuni(false);
+          if (!r.ok || d.detail) { avisar("No se pudo", d.detail || "Intenta de nuevo."); return; }
+          setMiMuni(d.municipio);
+          usuario.municipio = d.municipio;   // para que la pantalla anterior quede al dia
+          avisar("Listo", `Ahora recibes solicitudes de ${d.municipio}.`);
+        })
+        .catch(() => { setCambiandoMuni(false); avisar("Sin conexion", "Intenta de nuevo."); });
+    }, "Si, cambiar");
+  };
 
   const activarNotificaciones = async () => {
     await registrarNotificaciones(usuario.id);
@@ -3304,6 +3329,30 @@ function ConfiguracionScreen({ navigation, route }) {
             </TouchableOpacity>
           )}
         </View>
+
+        {esConductor && municipios.length > 0 && (
+          <View style={[styles.card, { marginBottom: 14 }]}>
+            <Text style={styles.seccionTitulo}>📍 Zona donde trabajas</Text>
+            <Text style={styles.ayuda}>
+              Solo recibes solicitudes de este municipio. Cambialo si te mudas o si hoy vas a trabajar en el otro.
+            </Text>
+            {cambiandoMuni ? (
+              <ActivityIndicator color="#187830" style={{ marginTop: 8 }} />
+            ) : (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                {municipios.map((m) => (
+                  <TouchableOpacity key={m.nombre} onPress={() => cambiarMunicipio(m.nombre)}
+                    style={[styles.chip, miMuni === m.nombre && styles.chipOn]}>
+                    <Text style={[styles.chipTxt, miMuni === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={[styles.ayuda, { marginTop: 8, marginBottom: 0 }]}>
+              Tu vehiculo: {vehIcono(usuario.tipo_vehiculo)} {vehLabel(usuario.tipo_vehiculo)}
+            </Text>
+          </View>
+        )}
 
         {cargando ? <ActivityIndicator color="#187830" /> : esConductor ? (
           <>
