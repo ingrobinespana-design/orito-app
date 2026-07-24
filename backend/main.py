@@ -52,6 +52,22 @@ def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db))
         raise HTTPException(status_code=403, detail="Solo el administrador puede hacer esto")
     return usuario
 
+def usuario_actual(x_user_token: str = Header(None), db: Session = Depends(get_db)):
+    """Identifica QUIEN esta haciendo la peticion por su llave de sesion. Con
+    esto el servidor exige que solo puedas tocar TUS cosas: tu carrera, tu
+    perfil. Un admin tambien es un usuario valido."""
+    if not x_user_token:
+        raise HTTPException(status_code=401, detail="Sesion no valida. Vuelve a entrar.")
+    usuario = db.query(Usuario).filter(Usuario.token == x_user_token).first()
+    if not usuario:
+        raise HTTPException(status_code=401, detail="Sesion vencida. Vuelve a entrar.")
+    return usuario
+
+def exigir_dueño(actual: Usuario, id_dueño: int):
+    """Corta si el que pide no es el dueño del recurso (ni admin)."""
+    if actual.rol != "admin" and actual.id != id_dueño:
+        raise HTTPException(status_code=403, detail="No puedes tocar algo que no es tuyo")
+
 @app.get("/")
 def inicio():
     return {"mensaje": "Bienvenido a Tukan"}
@@ -172,6 +188,7 @@ def registrar_usuario(nombre: str, telefono: str, password: str, municipio: str 
         nombre=nombre, telefono=telefono, password=password_hash, municipio=municipio,
         rol="conductor" if tipo_vehiculo else "cliente",
         tipo_vehiculo=tipo_vehiculo, placa=placa, vehiculo=vehiculo,
+        token=secrets.token_urlsafe(32),   # entra directo, ya autenticado
     )
     db.add(usuario)
     db.commit()
@@ -179,7 +196,8 @@ def registrar_usuario(nombre: str, telefono: str, password: str, municipio: str 
     return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono,
             "rol": usuario.rol, "restaurante_id": usuario.restaurante_id,
             "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
-            "placa": usuario.placa, "vehiculo": usuario.vehiculo, "disponible": usuario.disponible}
+            "placa": usuario.placa, "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
+            "token": usuario.token}
 
 def vehiculos_de(municipio: str, db: Session):
     """Que vehiculos se permiten en ese pueblo. Lista vacia = municipio desconocido."""
@@ -795,7 +813,9 @@ def avisar_oferta_aceptada(conductor_id: int, carrera_id: int):
     limpiar_tokens_muertos(push.enviar(mensajes))
 
 @app.put("/usuarios/{usuario_id}/push-token")
-def guardar_push_token(usuario_id: int, token: str, db: Session = Depends(get_db)):
+def guardar_push_token(usuario_id: int, token: str, db: Session = Depends(get_db),
+                       actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, usuario_id)
     """La app manda esto al entrar. Si el token ya estaba en otro usuario (celular
     prestado o compartido) se lo quita, para que los avisos no le lleguen al anterior."""
     usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
@@ -928,7 +948,9 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
                   origen_lat: float = None, origen_lon: float = None,
                   destino_lat: float = None, destino_lon: float = None,
                   tarifa_ofrecida: int = None, municipio: str = None,
-                  recogida: str = None, db: Session = Depends(get_db)):
+                  recogida: str = None, db: Session = Depends(get_db),
+                  actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, cliente_id)   # solo pides carreras para ti mismo
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -1011,7 +1033,9 @@ def carreras_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
     return [carrera_dict(c) for c in carreras]
 
 @app.put("/carreras/{carrera_id}/aceptar")
-def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db)):
+def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                    actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, conductor_id)
     conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
     if not conductor:
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
@@ -1056,9 +1080,10 @@ def oferta_dict(o: Oferta, conductor: Usuario = None):
 
 @app.post("/carreras/{carrera_id}/ofertas")
 def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: BackgroundTasks,
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
     """El conductor propone otro precio. La carrera sigue 'buscando' hasta que el
     cliente elija. No pisa la asignacion: si ya la tomaron, no deja ofertar."""
+    exigir_dueño(actual, conductor_id)
     if monto <= 0:
         raise HTTPException(status_code=400, detail="El monto debe ser mayor que cero")
     conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
@@ -1097,9 +1122,13 @@ def ofertas_de_carrera(carrera_id: int, db: Session = Depends(get_db)):
     return [oferta_dict(o, conductores.get(o.conductor_id)) for o in ofertas]
 
 @app.put("/carreras/{carrera_id}/aceptar-oferta")
-def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db)):
+def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                   actual: Usuario = Depends(usuario_actual)):
     """El cliente acepta la contraoferta de un conductor. Update condicional para
     no chocar con un conductor que justo acepte el precio original."""
+    duena = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if duena:
+        exigir_dueño(actual, duena.cliente_id)
     oferta = db.query(Oferta).filter(Oferta.id == oferta_id, Oferta.carrera_id == carrera_id).first()
     if not oferta:
         raise HTTPException(status_code=404, detail="Oferta no encontrada")
@@ -1121,13 +1150,16 @@ def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db:
     return carrera_dict(carrera, conductor)
 
 @app.put("/carreras/{carrera_id}/estado")
-def actualizar_estado_carrera(carrera_id: int, estado: str, tarifa: int = None, db: Session = Depends(get_db)):
+def actualizar_estado_carrera(carrera_id: int, estado: str, tarifa: int = None, db: Session = Depends(get_db),
+                              actual: Usuario = Depends(usuario_actual)):
     validos = ["buscando", "aceptada", "en_camino", "finalizada", "cancelada"]
     if estado not in validos:
         raise HTTPException(status_code=400, detail=f"Estado invalido. Validos: {', '.join(validos)}")
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     if not carrera:
         raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    if actual.rol != "admin" and actual.id not in (carrera.cliente_id, carrera.conductor_id):
+        raise HTTPException(status_code=403, detail="Esta carrera no es tuya")
     # con el pasajero a bordo ya no se cancela: se finaliza o se resuelve hablando
     if estado == "cancelada" and carrera.estado == "en_camino":
         raise HTTPException(status_code=400, detail="El viaje ya esta en curso y no se puede cancelar. Si hay un problema, llama al conductor.")
@@ -1235,7 +1267,9 @@ def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
 
 @app.post("/usuarios/{usuario_id}/foto")
 async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = File(...),
-                               db: Session = Depends(get_db)):
+                               db: Session = Depends(get_db),
+                               actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, usuario_id)
     """Sube foto del conductor, del vehiculo o de la tarjeta de propiedad."""
     if tipo not in ("conductor", "vehiculo", "tarjeta"):
         raise HTTPException(status_code=400, detail="tipo debe ser conductor, vehiculo o tarjeta")
@@ -1253,7 +1287,9 @@ async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = Fi
 
 @app.put("/usuarios/{usuario_id}/pagos")
 def guardar_pagos(usuario_id: int, efectivo: str = None, nequi: str = None, daviplata: str = None,
-                  bancolombia: str = None, breb: str = None, db: Session = Depends(get_db)):
+                  bancolombia: str = None, breb: str = None, db: Session = Depends(get_db),
+                  actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, usuario_id)
     """El conductor configura como quiere que le paguen (efectivo, Nequi, etc.).
     Se manda solo lo que cambia; lo demas queda igual."""
     u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
@@ -1316,7 +1352,9 @@ def estado_cuenta(conductor_id: int, db: Session = Depends(get_db)):
 @app.put("/conductores/{conductor_id}")
 def actualizar_conductor(conductor_id: int, placa: str = None, vehiculo: str = None,
                          disponible: str = None, tipo_vehiculo: str = None,
-                         municipio: str = None, db: Session = Depends(get_db)):
+                         municipio: str = None, db: Session = Depends(get_db),
+                         actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, conductor_id)
     conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
     if not conductor:
         raise HTTPException(status_code=404, detail="Conductor no encontrado")

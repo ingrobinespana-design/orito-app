@@ -17,13 +17,21 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
 
-// Llave de sesion del administrador. El servidor no deja tocar config, precios,
-// usuarios ni roles sin ella, asi nadie de afuera puede manipular el negocio.
-// Se guarda solo en memoria: al cerrar la app se pide entrar de nuevo.
+// Llave de sesion. En memoria (al cerrar la app se pide entrar de nuevo).
+//  - llaveUsuario: identifica a CUALQUIER usuario; el servidor exige que solo
+//    toques TUS cosas (tu carrera, tu perfil).
+//  - llaveAdmin: solo la tiene el dueño; abre el panel de administracion.
+let llaveUsuario = null;
 let llaveAdmin = null;
-const guardarLlave = (u) => { llaveAdmin = (u && u.token) || null; };
+const guardarLlave = (u) => {
+  llaveUsuario = (u && u.token) || null;
+  llaveAdmin = (u && u.rol === "admin" && u.token) || null;
+};
 const adminFetch = (url, opciones = {}) =>
   fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-Admin-Token": llaveAdmin || "" } });
+// para acciones sobre lo propio: manda la identidad del usuario
+const userFetch = (url, opciones = {}) =>
+  fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-User-Token": llaveUsuario || "" } });
 
 // ===== rastreo en SEGUNDO PLANO del conductor con carrera activa =====
 // Un servicio de Android (notificacion fija "carrera en curso") sigue enviando
@@ -287,7 +295,7 @@ async function registrarNotificaciones(usuarioId) {
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
     if (!token) return;
 
-    await fetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
+    await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
   } catch (e) {
     console.log("No se pudieron activar las notificaciones:", e);
   }
@@ -1927,7 +1935,7 @@ function PedirCarreraScreen({ navigation, route }) {
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
     if (recogidaISO) datos.recogida = recogidaISO;
-    fetchReintento(`${API}/carreras?${qs(datos)}`, { method: "POST" })
+    fetchReintento(`${API}/carreras?${qs(datos)}`, { method: "POST", headers: { "X-User-Token": llaveUsuario || "" } })
       .then(async (r) => {
         setCargando(false);
         const d = await r.json().catch(() => null);
@@ -1943,7 +1951,7 @@ function PedirCarreraScreen({ navigation, route }) {
 
   const cancelar = () => {
     confirmar("Cancelar carrera", "Seguro que quieres cancelar?",
-      () => fetch(`${API}/carreras/${carrera.id}/estado?estado=cancelada`, { method: "PUT" })
+      () => userFetch(`${API}/carreras/${carrera.id}/estado?estado=cancelada`, { method: "PUT" })
         .then(() => { setCarrera(null); setContraofertas([]); })
         .catch(() => avisar("Error", "No se pudo cancelar")),
       "Si, cancelar");
@@ -1961,7 +1969,7 @@ function PedirCarreraScreen({ navigation, route }) {
 
   const aceptarContraoferta = (of) => {
     confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}?`,
-      () => fetch(`${API}/carreras/${carrera.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" })
+      () => userFetch(`${API}/carreras/${carrera.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" })
         .then(r => r.json())
         .then(d => { if (d.detail) { avisar("No se pudo", d.detail); } else { setCarrera(d); setContraofertas([]); } })
         .catch(() => avisar("Error", "No hay conexion")),
@@ -2519,7 +2527,7 @@ function ConductorScreen({ navigation, route }) {
   const cambiarDisponibilidad = () => {
     const nuevo = !disponible;
     setDisponible(nuevo);
-    fetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
+    userFetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
   };
 
   // mientras tiene carrera activa: el servicio en SEGUNDO PLANO transmite la
@@ -2550,7 +2558,7 @@ function ConductorScreen({ navigation, route }) {
     // tocar y no haya duplicidad; si algo falla, cargar() restaura el estado real
     animar();
     setDisponibles((prev) => prev.filter((x) => x.id !== c.id));
-    fetch(`${API}/carreras/${c.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" })
+    userFetch(`${API}/carreras/${c.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" })
       .then(async (r) => {
         const d = await r.json();
         if (r.status === 409) { avisar("Servicio ya tomado", "Otro transportador lo tomo primero."); cargar(); return; }
@@ -2574,13 +2582,13 @@ function ConductorScreen({ navigation, route }) {
     const t = parseInt((tarifa || "").replace(/\D/g, ""), 10);
     const id = cobrando.id;
     setCobrando(null);
-    fetch(`${API}/carreras/${id}/estado?estado=finalizada${t ? `&tarifa=${t}` : ""}`, { method: "PUT" })
+    userFetch(`${API}/carreras/${id}/estado?estado=finalizada${t ? `&tarifa=${t}` : ""}`, { method: "PUT" })
       .then(cargar)
       .catch(() => avisar("Error", "No hay conexion. Intenta de nuevo."));
   };
 
   const cambiarEstado = (c, estado) => {
-    fetch(`${API}/carreras/${c.id}/estado?estado=${estado}`, { method: "PUT" }).then(cargar).catch(() => {});
+    userFetch(`${API}/carreras/${c.id}/estado?estado=${estado}`, { method: "PUT" }).then(cargar).catch(() => {});
   };
 
   // --- negociacion del lado del conductor
@@ -2592,7 +2600,7 @@ function ConductorScreen({ navigation, route }) {
     if (!monto) { avisar("Falta el precio", "Escribe cuanto quieres cobrar"); return; }
     const id = contraofertando.id;
     setContraofertando(null); setMontoOferta("");
-    fetch(`${API}/carreras/${id}/ofertas?conductor_id=${usuario.id}&monto=${monto}`, { method: "POST" })
+    userFetch(`${API}/carreras/${id}/ofertas?conductor_id=${usuario.id}&monto=${monto}`, { method: "POST" })
       .then(async (r) => {
         const d = await r.json();
         if (r.status === 409) { avisar("Muy tarde", "Esa carrera ya no esta disponible."); cargar(); return; }
@@ -3221,7 +3229,7 @@ function ConfiguracionScreen({ navigation, route }) {
     if (nombre === miMuni) return;
     confirmar("Cambiar zona de trabajo", `Solo veras solicitudes de ${nombre}. Seguro?`, () => {
       setCambiandoMuni(true);
-      fetch(`${API}/conductores/${usuario.id}?municipio=${encodeURIComponent(nombre)}`, { method: "PUT" })
+      userFetch(`${API}/conductores/${usuario.id}?municipio=${encodeURIComponent(nombre)}`, { method: "PUT" })
         .then(async (r) => {
           const d = await r.json();
           setCambiandoMuni(false);
@@ -3269,7 +3277,7 @@ function ConfiguracionScreen({ navigation, route }) {
     setSubiendoFoto(tipo);
     const fd = new FormData();
     fd.append("file", { uri: r.assets[0].uri, type: "image/jpeg", name: `${tipo}.jpg` });
-    fetch(`${API}/usuarios/${usuario.id}/foto?tipo=${tipo}`, { method: "POST", body: fd, headers: { "Content-Type": "multipart/form-data" } })
+    userFetch(`${API}/usuarios/${usuario.id}/foto?tipo=${tipo}`, { method: "POST", body: fd, headers: { "Content-Type": "multipart/form-data" } })
       .then(res => res.json())
       .then(d => { setSubiendoFoto(null); if (d.url) setFotos(f => ({ ...f, [tipo]: d.url })); else avisar("Error", "No se pudo subir la foto."); })
       .catch(() => { setSubiendoFoto(null); avisar("Sin conexion", "Intenta de nuevo."); });
@@ -3287,7 +3295,7 @@ function ConfiguracionScreen({ navigation, route }) {
     for (const m of METODOS_PAGO) {
       if (m.cuenta) datos[m.key] = activos[m.key] ? (pagos[m.key] || "") : "";  // desmarcar borra el dato
     }
-    fetch(`${API}/usuarios/${usuario.id}/pagos?${qs(datos)}`, { method: "PUT" })
+    userFetch(`${API}/usuarios/${usuario.id}/pagos?${qs(datos)}`, { method: "PUT" })
       .then(r => r.json())
       .then(d => { setGuardando(false); if (d.ok) avisar("Guardado", "Tus medios de pago quedaron actualizados."); else avisar("Error", "No se pudo guardar."); })
       .catch(() => { setGuardando(false); avisar("Sin conexion", "Intenta de nuevo."); });
