@@ -35,12 +35,46 @@ crear_tablas()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# ---- freno anti-abuso (en memoria; el instance pago de Railway no se duerme,
+# asi que el conteo se mantiene). Solo se limita lo sensible: crear cuentas y
+# adivinar contraseñas. NO se limita lo de lectura/polling, y NO se pone un tope
+# global por IP: en el pueblo mucha gente comparte la misma IP del operador
+# (CGNAT) y un tope global tumbaria a usuarios legitimos.
+import time as _time
+from collections import defaultdict, deque
+_conteos = defaultdict(deque)
+
+def paso_del_limite(clave, maximo, ventana_seg):
+    """True si 'clave' ya hizo 'maximo' intentos en la ventana. Sliding window."""
+    ahora = _time.time()
+    q = _conteos[clave]
+    while q and ahora - q[0] > ventana_seg:
+        q.popleft()
+    if len(q) >= maximo:
+        return True
+    q.append(ahora)
+    return False
+
+def limpiar_limite(clave):
+    _conteos.pop(clave, None)
+
+def ip_de(request: Request):
+    """IP real del cliente detras del proxy de Railway."""
+    fwd = request.headers.get("x-forwarded-for")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?"))
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+@app.get("/salud")
+def salud():
+    """Latido para monitores de disponibilidad (UptimeRobot y similares).
+    Barato y sin tocar la base: solo confirma que el servidor responde."""
+    return {"ok": True, "servicio": "tukan"}
 
 def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Candado del panel: sin la llave de sesion de un usuario con rol admin,
@@ -168,11 +202,15 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
 </div></body></html>"""
 
 @app.post("/registro")
-def registrar_usuario(nombre: str, telefono: str, password: str, municipio: str = "Orito",
+def registrar_usuario(request: Request, nombre: str, telefono: str, password: str, municipio: str = "Orito",
                       tipo_vehiculo: str = None, placa: str = None, vehiculo: str = None,
                       db: Session = Depends(get_db)):
     """Si viene tipo_vehiculo (moto o carro) se registra como conductor.
     Sin eso queda de cliente. No hay valor por defecto: quien maneja lo declara."""
+    # freno anti-spam: nadie crea decenas de cuentas desde la misma IP. Generoso
+    # para tolerar un lanzamiento donde varios se registran en la misma red.
+    if paso_del_limite(("registro", ip_de(request)), 25, 3600):
+        raise HTTPException(status_code=429, detail="Demasiados registros desde aqui. Intenta en un rato.")
     usuario_existe = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if usuario_existe:
         raise HTTPException(status_code=400, detail="Este telefono ya esta registrado")
@@ -378,9 +416,15 @@ def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
 
 @app.post("/login")
 def login(telefono: str, password: str, db: Session = Depends(get_db)):
+    # anti-fuerza-bruta: se limita por telefono (no por IP, que la comparte medio
+    # pueblo). Nadie adivina una contraseña a punta de miles de intentos.
+    clave = ("login", telefono)
+    if paso_del_limite(clave, 10, 900):
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Espera unos minutos e intenta de nuevo.")
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not usuario or not pwd_context.verify(password, usuario.password):
         raise HTTPException(status_code=400, detail="Telefono o contraseña incorrectos")
+    limpiar_limite(clave)   # entro bien: se le perdonan los intentos previos
     # llave de sesion nueva en cada entrada: si alguien se quedo con la vieja,
     # deja de servirle apenas el dueño vuelve a entrar
     usuario.token = secrets.token_urlsafe(32)
