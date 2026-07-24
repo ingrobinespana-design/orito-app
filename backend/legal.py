@@ -4,12 +4,16 @@ Play Store y buena practica para facturar). BORRADOR SOLIDO adaptado a Colombia
 (Ley 1581 de 2012, Habeas Data). El usuario deberia hacerlo revisar por un
 abogado y confirmar los datos del 'Responsable' antes de considerarlo final."""
 
-RESPONSABLE = "Darwin España"
+# Responsable = persona natural (Darwin España Ruales) que opera bajo su
+# establecimiento de comercio "Integrar Services", NIT 1061733315-3. La marca
+# de cara al publico es Tukan; el registro tributario es Integrar Services.
+RESPONSABLE = "Integrar Services"
+RESPONSABLE_LEGAL = "Darwin Robin España Ruales — Integrar Services (persona natural), NIT 1061733315-3"
 MARCA = "Tukán"
-CORREO = "ingrobinespana@gmail.com"
+CORREO = "integrarservices@gmail.com"
 WHATSAPP = "+57 315 600 9728"
 WHATSAPP_LINK = "https://wa.me/573156009728"
-LUGAR = "Putumayo, Colombia"
+LUGAR = "Orito, Putumayo, Colombia"
 ACTUALIZADO = "24 de julio de 2026"
 
 
@@ -37,7 +41,7 @@ def _pagina(titulo, cuerpo):
   <div class="top"><img src="/logo.png" alt="{MARCA}"><b>{MARCA}</b></div>
   <div class="nav"><a href="/terminos">Términos y condiciones</a> · <a href="/privacidad">Privacidad y Habeas Data</a> · <a href="/app">Descargar</a></div>
   {cuerpo}
-  <div class="pie">{MARCA} · {LUGAR} · Responsable: {RESPONSABLE}<br>
+  <div class="pie">{MARCA} es una marca de {RESPONSABLE_LEGAL} · {LUGAR}<br>
   Contacto: <a href="mailto:{CORREO}">{CORREO}</a> · WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a></div>
 </div></body></html>"""
 
@@ -47,8 +51,8 @@ def terminos_html():
   <h1>Términos y Condiciones de Uso</h1>
   <div class="fecha">Última actualización: {ACTUALIZADO}</div>
 
-  <p>Estos términos regulan el uso de la aplicación <b>{MARCA}</b> ("la App"), operada por
-  {RESPONSABLE} ("nosotros"). Al registrarte y usar la App, aceptas estos términos. Si no estás
+  <p>Estos términos regulan el uso de la aplicación <b>{MARCA}</b> ("la App"), una marca operada por
+  {RESPONSABLE_LEGAL} ("nosotros"). Al registrarte y usar la App, aceptas estos términos. Si no estás
   de acuerdo, por favor no uses la App.</p>
 
   <h2>1. Qué es Tukán</h2>
@@ -116,8 +120,9 @@ def privacidad_html():
   <div class="fecha">Última actualización: {ACTUALIZADO} · Conforme a la Ley 1581 de 2012 (Habeas Data) de Colombia</div>
 
   <p>En {MARCA} respetamos tus datos personales. Esta política explica qué datos recogemos, para qué, y
-  cuáles son tus derechos. El <b>Responsable del Tratamiento</b> es {RESPONSABLE}, con contacto en
-  <a href="mailto:{CORREO}">{CORREO}</a> y WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a>, en {LUGAR}.</p>
+  cuáles son tus derechos. El <b>Responsable del Tratamiento</b> es {RESPONSABLE_LEGAL}, ubicado en
+  {LUGAR}, con contacto en <a href="mailto:{CORREO}">{CORREO}</a> y WhatsApp
+  <a href="{WHATSAPP_LINK}">{WHATSAPP}</a>.</p>
 
   <h2>1. Qué datos recogemos</h2>
   <ul>
@@ -178,7 +183,7 @@ def privacidad_html():
   <h2>10. Cambios</h2>
   <p>Podemos actualizar esta política; la versión vigente estará siempre en esta página con su fecha.</p>
 
-  <div class="caja-info">Responsable del Tratamiento: <b>{RESPONSABLE}</b> · {LUGAR}<br>
+  <div class="caja-info">Responsable del Tratamiento: <b>{RESPONSABLE_LEGAL}</b> · {LUGAR}<br>
   Ejerce tus derechos en <a href="mailto:{CORREO}">{CORREO}</a> o WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a>.</div>
 """
     return _pagina("Privacidad y Habeas Data", cuerpo)
