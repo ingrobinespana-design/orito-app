@@ -76,6 +76,36 @@ def salud():
     Barato y sin tocar la base: solo confirma que el servidor responde."""
     return {"ok": True, "servicio": "tukan"}
 
+@app.get("/respaldo")
+def respaldo(clave: str = None, x_admin_token: str = Header(None), db: Session = Depends(get_db)):
+    """Copia completa de la base en JSON, para respaldo. El servidor la genera
+    (esta pegado a la base). Autoriza con una clave dedicada RESPALDO_CLAVE (para
+    automatizar la descarga diaria) o con la sesion del admin. Si la clave no
+    esta configurada, el endpoint queda apagado — nunca abierto por accidente."""
+    from fastapi.responses import Response
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada:
+        raise HTTPException(status_code=503, detail="Respaldo no configurado")
+    ok = bool(clave) and secrets.compare_digest(clave, esperada)
+    if not ok and x_admin_token:
+        u = db.query(Usuario).filter(Usuario.token == x_admin_token).first()
+        ok = bool(u and u.rol == "admin")
+    if not ok:
+        raise HTTPException(status_code=403, detail="Clave de respaldo invalida")
+    modelos = [Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento]
+    tablas = {}
+    for M in modelos:
+        tablas[M.__tablename__] = [
+            {c.name: getattr(fila, c.name) for c in M.__table__.columns}
+            for fila in db.query(M).all()
+        ]
+    import json as _json
+    cuerpo = _json.dumps({"generado": datetime.now().isoformat(), "tablas": tablas},
+                         default=str, ensure_ascii=False)
+    nombre = f"tukan-respaldo-{datetime.now():%Y%m%d-%H%M}.json"
+    return Response(content=cuerpo, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
 def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Candado del panel: sin la llave de sesion de un usuario con rol admin,
     nadie toca config, precios, usuarios ni roles. Se usa como Depends()."""
