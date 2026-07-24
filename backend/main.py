@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, BackgroundTasks, Request
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, BackgroundTasks, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -12,6 +12,7 @@ import tarifas
 import cloudinary
 import cloudinary.uploader
 import os
+import secrets
 
 load_dotenv()
 
@@ -40,6 +41,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db)):
+    """Candado del panel: sin la llave de sesion de un usuario con rol admin,
+    nadie toca config, precios, usuarios ni roles. Se usa como Depends()."""
+    if not x_admin_token:
+        raise HTTPException(status_code=401, detail="Necesitas entrar como administrador")
+    usuario = db.query(Usuario).filter(Usuario.token == x_admin_token).first()
+    if not usuario or usuario.rol != "admin":
+        raise HTTPException(status_code=403, detail="Solo el administrador puede hacer esto")
+    return usuario
 
 @app.get("/")
 def inicio():
@@ -304,7 +315,8 @@ def listar_tarifas(db: Session = Depends(get_db)):
 
 @app.put("/tarifas/{tarifa_id}")
 def actualizar_tarifa(tarifa_id: int, base: int = None, valor_km: int = None,
-                      minima: int = None, db: Session = Depends(get_db)):
+                      minima: int = None, db: Session = Depends(get_db),
+                      admin: Usuario = Depends(solo_admin)):
     t = db.query(Tarifa).filter(Tarifa.id == tarifa_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Tarifa no encontrada")
@@ -320,7 +332,8 @@ def actualizar_tarifa(tarifa_id: int, base: int = None, valor_km: int = None,
 @app.put("/municipios/{nombre}")
 def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
                          usa_gps: str = None, tarifa_base: int = None, valor_km: int = None,
-                         tarifa_minima: int = None, db: Session = Depends(get_db)):
+                         tarifa_minima: int = None, db: Session = Depends(get_db),
+                         admin: Usuario = Depends(solo_admin)):
     """Para habilitar moto en Orito cuando lleguen, prender el GPS en un pueblo
     o ajustar las tarifas — todo sin publicar app nueva."""
     m = db.query(Municipio).filter(Municipio.nombre == nombre).first()
@@ -350,10 +363,15 @@ def login(telefono: str, password: str, db: Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not usuario or not pwd_context.verify(password, usuario.password):
         raise HTTPException(status_code=400, detail="Telefono o contraseña incorrectos")
+    # llave de sesion nueva en cada entrada: si alguien se quedo con la vieja,
+    # deja de servirle apenas el dueño vuelve a entrar
+    usuario.token = secrets.token_urlsafe(32)
+    db.commit()
     return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono, "rol": usuario.rol,
             "restaurante_id": usuario.restaurante_id, "placa": usuario.placa,
             "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
-            "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo}
+            "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
+            "token": usuario.token}
 
 @app.get("/restaurantes")
 def obtener_restaurantes(db: Session = Depends(get_db)):
@@ -490,10 +508,17 @@ def asignar_domiciliario(pedido_id: int, domiciliario_id: int, db: Session = Dep
 
 @app.put("/usuarios/{telefono}/rol")
 def cambiar_rol(telefono: str, rol: str, restaurante_id: int = None,
-                tipo_vehiculo: str = None, db: Session = Depends(get_db)):
+                tipo_vehiculo: str = None, db: Session = Depends(get_db),
+                admin: Usuario = Depends(solo_admin)):
+    # el rol admin NO se entrega por API bajo ninguna circunstancia: se otorga a
+    # mano en la base. Asi nadie puede volverse dueño de la app desde afuera.
+    if rol == "admin":
+        raise HTTPException(status_code=403, detail="El rol de administrador no se puede asignar desde la app")
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if usuario.rol == "admin":
+        raise HTTPException(status_code=403, detail="No se puede cambiar el rol de un administrador")
     # un conductor sin vehiculo declarado no le sirve a nadie: no veria ni una carrera
     if rol == "conductor":
         elegido = tipo_vehiculo or usuario.tipo_vehiculo
@@ -513,7 +538,7 @@ def cambiar_rol(telefono: str, rol: str, restaurante_id: int = None,
             "restaurante_id": usuario.restaurante_id, "tipo_vehiculo": usuario.tipo_vehiculo}
 
 @app.get("/usuarios")
-def obtener_usuarios(db: Session = Depends(get_db)):
+def obtener_usuarios(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     usuarios = db.query(Usuario).all()
     return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol, "restaurante_id": u.restaurante_id} for u in usuarios]
 
@@ -594,11 +619,12 @@ def valor_mensual_de(conductor: Usuario, db: Session):
     return int(leer_config(clave, db, "0") or 0)
 
 @app.get("/config")
-def obtener_config(db: Session = Depends(get_db)):
+def obtener_config(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     return {c.clave: c.valor for c in db.query(Config).all()}
 
 @app.put("/config")
-def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db)):
+def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db),
+                      admin: Usuario = Depends(solo_admin)):
     permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url")
     if clave not in permitidas:
         raise HTTPException(status_code=400, detail="Ajuste no permitido")
@@ -615,7 +641,8 @@ def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db)):
     return {"clave": clave, "valor": valor}
 
 @app.put("/conductores/{conductor_id}/suscripcion")
-def registrar_pago(conductor_id: int, meses: int = 1, db: Session = Depends(get_db)):
+def registrar_pago(conductor_id: int, meses: int = 1, db: Session = Depends(get_db),
+                   admin: Usuario = Depends(solo_admin)):
     """El dueño confirma que el conductor le pago y le suma meses.
     Si todavia le quedaban dias, se le suman encima en vez de perderlos."""
     if meses < 1 or meses > 12:
@@ -632,7 +659,8 @@ def registrar_pago(conductor_id: int, meses: int = 1, db: Session = Depends(get_
             "dias_restantes": dias_restantes(conductor)}
 
 @app.delete("/conductores/{conductor_id}/suscripcion")
-def cancelar_suscripcion(conductor_id: int, db: Session = Depends(get_db)):
+def cancelar_suscripcion(conductor_id: int, db: Session = Depends(get_db),
+                         admin: Usuario = Depends(solo_admin)):
     conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
     if not conductor:
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
@@ -848,7 +876,8 @@ def cambiar_zona_lugar(lugar_id: int, zona: str, db: Session = Depends(get_db)):
 
 @app.post("/lugares")
 def crear_lugar(nombre: str, municipio: str = "Orito", zona: str = "urbano",
-                lat: float = None, lon: float = None, db: Session = Depends(get_db)):
+                lat: float = None, lon: float = None, db: Session = Depends(get_db),
+                admin: Usuario = Depends(solo_admin)):
     """Alta de lugares (tambien para importar puntos de OpenStreetMap con coordenadas)."""
     if zona not in ("urbano", "rural"):
         raise HTTPException(status_code=400, detail="Zona invalida: urbano o rural")
@@ -862,7 +891,8 @@ def crear_lugar(nombre: str, municipio: str = "Orito", zona: str = "urbano",
 
 @app.put("/lugares/{lugar_id}")
 def editar_lugar(lugar_id: int, zona: str = None, lat: float = None, lon: float = None,
-                 activo: str = None, db: Session = Depends(get_db)):
+                 activo: str = None, db: Session = Depends(get_db),
+                 admin: Usuario = Depends(solo_admin)):
     """Corregir un lugar: zona, coordenadas o desactivarlo."""
     lugar = db.query(Lugar).filter(Lugar.id == lugar_id).first()
     if not lugar:
@@ -1149,7 +1179,7 @@ def estadisticas_conductor(conductor_id: int, db: Session = Depends(get_db)):
     return {p: _resumen(finalizadas, desde) for p, desde in periodos.items()}
 
 @app.get("/estadisticas")
-def estadisticas_globales(db: Session = Depends(get_db)):
+def estadisticas_globales(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     """Para el dueño: pulso del negocio. Volumen de carreras y plata movida por
     periodo, mas conteos utiles para medir el desempeño de la app."""
     finalizadas = db.query(Carrera).filter(Carrera.estado == "finalizada").all()
@@ -1177,7 +1207,7 @@ def estadisticas_globales(db: Session = Depends(get_db)):
     }
 
 @app.get("/carreras")
-def todas_las_carreras(db: Session = Depends(get_db)):
+def todas_las_carreras(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     carreras = db.query(Carrera).order_by(Carrera.fecha.desc()).all()
     return con_conductor(carreras, db)
 

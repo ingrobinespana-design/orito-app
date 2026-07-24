@@ -22,6 +22,9 @@ class Usuario(Base):
     telefono = Column(String, unique=True)
     password = Column(String)
     rol = Column(String, default="cliente")
+    # llave de sesion que se entrega al entrar. El panel de administracion la
+    # exige: sin ella nadie puede tocar config, precios, usuarios ni roles.
+    token = Column(String, nullable=True, index=True)
     restaurante_id = Column(Integer, ForeignKey("restaurantes.id"), nullable=True)
     # municipio donde trabaja/vive. Separa las carreras: un conductor de Orito
     # no puede ver ni recibir avisos de carreras de Puerto Asis.
@@ -337,7 +340,7 @@ def crear_tablas():
                     "pago_nequi VARCHAR", "pago_daviplata VARCHAR", "pago_bancolombia VARCHAR",
                     "pago_breb VARCHAR", "foto_conductor VARCHAR", "foto_vehiculo VARCHAR",
                     "foto_tarjeta VARCHAR", "ubic_lat FLOAT", "ubic_lon FLOAT",
-                    "ubic_fecha TIMESTAMP"):
+                    "ubic_fecha TIMESTAMP", "token VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))

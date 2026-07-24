@@ -17,6 +17,14 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 const Stack = createNativeStackNavigator();
 
+// Llave de sesion del administrador. El servidor no deja tocar config, precios,
+// usuarios ni roles sin ella, asi nadie de afuera puede manipular el negocio.
+// Se guarda solo en memoria: al cerrar la app se pide entrar de nuevo.
+let llaveAdmin = null;
+const guardarLlave = (u) => { llaveAdmin = (u && u.token) || null; };
+const adminFetch = (url, opciones = {}) =>
+  fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-Admin-Token": llaveAdmin || "" } });
+
 // ===== rastreo en SEGUNDO PLANO del conductor con carrera activa =====
 // Un servicio de Android (notificacion fija "carrera en curso") sigue enviando
 // la ubicacion aunque el conductor cierre Tukan, bloquee el telefono o navegue
@@ -338,6 +346,7 @@ function LoginScreen({ navigation }) {
       .then((data) => {
         setCargando(false);
         if (data.detail) { setError(data.detail); return; }
+        guardarLlave(data);   // habilita el panel si este usuario es el admin
         registrarNotificaciones(data.id);
         if (data.rol === "admin") navigation.replace("Admin", { usuario: data });
         else if (data.rol === "domiciliario") navigation.replace("Domiciliario", { usuario: data });
@@ -820,7 +829,7 @@ function AdminScreen({ navigation, route }) {
   };
 
   const cargarUsuarios = () => {
-    fetch(`${API}/usuarios`).then(r => r.json()).then(data => { if (Array.isArray(data)) setUsuarios(data); });
+    adminFetch(`${API}/usuarios`).then(r => r.json()).then(data => { if (Array.isArray(data)) setUsuarios(data); });
   };
 
   const cargarPlatos = (restauranteId) => {
@@ -920,7 +929,7 @@ function AdminScreen({ navigation, route }) {
         const url = nuevoUsuario.rol === "restaurante"
           ? `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}&restaurante_id=${nuevoUsuario.restaurante_id}`
           : `${API}/usuarios/${nuevoUsuario.telefono}/rol?rol=${nuevoUsuario.rol}`;
-        fetch(url, { method: "PUT" }).then(() => {
+        adminFetch(url, { method: "PUT" }).then(() => {
           setMensaje("Usuario creado");
           setNuevoUsuario({ nombre: "", telefono: "", password: "", rol: "domiciliario", restaurante_id: "" });
           cargarUsuarios();
@@ -2958,9 +2967,9 @@ function AdminCarrerasScreen({ navigation }) {
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
-    fetch(`${API}/carreras`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCarreras(d); }).catch(() => {});
-    fetch(`${API}/estadisticas`).then(r => r.json()).then(d => { if (d && !d.detail) setGStats(d); }).catch(() => {});
-    fetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
+    adminFetch(`${API}/carreras`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCarreras(d); }).catch(() => {});
+    adminFetch(`${API}/estadisticas`).then(r => r.json()).then(d => { if (d && !d.detail) setGStats(d); }).catch(() => {});
+    adminFetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
   };
 
   useEffect(() => {
@@ -2973,13 +2982,13 @@ function AdminCarrerasScreen({ navigation }) {
     elegir(`Pago de ${c.nombre}`, "Cuantos meses le registro?",
       [1, 3, 6].map(m => ({
         texto: `${m} ${m === 1 ? "mes" : "meses"}`,
-        alElegir: () => fetch(`${API}/conductores/${c.id}/suscripcion?meses=${m}`, { method: "PUT" }).then(cargar),
+        alElegir: () => adminFetch(`${API}/conductores/${c.id}/suscripcion?meses=${m}`, { method: "PUT" }).then(cargar),
       })));
   };
 
   const quitarSuscripcion = (c) => {
     confirmar("Quitar suscripcion", `${c.nombre} dejara de recibir carreras.`,
-      () => fetch(`${API}/conductores/${c.id}/suscripcion`, { method: "DELETE" }).then(cargar),
+      () => adminFetch(`${API}/conductores/${c.id}/suscripcion`, { method: "DELETE" }).then(cargar),
       "Si, quitar");
   };
 
@@ -2990,7 +2999,7 @@ function AdminCarrerasScreen({ navigation }) {
       nuevo === "si"
         ? "Desde ahora solo los conductores con suscripcion al dia podran tomar carreras."
         : "Todos los conductores podran trabajar gratis.",
-      () => fetch(`${API}/config?clave=cobro_activo&valor=${nuevo}`, { method: "PUT" }).then(cargar));
+      () => adminFetch(`${API}/config?clave=cobro_activo&valor=${nuevo}`, { method: "PUT" }).then(cargar));
   };
 
   const activos = conductores.filter(c => c.al_dia).length;
@@ -3144,7 +3153,7 @@ function AdminCarrerasScreen({ navigation }) {
               placeholder="Ej: 59900"
               onEndEditing={(e) => {
                 const v = e.nativeEvent.text.replace(/\D/g, "");
-                if (v) fetch(`${API}/config?clave=valor_mensual_carro&valor=${v}`, { method: "PUT" }).then(cargar);
+                if (v) adminFetch(`${API}/config?clave=valor_mensual_carro&valor=${v}`, { method: "PUT" }).then(cargar);
               }}
               keyboardType="number-pad"
               style={styles.input}
@@ -3155,7 +3164,7 @@ function AdminCarrerasScreen({ navigation }) {
               placeholder="Ej: 39900"
               onEndEditing={(e) => {
                 const v = e.nativeEvent.text.replace(/\D/g, "");
-                if (v) fetch(`${API}/config?clave=valor_mensual_moto&valor=${v}`, { method: "PUT" }).then(cargar);
+                if (v) adminFetch(`${API}/config?clave=valor_mensual_moto&valor=${v}`, { method: "PUT" }).then(cargar);
               }}
               keyboardType="number-pad"
               style={styles.input}
@@ -3164,7 +3173,7 @@ function AdminCarrerasScreen({ navigation }) {
             <TextInput
               defaultValue={config.nequi_pagos}
               placeholder="Numero al que te transfieren"
-              onEndEditing={(e) => fetch(`${API}/config?clave=nequi_pagos&valor=${encodeURIComponent(e.nativeEvent.text)}`, { method: "PUT" }).then(cargar)}
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=nequi_pagos&valor=${encodeURIComponent(e.nativeEvent.text)}`, { method: "PUT" }).then(cargar)}
               keyboardType="phone-pad"
               style={styles.input}
             />
