@@ -107,6 +107,25 @@ def respaldo(clave: str = None, x_admin_token: str = Header(None), db: Session =
     return Response(content=cuerpo, media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
 
+@app.put("/apk-url")
+def actualizar_apk_url(clave: str, valor: str, db: Session = Depends(get_db)):
+    """Apunta el enlace publico (/apk) a un APK nuevo. Autorizado SOLO con la
+    clave dedicada RESPALDO_CLAVE (la misma del respaldo). Alcance minimo: solo
+    toca apk_url, nada mas. Sirve para actualizar el link tras compilar sin
+    depender de la sesion viva del admin."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    if not valor.startswith("https://"):
+        raise HTTPException(status_code=400, detail="El valor debe ser una URL https")
+    fila = db.query(Config).filter(Config.clave == "apk_url").first()
+    if fila:
+        fila.valor = valor
+    else:
+        db.add(Config(clave="apk_url", valor=valor))
+    db.commit()
+    return {"ok": True, "apk_url": valor}
+
 def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Candado del panel: sin la llave de sesion de un usuario con rol admin,
     nadie toca config, precios, usuarios ni roles. Se usa como Depends()."""
