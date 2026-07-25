@@ -1952,6 +1952,10 @@ function PedirCarreraScreen({ navigation, route }) {
       .then(async (r) => {
         setCargando(false);
         const d = await r.json().catch(() => null);
+        if (r.status === 401) {   // sesion vencida o app vieja: se manda a entrar de nuevo
+          avisar("Vuelve a entrar", "Tu sesion se venció. Ingresa de nuevo con tu telefono y contraseña.");
+          navigation.replace("Login"); return;
+        }
         if (!r.ok) { avisar("No se pudo pedir", (d && d.detail) || `El servidor respondio ${r.status}`); return; }
         if (!d || !d.id) { avisar("Error", "Respuesta inesperada del servidor."); return; }
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
