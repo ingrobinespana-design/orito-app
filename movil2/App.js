@@ -2536,6 +2536,7 @@ function ConductorScreen({ navigation, route }) {
   const [tab, setTab] = useState("solicitudes");
   const [miUbic, setMiUbic] = useState(null);   // ubicacion del conductor, para calcular distancia a cada carrera
   const [rutaCond, setRutaCond] = useState(null);   // {km, min} de su ruta por calles
+  const [rutaPreview, setRutaPreview] = useState(null);   // {km,min} ruta a la recogida de la solicitud enfocada (antes de aceptar)
   const [permisoFondo, setPermisoFondo] = useState(true);   // "todo el tiempo": para transmitir con la app cerrada
   // cuenta regresiva de 6s por solicitud nueva: guardamos cuando la vimos por
   // primera vez. Mientras < 6s se muestra grande con contraoferta rapida; luego
@@ -2993,6 +2994,39 @@ function ConductorScreen({ navigation, route }) {
                 <View style={{ height: 8 }} />
               </>
             )}
+
+            {/* MAPA SIEMPRE ABIERTO (sin carrera activa): muestra donde estas y,
+                cuando hay solicitud, traza la ruta hasta la recogida para dar
+                contexto y decidir/contraofertar rapido */}
+            {mias.length === 0 && disponible && (() => {
+              const foco = disponibles.find(c => c.origen_lat != null) || null;
+              const punto = foco ? { lat: foco.origen_lat, lon: foco.origen_lon } : null;
+              if (!miUbic) {
+                return (
+                  <View style={{ height: 88, borderRadius: 14, backgroundColor: "#EAF6EC", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+                    <ActivityIndicator color="#187830" />
+                    <Text style={{ fontSize: 12, color: "#187830", marginTop: 6 }}>Activando tu ubicación en el mapa…</Text>
+                  </View>
+                );
+              }
+              const km = rutaPreview && (rutaPreview.km < 1 ? `${Math.round(rutaPreview.km * 1000)} m` : `${rutaPreview.km.toFixed(1)} km`);
+              return (
+                <>
+                  <View style={{ height: 200, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
+                    <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")} punto={punto} conductor={miUbic} onInfo={setRutaPreview} lleno />
+                  </View>
+                  <View style={{ backgroundColor: foco ? "#FFF3E6" : "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Text style={{ fontSize: 16 }}>{foco ? "🚗" : "📍"}</Text>
+                    <Text style={{ flex: 1, fontSize: 12.5, fontWeight: "600", color: foco ? "#B85C00" : "#187830" }}>
+                      {foco
+                        ? (rutaPreview ? `Recogida a ${km} · ~${Math.max(1, rutaPreview.min)} min de ti` : "Calculando la ruta hasta la recogida…")
+                        : "Estás aquí. Cuando entre una solicitud verás la ruta hasta el pasajero."}
+                    </Text>
+                  </View>
+                </>
+              );
+            })()}
+
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={styles.seccionTitulo}>Solicitudes en vivo</Text>
               {disponible && (
