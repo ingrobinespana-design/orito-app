@@ -313,14 +313,26 @@ async function registrarNotificaciones(usuarioId) {
       Constants?.easConfig?.projectId;
     if (!projectId) return { ok: false, motivo: "Falta el projectId en la configuracion." };
 
-    let token;
-    try {
-      const res = await Notifications.getExpoPushTokenAsync({ projectId });
-      token = res.data;
-    } catch (e) {
-      return { ok: false, motivo: "Error obteniendo el token (FCM): " + (e.message || String(e)) };
+    // FCM a veces responde SERVICE_NOT_AVAILABLE (red/Google Play temporal);
+    // se reintenta unas veces con espera, que suele destrabarlo
+    let token, ultimoError;
+    for (let i = 0; i < 4; i++) {
+      try {
+        const res = await Notifications.getExpoPushTokenAsync({ projectId });
+        token = res.data;
+        break;
+      } catch (e) {
+        ultimoError = e;
+        await new Promise((res) => setTimeout(res, 2500 * (i + 1)));
+      }
     }
-    if (!token) return { ok: false, motivo: "No se obtuvo token." };
+    if (!token) {
+      const msg = (ultimoError && (ultimoError.message || String(ultimoError))) || "sin token";
+      const pista = msg.includes("SERVICE_NOT_AVAILABLE")
+        ? "\n\nEsto es temporal (red o Google Play). Revisa que tengas buen internet, y vuelve a tocar 'Re-registrar'. Si sigue, reinicia el teléfono."
+        : "";
+      return { ok: false, motivo: "Error obteniendo el token (FCM): " + msg + pista };
+    }
 
     const r = await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
     if (!r.ok) return { ok: false, motivo: "El servidor rechazo el token (HTTP " + r.status + ").", token };
@@ -2960,12 +2972,11 @@ function ConductorScreen({ navigation, route }) {
           <>
             {!permisoFondo && Platform.OS !== "web" && (
               <TouchableOpacity
-                style={[styles.card, { backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D", marginBottom: 12 }]}
+                style={{ backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D", borderRadius: 10, paddingVertical: 7, paddingHorizontal: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}
                 onPress={pedirPermisoFondo}>
-                <Text style={{ fontWeight: "700", color: "#8A5A00", fontSize: 14 }}>🛰️ Activa "Ubicacion todo el tiempo"</Text>
-                <Text style={{ fontSize: 12, color: "#8A5A00", marginTop: 4 }}>
-                  Para que el cliente te vea venir en el mapa aunque tengas Tukán cerrada o
-                  estes navegando con Google Maps. Toca aqui y elige "Permitir todo el tiempo".
+                <Text style={{ fontSize: 15 }}>🛰️</Text>
+                <Text style={{ flex: 1, fontSize: 11.5, color: "#8A5A00", fontWeight: "600" }}>
+                  Activa "Ubicación todo el tiempo" para que te vean venir · <Text style={{ textDecorationLine: "underline" }}>tocar</Text>
                 </Text>
               </TouchableOpacity>
             )}
@@ -3027,7 +3038,7 @@ function ConductorScreen({ navigation, route }) {
               const km = rutaPreview && (rutaPreview.km < 1 ? `${Math.round(rutaPreview.km * 1000)} m` : `${rutaPreview.km.toFixed(1)} km`);
               return (
                 <>
-                  <View style={{ height: 200, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
+                  <View style={{ height: 250, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
                     <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")} punto={punto} conductor={miUbic} onInfo={setRutaPreview} lleno />
                   </View>
                   <View style={{ backgroundColor: foco ? "#FFF3E6" : "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, flexDirection: "row", alignItems: "center", gap: 8 }}>
