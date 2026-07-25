@@ -2532,6 +2532,9 @@ function ConductorScreen({ navigation, route }) {
   const [disponibles, setDisponibles] = useState([]);
   const [mias, setMias] = useState([]);
   const [disponible, setDisponible] = useState(usuario.disponible === "si");
+  // el setInterval de cargar() captura el 'disponible' del primer render (stale
+  // closure); este ref siempre tiene el valor actual para el ping
+  const dispRef = useRef(usuario.disponible === "si");
   const [cuenta, setCuenta] = useState(null);
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("solicitudes");
@@ -2610,7 +2613,7 @@ function ConductorScreen({ navigation, route }) {
         } else {
           const hayNueva = d.some(c => !idsVistos.current.has(c.id));
           idsVistos.current = idsAhora;
-          if (hayNueva && disponible) pingSolicitud();
+          if (hayNueva && dispRef.current) pingSolicitud();
         }
         animar(); setDisponibles(d);
       }).catch(() => {});
@@ -2645,6 +2648,7 @@ function ConductorScreen({ navigation, route }) {
   const cambiarDisponibilidad = () => {
     const nuevo = !disponible;
     setDisponible(nuevo);
+    dispRef.current = nuevo;
     userFetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
   };
 
