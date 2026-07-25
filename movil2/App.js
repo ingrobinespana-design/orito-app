@@ -1760,6 +1760,11 @@ function PedirCarreraScreen({ navigation, route }) {
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
   const [contraofertas, setContraofertas] = useState([]);
+  // cuenta regresiva de 6s por contraoferta nueva: cuando el cliente la vio por
+  // primera vez. Mientras < 6s se resalta con la cuenta; luego sigue en la lista.
+  const VENTANA_OF = 6000;
+  const ofRecibidas = useRef({});
+  const [ahoraOf, setAhoraOf] = useState(Date.now());
   const [rutaInfo, setRutaInfo] = useState(null);    // {km, min} reales por calle (OSRM)
   const [cargando, setCargando] = useState(false);
   // solicitudes activas del cliente y si esta mirando el formulario en vez del
@@ -1969,11 +1974,24 @@ function PedirCarreraScreen({ navigation, route }) {
   useEffect(() => {
     if (!carrera || carrera.estado !== "buscando") { setContraofertas([]); return; }
     const traer = () => fetch(`${API}/carreras/${carrera.id}/ofertas`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setContraofertas(d); }).catch(() => {});
+      .then(d => {
+        if (!Array.isArray(d)) return;
+        const t = Date.now();
+        d.forEach(of => { if (!ofRecibidas.current[of.id]) ofRecibidas.current[of.id] = t; });
+        setContraofertas(d);
+      }).catch(() => {});
     traer();
-    const t = setInterval(traer, 5000);
+    const t = setInterval(traer, 3000);   // 3s: para que la contraoferta llegue rapido
     return () => clearInterval(t);
   }, [carrera]);
+
+  // reloj de la cuenta regresiva de las contraofertas (solo si hay alguna fresca)
+  useEffect(() => {
+    const hayFrescas = contraofertas.some(of => (Date.now() - (ofRecibidas.current[of.id] || 0)) < VENTANA_OF);
+    if (!hayFrescas) return;
+    const t = setInterval(() => setAhoraOf(Date.now()), 300);
+    return () => clearInterval(t);
+  }, [contraofertas, ahoraOf]);
 
   const aceptarContraoferta = (of) => {
     confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}?`,
@@ -2083,22 +2101,39 @@ function PedirCarreraScreen({ navigation, route }) {
               {contraofertas.length > 0 && (
                 <>
                   <Text style={styles.seccionTitulo}>Precios que te proponen</Text>
-                  {contraofertas.map((of) => (
-                    <View key={of.id} style={[styles.card, { marginBottom: 10 }]}>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  {contraofertas.map((of) => {
+                    // fresca (< 6s): resaltada con cuenta regresiva; luego sigue
+                    // en la lista, aceptable, sin la cuenta
+                    const restante = VENTANA_OF - (ahoraOf - (ofRecibidas.current[of.id] || 0));
+                    const fresca = restante > 0;
+                    const seg = Math.max(1, Math.ceil(restante / 1000));
+                    const pct = Math.max(0, Math.min(100, (restante / VENTANA_OF) * 100));
+                    return (
+                    <View key={of.id} style={fresca ? [styles.urgente, { padding: 14 }] : [styles.card, { marginBottom: 10 }]}>
+                      {fresca && (
+                        <>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <Text style={{ fontSize: 12, letterSpacing: 1, color: "#B85C00", fontWeight: "800" }}>NUEVA OFERTA</Text>
+                            <View style={styles.cuenta}><Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{seg}</Text></View>
+                          </View>
+                          <View style={styles.barraFondo}><View style={[styles.barra, { width: `${pct}%` }]} /></View>
+                        </>
+                      )}
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: fresca ? 10 : 0 }}>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: "600", fontSize: 15 }}>{of.conductor_nombre}</Text>
                           <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
                             {vehIcono(of.conductor_tipo)} {of.conductor_placa || ""}
                           </Text>
                         </View>
-                        <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${of.monto.toLocaleString()}</Text>
+                        <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>${of.monto.toLocaleString()}</Text>
                       </View>
-                      <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 10 }]} onPress={() => aceptarContraoferta(of)}>
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => aceptarContraoferta(of)}>
                         <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar a este precio</Text>
                       </TouchableOpacity>
                     </View>
-                  ))}
+                    );
+                  })}
                 </>
               )}
             </>
@@ -2476,6 +2511,13 @@ function ConductorScreen({ navigation, route }) {
   const [miUbic, setMiUbic] = useState(null);   // ubicacion del conductor, para calcular distancia a cada carrera
   const [rutaCond, setRutaCond] = useState(null);   // {km, min} de su ruta por calles
   const [permisoFondo, setPermisoFondo] = useState(true);   // "todo el tiempo": para transmitir con la app cerrada
+  // cuenta regresiva de 6s por solicitud nueva: guardamos cuando la vimos por
+  // primera vez. Mientras < 6s se muestra grande con contraoferta rapida; luego
+  // baja al listado normal (sigue disponible). primeraCarga evita sonar al abrir.
+  const VENTANA = 6000;
+  const recibidas = useRef({});
+  const idsVistos = useRef(null);
+  const [ahora, setAhora] = useState(Date.now());
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -2509,10 +2551,37 @@ function ConductorScreen({ navigation, route }) {
     })();
   }, []);
 
+  // suena un ping fuerte dentro de la app cuando llega una solicitud nueva
+  // (ademas del push). Usa el mismo canal MAX, asi no depende de que el push
+  // alcance a llegar mientras el conductor mira la pantalla.
+  const pingSolicitud = () => {
+    if (Platform.OS === "web") return;
+    Notifications.scheduleNotificationAsync({
+      content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "default" },
+      trigger: Platform.OS === "android" ? { channelId: "carreras", seconds: 1 } : null,
+    }).catch(() => {});
+  };
+
   const cargar = () => {
     // con conductor_id el servidor filtra por municipio y tipo de vehiculo
     fetch(`${API}/carreras/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) { animar(); setDisponibles(d); } }).catch(() => {});
+      .then(d => {
+        if (!Array.isArray(d)) return;
+        const t = Date.now();
+        const idsAhora = new Set(d.map(c => c.id));
+        // primera vez que vemos cada solicitud -> arranca su ventana de 6s
+        d.forEach(c => { if (!recibidas.current[c.id]) recibidas.current[c.id] = t; });
+        // detectar nuevas (no en la carga anterior) para el ping; en la primera
+        // carga solo memorizamos, no sonamos, para no pitar al abrir la app
+        if (idsVistos.current === null) {
+          idsVistos.current = idsAhora;
+        } else {
+          const hayNueva = d.some(c => !idsVistos.current.has(c.id));
+          idsVistos.current = idsAhora;
+          if (hayNueva && disponible) pingSolicitud();
+        }
+        animar(); setDisponibles(d);
+      }).catch(() => {});
     fetch(`${API}/carreras/conductor/${usuario.id}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setMias(d.filter(c => ["aceptada", "en_camino"].includes(c.estado))); })
       .catch(() => {});
@@ -2531,6 +2600,15 @@ function ConductorScreen({ navigation, route }) {
     const toque = Notifications.addNotificationResponseReceivedListener(cargar);
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
   }, []);
+
+  // reloj de la cuenta regresiva: solo tictaquea si hay alguna solicitud dentro
+  // de su ventana de 6s, para no re-renderizar de gusto
+  useEffect(() => {
+    const hayFrescas = disponibles.some(c => (Date.now() - (recibidas.current[c.id] || 0)) < VENTANA);
+    if (!hayFrescas) return;
+    const t = setInterval(() => setAhora(Date.now()), 300);
+    return () => clearInterval(t);
+  }, [disponibles, ahora]);
 
   const cambiarDisponibilidad = () => {
     const nuevo = !disponible;
@@ -2603,21 +2681,86 @@ function ConductorScreen({ navigation, route }) {
   const [contraofertando, setContraofertando] = useState(null);
   const [montoOferta, setMontoOferta] = useState("");
 
-  const contraofertar = () => {
-    const monto = parseInt((montoOferta || "").replace(/\D/g, ""), 10);
-    if (!monto) { avisar("Falta el precio", "Escribe cuanto quieres cobrar"); return; }
-    const id = contraofertando.id;
-    setContraofertando(null); setMontoOferta("");
+  // envia una contraoferta al servidor (usada por el teclado y por los botones
+  // rapidos de un toque)
+  const enviarOferta = (id, monto, silencioso) => {
     userFetch(`${API}/carreras/${id}/ofertas?conductor_id=${usuario.id}&monto=${monto}`, { method: "POST" })
       .then(async (r) => {
         const d = await r.json();
         if (r.status === 409) { avisar("Muy tarde", "Esa carrera ya no esta disponible."); cargar(); return; }
         if (r.status === 402) { avisar("Suscripcion vencida", d.detail); return; }
         if (d.detail) { avisar("No se pudo", d.detail); return; }
-        avisar("Oferta enviada", "El cliente vera tu precio y decide.");
+        if (!silencioso) avisar("Oferta enviada", "El cliente vera tu precio y decide.");
         cargar();
       })
       .catch(() => avisar("Error", "No hay conexion."));
+  };
+
+  const contraofertar = () => {
+    const monto = parseInt((montoOferta || "").replace(/\D/g, ""), 10);
+    if (!monto) { avisar("Falta el precio", "Escribe cuanto quieres cobrar"); return; }
+    const id = contraofertando.id;
+    setContraofertando(null); setMontoOferta("");
+    enviarOferta(id, monto);
+  };
+
+  // contraoferta de UN toque: precios sugeridos por encima de lo que ofrece el
+  // cliente, redondeados al mil
+  const contraofertaRapida = (c, monto) => enviarOferta(c.id, monto, true);
+  const sugerencias = (of) => (of ? [of + 1000, of + 2000, of + 3000] : []);
+
+  // tarjeta GRANDE de solicitud recien llegada, con cuenta regresiva de 6s y
+  // contraoferta de un toque. Al vencerse, el feed la muestra como tarjeta normal.
+  const tarjetaUrgente = (c, restante) => {
+    const seg = Math.max(1, Math.ceil(restante / 1000));
+    const pct = Math.max(0, Math.min(100, (restante / VENTANA) * 100));
+    const kmAlOrigen = miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
+    const fmtKm = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
+    const of = c.tarifa_ofrecida;
+    return (
+      <View key={c.id} style={styles.urgente}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontSize: 12, letterSpacing: 1, color: "#B85C00", fontWeight: "800" }}>
+            {esCarga(c.vehiculo_pedido) ? "🚚 NUEVO ACARREO" : "NUEVA SOLICITUD"}
+          </Text>
+          <View style={styles.cuenta}><Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{seg}</Text></View>
+        </View>
+        <View style={styles.barraFondo}><View style={[styles.barra, { width: `${pct}%` }]} /></View>
+
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            {kmAlOrigen != null && <Text style={{ fontSize: 12, color: "#187830", fontWeight: "700", marginBottom: 3 }}>📍 A ~{fmtKm(kmAlOrigen)} de ti</Text>}
+            <Text style={{ fontSize: 14, color: "#333" }} numberOfLines={1}>🟢 {c.origen}</Text>
+            <Text style={{ fontSize: 14, color: "#333", marginTop: 1 }} numberOfLines={1}>🔴 {c.destino}</Text>
+          </View>
+          {of ? <Text style={{ fontSize: 24, fontWeight: "800", color: "#187830", paddingLeft: 8 }}>${of.toLocaleString()}</Text> : null}
+        </View>
+
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12, padding: 13 }]} onPress={() => aceptar(c)}>
+          <Text style={styles.buttonText}>{of ? `Aceptar $${of.toLocaleString()}` : "Tomar"}</Text>
+        </TouchableOpacity>
+
+        {of ? (
+          <>
+            <Text style={[styles.ayuda, { marginTop: 8, marginBottom: 4 }]}>O contraoferta en un toque:</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {sugerencias(of).map((m) => (
+                <TouchableOpacity key={m} style={styles.chipOferta} onPress={() => contraofertaRapida(c, m)}>
+                  <Text style={styles.chipOfertaTxt}>${m.toLocaleString()}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.chipOtro} onPress={() => { setMontoOferta(String(of)); setContraofertando(c); }}>
+                <Text style={{ color: "#888", fontWeight: "700", fontSize: 14 }}>Otro</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", marginTop: 8, padding: 11 }]} onPress={() => { setContraofertando(c); }}>
+            <Text style={{ color: "#187830", fontWeight: "600" }}>Proponer precio</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
   };
 
   const tarjeta = (c, propia) => {
@@ -2843,7 +2986,12 @@ function ConductorScreen({ navigation, route }) {
                 <Text style={{ fontSize: 40 }}>😴</Text>
                 <Text style={{ color: "#888", marginTop: 8 }}>Esperando solicitudes...</Text>
               </View>
-            ) : disponibles.map(c => tarjeta(c, false))}
+            ) : disponibles.map(c => {
+              // recien llegada (< 6s): tarjeta grande con cuenta regresiva y
+              // contraoferta rapida. Pasados los 6s baja al listado normal.
+              const restante = VENTANA - (ahora - (recibidas.current[c.id] || 0));
+              return restante > 0 ? tarjetaUrgente(c, restante) : tarjeta(c, false);
+            })}
           </>
         )}
 
@@ -3547,6 +3695,13 @@ const styles = StyleSheet.create({
   tabBar: { flexDirection: "row", borderTopWidth: 0.5, borderTopColor: "#ddd", backgroundColor: "#fff", paddingBottom: 6, paddingTop: 8 },
   tabBarItem: { flex: 1, alignItems: "center" },
   log: { backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: "#187830", elevation: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 },
+  urgente: { backgroundColor: "#fff", borderRadius: 16, padding: 15, marginBottom: 12, borderWidth: 2, borderColor: "#F06000", elevation: 3, shadowColor: "#F06000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6 },
+  cuenta: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#F06000", alignItems: "center", justifyContent: "center" },
+  barraFondo: { height: 5, backgroundColor: "#eee", borderRadius: 3, marginTop: 8, overflow: "hidden" },
+  barra: { height: 5, backgroundColor: "#F06000", borderRadius: 3 },
+  chipOferta: { flex: 1, borderWidth: 1.5, borderColor: "#F06000", borderRadius: 12, paddingVertical: 11, alignItems: "center" },
+  chipOfertaTxt: { color: "#B85C00", fontWeight: "800", fontSize: 15 },
+  chipOtro: { borderWidth: 1.5, borderColor: "#ccc", borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center" },
   fotoBox: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: "#F1F8F1", borderWidth: 1, borderColor: "#187830", borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   statCelda: { width: "50%", paddingVertical: 8 },
   botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
