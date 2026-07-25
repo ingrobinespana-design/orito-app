@@ -284,14 +284,12 @@ function avisar(titulo, mensaje) {
   Alert.alert(titulo, mensaje);
 }
 
-/** Pide permiso, saca el token de Expo y lo guarda en el servidor.
- *  Si algo falla no se avisa al usuario: la app funciona igual, solo que
- *  tocara mirar la pantalla en vez de esperar el sonido. */
+/** Pide permiso, saca el token de Expo y lo guarda en el servidor. Devuelve un
+ *  diagnostico {ok, motivo, token} para poder ver EN PANTALLA donde falla. */
 async function registrarNotificaciones(usuarioId) {
   try {
     if (Platform.OS === "android") {
-      // El canal define que suene fuerte y salte en pantalla. Sin esto Android
-      // la trata como aviso silencioso y el conductor no se entera.
+      // El canal define que suene fuerte y salte en pantalla.
       await Notifications.setNotificationChannelAsync("carreras2", {
         name: "Carreras",
         importance: Notifications.AndroidImportance.MAX,
@@ -301,26 +299,34 @@ async function registrarNotificaciones(usuarioId) {
         bypassDnd: true,      // suena aunque este en "No molestar"
       });
     }
-    if (!Device.isDevice) return;   // no funciona en emulador
+    if (!Device.isDevice) return { ok: false, motivo: "Debe ser un telefono real (no emulador)." };
 
     const permiso = await Notifications.getPermissionsAsync();
     let estado = permiso.status;
     if (estado !== "granted") {
       estado = (await Notifications.requestPermissionsAsync()).status;
     }
-    if (estado !== "granted") return;
+    if (estado !== "granted") return { ok: false, motivo: "No diste permiso de notificaciones." };
 
     const projectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
       Constants?.easConfig?.projectId;
-    if (!projectId) return;
+    if (!projectId) return { ok: false, motivo: "Falta el projectId en la configuracion." };
 
-    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
-    if (!token) return;
+    let token;
+    try {
+      const res = await Notifications.getExpoPushTokenAsync({ projectId });
+      token = res.data;
+    } catch (e) {
+      return { ok: false, motivo: "Error obteniendo el token (FCM): " + (e.message || String(e)) };
+    }
+    if (!token) return { ok: false, motivo: "No se obtuvo token." };
 
-    await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
+    const r = await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
+    if (!r.ok) return { ok: false, motivo: "El servidor rechazo el token (HTTP " + r.status + ").", token };
+    return { ok: true, motivo: "Token guardado.", token };
   } catch (e) {
-    console.log("No se pudieron activar las notificaciones:", e);
+    return { ok: false, motivo: "Error: " + (e.message || String(e)) };
   }
 }
 
@@ -3491,11 +3497,14 @@ function ConfiguracionScreen({ navigation, route }) {
   };
 
   const activarNotificaciones = async () => {
-    await registrarNotificaciones(usuario.id);
+    const r = await registrarNotificaciones(usuario.id);
     const p = await Notifications.getPermissionsAsync();
     setNotifOk(p.status === "granted");
-    if (p.status === "granted") avisar("Listo", "Recibiras las carreras aunque tengas la app cerrada.");
-    else avisar("Activalas en el telefono", "Ve a Ajustes > Apps > Tukán > Notificaciones y activalas.");
+    if (r && r.ok) {
+      avisar("✅ Notificaciones activas", "Recibiras las carreras aunque tengas la app cerrada.\n\nToken: " + (r.token ? r.token.slice(0, 30) + "…" : "sí"));
+    } else {
+      avisar("⚠️ No quedó activo", (r && r.motivo ? r.motivo : "Intenta de nuevo.") + "\n\nMuéstrale esta pantalla al soporte.");
+    }
   };
 
   useEffect(() => {
