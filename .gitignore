@@ -11,3 +11,7 @@ node_modules/
 .expo/
 dist/
 web-build/
+
+# llaves secretas de Firebase (NUNCA subir)
+*firebase-adminsdk*.json
+service-account*.json

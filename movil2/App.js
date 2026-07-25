@@ -295,9 +295,10 @@ async function registrarNotificaciones(usuarioId) {
       await Notifications.setNotificationChannelAsync("carreras", {
         name: "Carreras",
         importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        sound: "default",
+        vibrationPattern: [0, 500, 220, 500],
+        sound: "tono.wav",   // tono propio fuerte (bundleado en el APK 1.0.2)
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,      // suena aunque este en "No molestar"
       });
     }
     if (!Device.isDevice) return;   // no funciona en emulador
@@ -2588,7 +2589,7 @@ function ConductorScreen({ navigation, route }) {
     try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
     // ademas el tono de notificacion (si dio permiso y no esta en silencio)
     Notifications.scheduleNotificationAsync({
-      content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "default" },
+      content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "tono.wav" },
       trigger: Platform.OS === "android" ? { channelId: "carreras", seconds: 1 } : null,
     }).catch(() => {});
   };
