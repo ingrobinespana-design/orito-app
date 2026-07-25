@@ -1638,20 +1638,28 @@ function mapaSeguimientoHTML() {
   #btns button{border:none;border-radius:22px;padding:9px 13px;font-size:13px;font-weight:700;
     box-shadow:0 2px 6px rgba(0,0,0,.25);background:#fff;color:#187830}
   #btns button.on{background:#187830;color:#fff}
+  #leyenda{position:absolute;left:8px;bottom:8px;z-index:1000;background:rgba(255,255,255,.92);
+    border-radius:10px;padding:5px 9px;font-size:12px;font-weight:600;color:#333;
+    box-shadow:0 1px 4px rgba(0,0,0,.2);line-height:1.15}
 </style>
 </head><body><div id="map"></div>
 <div id="btns">
   <button id="bSeguir" class="on" onclick="modoSeguir()">📍 Seguir</button>
   <button id="bRuta" onclick="modoRuta()">🗺️ Ruta</button>
 </div>
+<div id="leyenda">🚗 Tú · 📍 Recogida · 🏁 Destino</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
   var icoCarro = L.divIcon({html:'🚗', className:'em carro', iconSize:[34,34], iconAnchor:[17,17]});
-  var pin = null, carro = null, linea = null, rutaCapa = null, ultimaRuta = null;
-  var dLat = null, dLon = null;   // punto de referencia (origen o destino), inyectado
+  var icoDest = L.divIcon({html:'🏁', className:'em', iconSize:[30,30], iconAnchor:[8,28]});
+  var pin = null, carro = null, mDest = null;
+  var linea = null, rutaCapa = null, capaDest = null, ultimaRuta = null;
+  var recLat = null, recLon = null, destLat = null, destLon = null;   // recogida (📍) y destino (🏁)
+  var dLat = null, dLon = null;   // objetivo de la ruta VERDE, segun metaRuta
+  var metaRuta = null;            // 'recogida' | 'destino'
   var seguir = true, primera = true, animId = null;
   var ZOOM = 16;                  // que tan cerca sigue al carro
 
@@ -1665,8 +1673,13 @@ function mapaSeguimientoHTML() {
   }
   function modoRuta(){
     seguir = false; botones();
-    if(rutaCapa){ map.fitBounds(rutaCapa.getBounds().pad(0.15)); }
-    else if(carro && dLat != null){ map.fitBounds(L.latLngBounds([carro.getLatLng(), [dLat, dLon]]).pad(0.25)); }
+    // encuadra TODO lo que exista: 🚗 tu, 📍 recogida y 🏁 destino
+    var pts = [];
+    if(carro){ pts.push(carro.getLatLng()); }
+    if(recLat != null){ pts.push([recLat, recLon]); }
+    if(destLat != null){ pts.push([destLat, destLon]); }
+    if(pts.length >= 2){ map.fitBounds(L.latLngBounds(pts).pad(0.25)); }
+    else if(pts.length === 1){ map.setView(pts[0], Math.max(map.getZoom(), 14)); }
   }
   // si el usuario arrastra el mapa a mano, dejamos de perseguir el carro para no
   // pelearle la camara; puede volver a "Seguir" con el boton
@@ -1711,13 +1724,50 @@ function mapaSeguimientoHTML() {
     }
     animId = requestAnimationFrame(paso);
   }
-  function punto(la, lo){
-    dLat = la; dLon = lo;
+  // cual punto persigue la ruta VERDE (y el km/min): recogida por defecto
+  function aplicarMeta(){
+    if(metaRuta === 'destino' && destLat != null){ dLat = destLat; dLon = destLon; }
+    else if(recLat != null){ dLat = recLat; dLon = recLon; }
+    else if(destLat != null){ dLat = destLat; dLon = destLon; }
+    else { dLat = null; dLon = null; }
+  }
+  function rutaA(cual){
+    metaRuta = cual; aplicarMeta(); ultimaRuta = null;
+    if(carro && dLat != null){ var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
+  }
+  // linea punteada del viaje completo: de la recogida (📍) al destino (🏁)
+  function dibujarContexto(){
+    if(recLat == null || destLat == null) return;
+    var url = 'https://router.project-osrm.org/route/v1/driving/' + recLon + ',' + recLat + ';' + destLon + ',' + destLat + '?overview=full&geometries=geojson';
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if(!d.routes || !d.routes[0]) throw 0;
+      var pts = d.routes[0].geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
+      if(capaDest){ map.removeLayer(capaDest); }
+      capaDest = L.polyline(pts, {color:'#C0392B', weight:4, opacity:0.5, dashArray:'1 8'}).addTo(map);
+    }).catch(function(){
+      if(capaDest){ map.removeLayer(capaDest); }
+      capaDest = L.polyline([[recLat,recLon],[destLat,destLon]], {color:'#C0392B', weight:3, opacity:0.5, dashArray:'1 8'}).addTo(map);
+    });
+  }
+  // 📍 donde recoge al cliente
+  function recogida(la, lo){
+    recLat = la; recLon = lo;
     if(!pin){ pin = L.marker([la, lo], {icon:icoPin}).addTo(map); }
     else { pin.setLatLng([la, lo]); }
-    ultimaRuta = null;   // referencia nueva: la ruta se recalcula
+    aplicarMeta(); ultimaRuta = null; dibujarContexto();
     if(!carro){ map.setView([la, lo], ZOOM); }
-    else { var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
+    else if(metaRuta !== 'destino'){ var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
+  }
+  // compatibilidad: pantallas que aun inyectan punto()
+  function punto(la, lo){ recogida(la, lo); }
+  // 🏁 a donde va la carrera
+  function destino(la, lo){
+    destLat = la; destLon = lo;
+    if(!mDest){ mDest = L.marker([la, lo], {icon:icoDest}).addTo(map); }
+    else { mDest.setLatLng([la, lo]); }
+    aplicarMeta(); dibujarContexto();
+    if(!carro && !pin){ map.setView([la, lo], ZOOM); }
+    else if(metaRuta === 'destino' && carro){ ultimaRuta = null; var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
   }
   function conductor(la, lo){
     if(!carro){
@@ -1734,7 +1784,7 @@ function mapaSeguimientoHTML() {
 </script></body></html>`;
 }
 
-function MapaSeguimiento({ punto, conductor, onInfo, lleno }) {
+function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
   // el HTML es FIJO (sin coordenadas) y se genera una sola vez por montaje: si
@@ -1743,22 +1793,34 @@ function MapaSeguimiento({ punto, conductor, onInfo, lleno }) {
   // antes, si la carrera se pedia sin pin, el HTML nacia null y el mapa no
   // aparecia NUNCA aunque el conductor ya estuviera reportando su ubicacion.
   const html = useMemo(() => mapaSeguimientoHTML(), []);
+  // "punto" queda como alias de recogida para no romper llamados viejos
+  const rec = recogida || punto || null;
   // cada vez que llega posicion nueva (o el mapa termina de cargar), se inyecta
   useEffect(() => {
     if (!listo || !webRef.current) return;
-    if (punto && punto.lat != null) {
-      webRef.current.injectJavaScript(`punto(${punto.lat}, ${punto.lon}); true;`);
+    if (rec && rec.lat != null) {
+      webRef.current.injectJavaScript(`recogida(${rec.lat}, ${rec.lon}); true;`);
     }
-  }, [listo, punto && punto.lat, punto && punto.lon]);
+  }, [listo, rec && rec.lat, rec && rec.lon]);
+  useEffect(() => {
+    if (!listo || !webRef.current) return;
+    if (destino && destino.lat != null) {
+      webRef.current.injectJavaScript(`destino(${destino.lat}, ${destino.lon}); true;`);
+    }
+  }, [listo, destino && destino.lat, destino && destino.lon]);
   useEffect(() => {
     if (!listo || !webRef.current) return;
     if (conductor && conductor.lat != null) {
       webRef.current.injectJavaScript(`conductor(${conductor.lat}, ${conductor.lon}); true;`);
     }
   }, [listo, conductor && conductor.lat, conductor && conductor.lon]);
+  useEffect(() => {
+    if (!listo || !webRef.current || !rutaA) return;
+    webRef.current.injectJavaScript(`rutaA(${JSON.stringify(rutaA)}); true;`);
+  }, [listo, rutaA]);
   // chequeo VIVO en cada render: el mapa se muestra apenas exista alguna
   // coordenada, sin importar cuando llego
-  const hayDatos = (punto && punto.lat != null) || (conductor && conductor.lat != null);
+  const hayDatos = (rec && rec.lat != null) || (destino && destino.lat != null) || (conductor && conductor.lat != null);
   if (!hayDatos) return null;
   return (
     // "lleno": ocupa todo el alto del contenedor (mapa fijo arriba, fuera de la
@@ -2076,7 +2138,12 @@ function PedirCarreraScreen({ navigation, route }) {
 
         {hayMapa && (
           <View style={{ height: 300, backgroundColor: "#e8e8e8" }}>
-            <MapaSeguimiento key={carrera.estado} punto={punto} conductor={cond} onInfo={setRutaInfo} lleno />
+            <MapaSeguimiento key={carrera.estado}
+              conductor={cond}
+              recogida={carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null}
+              destino={carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null}
+              rutaA={carrera.estado === "aceptada" ? "recogida" : "destino"}
+              onInfo={setRutaInfo} lleno />
           </View>
         )}
 
@@ -2995,7 +3062,12 @@ function ConductorScreen({ navigation, route }) {
                   const info = rutaCond;
                   return (
                     <>
-                      <MapaSeguimiento key={"cond-" + c.estado} punto={punto} conductor={miUbic} onInfo={setRutaCond} />
+                      <MapaSeguimiento key={"cond-" + c.estado}
+                        conductor={miUbic}
+                        recogida={c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null}
+                        destino={c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null}
+                        rutaA={c.estado === "aceptada" ? "recogida" : "destino"}
+                        onInfo={setRutaCond} />
                       <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                         {(info || dist != null) && (
                           <View style={{ flex: 1, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, alignItems: "center", justifyContent: "center" }}>
@@ -3039,7 +3111,12 @@ function ConductorScreen({ navigation, route }) {
               return (
                 <>
                   <View style={{ height: 250, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
-                    <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")} punto={punto} conductor={miUbic} onInfo={setRutaPreview} lleno />
+                    <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")}
+                      conductor={miUbic}
+                      recogida={punto}
+                      destino={foco && foco.destino_lat != null ? { lat: foco.destino_lat, lon: foco.destino_lon } : null}
+                      rutaA="recogida"
+                      onInfo={setRutaPreview} lleno />
                   </View>
                   <View style={{ backgroundColor: foco ? "#FFF3E6" : "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, flexDirection: "row", alignItems: "center", gap: 8 }}>
                     <Text style={{ fontSize: 16 }}>{foco ? "🚗" : "📍"}</Text>
