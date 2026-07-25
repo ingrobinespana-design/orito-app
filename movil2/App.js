@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -2583,6 +2583,10 @@ function ConductorScreen({ navigation, route }) {
   // alcance a llegar mientras el conductor mira la pantalla.
   const pingSolicitud = () => {
     if (Platform.OS === "web") return;
+    // vibracion fuerte: se siente aunque el telefono este en silencio (no
+    // depende del permiso de notificaciones ni de modulos nativos extra)
+    try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
+    // ademas el tono de notificacion (si dio permiso y no esta en silencio)
     Notifications.scheduleNotificationAsync({
       content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "default" },
       trigger: Platform.OS === "android" ? { channelId: "carreras", seconds: 1 } : null,
