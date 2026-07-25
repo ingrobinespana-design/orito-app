@@ -126,6 +126,35 @@ def actualizar_apk_url(clave: str, valor: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "apk_url": valor}
 
+@app.get("/diag-push")
+def diag_push(clave: str = None, telefono: str = None, db: Session = Depends(get_db)):
+    """Diagnostico: dice el estado real de un conductor y le manda un push directo
+    SALTANDOSE todos los filtros (disponible/vehiculo/municipio/suscripcion).
+    Sirve para aislar si el problema es la ENTREGA del push o los FILTROS.
+    Autoriza con RESPALDO_CLAVE (nunca abierto por accidente)."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    u = db.query(Usuario).filter(Usuario.telefono == telefono).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="No hay usuario con ese telefono")
+    estado = {
+        "id": u.id, "nombre": u.nombre, "rol": u.rol,
+        "disponible": u.disponible, "municipio": u.municipio,
+        "tipo_vehiculo": u.tipo_vehiculo,
+        "tiene_token": bool(u.push_token),
+        "token_preview": (u.push_token[:28] + "...") if u.push_token else None,
+        "cobro_activo": leer_config("cobro_activo", db, "no"),
+        "suscripcion_al_dia": suscripcion_al_dia(u, db),
+    }
+    if not u.push_token:
+        return {"estado": estado, "enviado": False, "motivo": "sin push_token"}
+    muertos = push.enviar([push.mensaje(
+        u.push_token, "🔔 Prueba directa",
+        "Si suena, la entrega funciona. El problema serian los filtros.",
+        {"tipo": "diag"})])
+    return {"estado": estado, "enviado": True, "token_muerto": bool(muertos)}
+
 def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Candado del panel: sin la llave de sesion de un usuario con rol admin,
     nadie toca config, precios, usuarios ni roles. Se usa como Depends()."""
