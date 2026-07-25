@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -177,6 +177,28 @@ function whatsapp(num) {
   if (!n) return;
   if (n.length === 10) n = "57" + n;   // celular colombiano sin indicativo
   Linking.openURL(`https://wa.me/${n}`).catch(() => {});
+}
+
+/** Punto que "late" para dar sensacion de app viva/escuchando (el tic-tac). */
+function PuntoVivo({ color, activo }) {
+  const a = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!activo) return;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(a, { toValue: 1, duration: 750, useNativeDriver: true }),
+      Animated.timing(a, { toValue: 0, duration: 750, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [activo]);
+  const scale = a.interpolate({ inputRange: [0, 1], outputRange: [1, 1.9] });
+  const opacity = a.interpolate({ inputRange: [0, 1], outputRange: [0.85, 0] });
+  return (
+    <View style={{ width: 16, height: 16, alignItems: "center", justifyContent: "center" }}>
+      {activo && <Animated.View style={{ position: "absolute", width: 16, height: 16, borderRadius: 8, backgroundColor: color, transform: [{ scale }], opacity }} />}
+      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color }} />
+    </View>
+  );
 }
 
 /** distancia en km en linea recta entre dos puntos {lat,lon} (Haversine) */
@@ -3057,6 +3079,29 @@ function ConductorScreen({ navigation, route }) {
 
       </ScrollView>
 
+      {/* barra de ESTADO (el tic-tac): Conectado -> Buscando -> Viaje disponible */}
+      {(() => {
+        const enServicio = mias.length > 0;
+        const hayDisp = disponibles.length > 0;
+        let e;
+        if (!disponible) e = { txt: "Desconectado", sub: "Conéctate arriba para recibir viajes", color: "#C0392B", pulse: false };
+        else if (enServicio) e = { txt: "En servicio", sub: "Tienes una carrera en curso", color: "#187830", pulse: false };
+        else if (hayDisp) e = { txt: "🚗 ¡Viaje disponible!", sub: `${disponibles.length} solicitud${disponibles.length > 1 ? "es" : ""} esperando`, color: "#F06000", pulse: true };
+        else e = { txt: "Buscando viajes…", sub: "Estás conectado. Te avisamos apenas entre uno", color: "#187830", pulse: true };
+        return (
+          <View style={[styles.barraEstado, { borderTopColor: e.color }]}>
+            <PuntoVivo color={e.color} activo={e.pulse} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13.5, fontWeight: "700", color: e.color }}>{e.txt}</Text>
+              <Text style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{e.sub}</Text>
+            </View>
+            {disponible && !enServicio && hayDisp && (
+              <Text style={{ fontSize: 22, fontWeight: "800", color: e.color }}>{disponibles.length}</Text>
+            )}
+          </View>
+        );
+      })()}
+
       {/* barra de pestañas (con espacio para la barra del sistema en Samsung y similares) */}
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
@@ -3679,6 +3724,7 @@ const styles = StyleSheet.create({
   sugerenciaItem: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5, borderBottomColor: "#eee" },
   seccionTitulo: { fontSize: 15, fontWeight: "600", color: "#333", marginBottom: 10, marginTop: 6 },
   disponibleBar: { marginHorizontal: 16, marginTop: 16, borderRadius: 12, padding: 14, alignItems: "center" },
+  barraEstado: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 18, backgroundColor: "#fff", borderTopWidth: 2 },
   placaBadge: { backgroundColor: "#333", borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6, alignSelf: "flex-start", marginTop: 8 },
   placaTexto: { color: "#fff", fontWeight: "bold", fontSize: 16, letterSpacing: 2 },
   avisoRural: { backgroundColor: "#FFF4E0", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, marginTop: 10, alignSelf: "flex-start" },
