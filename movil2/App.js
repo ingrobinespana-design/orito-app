@@ -3507,6 +3507,20 @@ function ConfiguracionScreen({ navigation, route }) {
     }
   };
 
+  // dispara el tono AHORA para oir si suena (sin depender del servidor)
+  const probarTono = async () => {
+    try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: { title: "🔔 Prueba de tono", body: "Así suena cuando entra una carrera.", sound: "tono.wav" },
+        trigger: Platform.OS === "android" ? { channelId: "carreras2", seconds: 1 } : null,
+      });
+      avisar("Probando…", "En 1 segundo debe sonar el tono y vibrar. Si vibra pero no suena, revisa el volumen de notificaciones o la 'Pausa de actividad'.");
+    } catch (e) {
+      avisar("No se pudo probar", String(e.message || e));
+    }
+  };
+
   useEffect(() => {
     fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
       .then(d => {
@@ -3597,11 +3611,14 @@ function ConfiguracionScreen({ navigation, route }) {
               ? "Recibe las carreras aunque tengas la app cerrada o en segundo plano."
               : "Te avisamos cuando un conductor acepte o te proponga precio, aunque cierres la app."}
           </Text>
-          {!notifOk && (
-            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10 }]} onPress={activarNotificaciones}>
-              <Text style={styles.buttonText}>Activar notificaciones</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={activarNotificaciones}>
+              <Text style={[styles.buttonText, { fontSize: 14 }]}>{notifOk ? "Re-registrar" : "Activar"}</Text>
             </TouchableOpacity>
-          )}
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#F06000", padding: 11 }]} onPress={probarTono}>
+              <Text style={[styles.buttonText, { fontSize: 14 }]}>🔊 Probar tono</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {esConductor && municipios.length > 0 && (
