@@ -292,7 +292,7 @@ async function registrarNotificaciones(usuarioId) {
     if (Platform.OS === "android") {
       // El canal define que suene fuerte y salte en pantalla. Sin esto Android
       // la trata como aviso silencioso y el conductor no se entera.
-      await Notifications.setNotificationChannelAsync("carreras", {
+      await Notifications.setNotificationChannelAsync("carreras2", {
         name: "Carreras",
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 500, 220, 500],
@@ -2590,7 +2590,7 @@ function ConductorScreen({ navigation, route }) {
     // ademas el tono de notificacion (si dio permiso y no esta en silencio)
     Notifications.scheduleNotificationAsync({
       content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "tono.wav" },
-      trigger: Platform.OS === "android" ? { channelId: "carreras", seconds: 1 } : null,
+      trigger: Platform.OS === "android" ? { channelId: "carreras2", seconds: 1 } : null,
     }).catch(() => {});
   };
 

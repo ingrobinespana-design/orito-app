@@ -53,7 +53,7 @@ def enviar(mensajes):
     return muertos
 
 
-def mensaje(token, titulo, cuerpo, datos=None, canal="carreras"):
+def mensaje(token, titulo, cuerpo, datos=None, canal="carreras2"):
     return {
         "to": token,
         "title": titulo,
