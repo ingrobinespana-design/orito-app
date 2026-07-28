@@ -156,13 +156,19 @@ def diag_push(clave: str = None, telefono: str = None, db: Session = Depends(get
     return {"estado": estado, "enviado": True, "token_muerto": bool(muertos)}
 
 @app.get("/soporte/liberar")
-def liberar_usuario(clave: str = None, telefono: str = None, db: Session = Depends(get_db)):
+def liberar_usuario(clave: str = None, telefono: str = None,
+                    x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Soporte: cancela las carreras activas atascadas de un usuario (por telefono)
     para desbloquearlo cuando quedo con una 'en curso' que no cerro y no puede
-    pedir otra. Auth con RESPALDO_CLAVE. Es GET para poder abrirlo en el navegador."""
+    pedir otra. Autoriza con RESPALDO_CLAVE (para abrir el link en el navegador) o
+    con la sesion del admin (para el boton del panel). Es GET a proposito."""
     esperada = os.environ.get("RESPALDO_CLAVE")
-    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
-        raise HTTPException(status_code=403, detail="Clave invalida")
+    ok = bool(esperada) and bool(clave) and secrets.compare_digest(clave, esperada)
+    if not ok and x_admin_token:
+        adm = db.query(Usuario).filter(Usuario.token == x_admin_token).first()
+        ok = bool(adm and adm.rol == "admin")
+    if not ok:
+        raise HTTPException(status_code=403, detail="No autorizado")
     u = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not u:
         raise HTTPException(status_code=404, detail="No hay usuario con ese telefono")

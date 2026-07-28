@@ -3486,6 +3486,7 @@ function AdminCarrerasScreen({ navigation }) {
   const [config, setConfig] = useState({});
   const [gStats, setGStats] = useState(null);
   const [pestana, setPestana] = useState("conductores");
+  const [telLiberar, setTelLiberar] = useState("");   // desbloquear a un usuario atascado
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
@@ -3499,6 +3500,20 @@ function AdminCarrerasScreen({ navigation }) {
     const intervalo = setInterval(cargar, 10000);
     return () => clearInterval(intervalo);
   }, []);
+
+  const liberarUsuario = () => {
+    const tel = (telLiberar || "").replace(/\D/g, "");
+    if (!tel) { avisar("Falta el teléfono", "Escribe el número del usuario a liberar."); return; }
+    adminFetch(`${API}/soporte/liberar?telefono=${tel}`)
+      .then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+        setTelLiberar(""); cargar();
+        const n = (d.canceladas || []).length;
+        avisar("Usuario liberado", `${d.usuario}: se cancelaron ${n} carrera(s) atascada(s)${n ? ` [#${d.canceladas.join(", #")}]` : ""}. Ya puede pedir de nuevo.`);
+      })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
 
   const registrarPago = (c) => {
     elegir(`Pago de ${c.nombre}`, "Cuantos meses le registro?",
@@ -3637,6 +3652,27 @@ function AdminCarrerasScreen({ navigation }) {
           <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>
             No hay conductores. Cambia el rol de un usuario a "conductor" desde el panel de usuarios.
           </Text>
+        )}
+
+        {pestana === "carreras" && (
+          <View style={[styles.card, { marginBottom: 12, backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D" }]}>
+            <Text style={{ fontWeight: "800", color: "#8A5A00", fontSize: 14 }}>🔓 Liberar usuario atascado</Text>
+            <Text style={{ fontSize: 12, color: "#8A5A00", marginTop: 2 }}>
+              Si un usuario no puede pedir porque "ya tiene una carrera en curso", escribe su teléfono y cancela sus carreras atascadas.
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+              <TextInput
+                value={telLiberar}
+                onChangeText={setTelLiberar}
+                placeholder="Teléfono del usuario"
+                keyboardType="phone-pad"
+                style={[styles.input, { flex: 1, marginBottom: 0 }]}
+              />
+              <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", paddingHorizontal: 16, justifyContent: "center" }]} onPress={liberarUsuario}>
+                <Text style={[styles.buttonText, { fontSize: 14 }]}>Liberar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
 
         {pestana === "carreras" && carreras.slice(0, 40).map(c => (
