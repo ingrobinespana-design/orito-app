@@ -984,6 +984,48 @@ def registrar_lugar(nombre: str, municipio: str, db: Session, lat=None, lon=None
         # lo escrito a mano entra como urbano; si es vereda el admin lo corrige
         db.add(Lugar(nombre=nombre, municipio=municipio, usos=1, lat=lat, lon=lon))
 
+def geocodificar_texto(nombre: str, municipio: str, db: Session):
+    """Texto libre -> coordenadas (geocoding DIRECTO), gratis via Nominatim.
+    Sirve para cuando el cliente escribe el destino sin marcar el pin: asi la
+    carrera igual tiene ubicacion y, ya con el pasajero a bordo, el mapa puede
+    trazar la ruta al destino (antes se quedaba clavado en la recogida).
+    Se acota al municipio (viewbox + Colombia) y se valida que caiga cerca del
+    pueblo, para no traer un resultado del otro lado del mundo. (lat, lon) o None."""
+    nombre = (nombre or "").strip()
+    if len(nombre) < 3:
+        return None
+    if any(g in nombre.lower() for g in ("punto marcado", "mi ubicacion", "ubicacion actual")):
+        return None
+    m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
+    clat = m.centro_lat if m else None
+    clon = m.centro_lon if m else None
+    try:
+        import urllib.request as _ur, urllib.parse as _up, json as _json
+        params = {
+            "q": f"{nombre}, {municipio}, Putumayo, Colombia",
+            "format": "jsonv2", "limit": "1",
+            "countrycodes": "co", "accept-language": "es",
+        }
+        if clat is not None and clon is not None:
+            d = 0.5   # ~55 km de caja alrededor del pueblo, con preferencia
+            params["viewbox"] = f"{clon - d},{clat - d},{clon + d},{clat + d}"
+            params["bounded"] = "1"
+        url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
+        req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
+        with _ur.urlopen(req, timeout=4) as r:
+            arr = _json.loads(r.read().decode("utf-8"))
+        if not arr:
+            return None
+        lat = float(arr[0]["lat"]); lon = float(arr[0]["lon"])
+        # cordura: debe caer cerca del pueblo (<=45 km) si sabemos el centro
+        if clat is not None and clon is not None:
+            km = tarifas.distancia_km(clat, clon, lat, lon)
+            if km is not None and km > 45:
+                return None
+        return (lat, lon)
+    except Exception:
+        return None
+
 def zona_de_la_carrera(origen: str, destino: str, municipio: str, db: Session):
     """Si cualquiera de las dos puntas es vereda, la carrera es rural."""
     for punta in (origen, destino):
@@ -1127,10 +1169,18 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         conocido = buscar_lugar(origen, municipio, db)
         if conocido and conocido.lat is not None:
             origen_lat, origen_lon = conocido.lat, conocido.lon
+        else:
+            g = geocodificar_texto(origen, municipio, db)
+            if g:
+                origen_lat, origen_lon = g
     if destino_lat is None:
         conocido = buscar_lugar(destino, municipio, db)
         if conocido and conocido.lat is not None:
             destino_lat, destino_lon = conocido.lat, conocido.lon
+        else:
+            g = geocodificar_texto(destino, municipio, db)
+            if g:
+                destino_lat, destino_lon = g
     # donde hay GPS se calcula distancia y tarifa sugerida; donde no, quedan vacias
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)

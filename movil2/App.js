@@ -1849,6 +1849,14 @@ function navegarGoogleMaps(lat, lon) {
     .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`).catch(() => {}));
 }
 
+// respaldo cuando el destino no tiene coordenadas: navega por el nombre escrito
+function navegarGoogleMapsTexto(texto) {
+  const q = encodeURIComponent((texto || "").trim());
+  if (!q) return;
+  Linking.openURL(`google.navigation:q=${q}`)
+    .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`).catch(() => {}));
+}
+
 function PedirCarreraScreen({ navigation, route }) {
   const { usuario } = route.params;
   const [carrera, setCarrera] = useState(null);
@@ -2187,6 +2195,39 @@ function PedirCarreraScreen({ navigation, route }) {
               )}
             </View>
           )}
+          {/* RESUMEN DEL VIAJE: recorrido y tarifa, lo importante para el trato
+              (y para decidir cuando llegan contraofertas) */}
+          {(() => {
+            const kmViaje = carrera.distancia_km != null ? carrera.distancia_km
+              : (carrera.origen_lat != null && carrera.destino_lat != null
+                  ? kmEntre({ lat: carrera.origen_lat, lon: carrera.origen_lon }, { lat: carrera.destino_lat, lon: carrera.destino_lon })
+                  : null);
+            const tarifa = carrera.tarifa || carrera.tarifa_ofrecida || carrera.tarifa_sugerida;
+            const fmtKm = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
+            return (
+              <View style={{ backgroundColor: "#FFF3E6", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, color: "#333", fontWeight: "600" }} numberOfLines={1}>🟢 {carrera.origen}</Text>
+                <Text style={{ fontSize: 13, color: "#333", fontWeight: "600", marginTop: 2 }} numberOfLines={1}>🏁 {carrera.destino}</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <View style={{ backgroundColor: "#fff", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9 }}>
+                    <Text style={{ fontSize: 13, color: "#B85C00", fontWeight: "700" }}>
+                      🛣️ Viaje: {kmViaje != null ? `~${fmtKm(kmViaje)}` : "sin distancia"}
+                    </Text>
+                  </View>
+                  {tarifa ? (
+                    <View style={{ backgroundColor: "#fff", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9 }}>
+                      <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }}>💵 ${tarifa.toLocaleString()}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                {kmViaje == null && (
+                  <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 6 }}>
+                    El destino se escribió sin ubicación en el mapa, por eso no hay distancia ni 🏁. Al pedir, marca el destino en el mapa o elígelo de las sugerencias para verlos.
+                  </Text>
+                )}
+              </View>
+            );
+          })()}
           {buscando ? (
             <>
               <View style={[styles.card, { alignItems: "center", paddingVertical: 24 }]}>
@@ -3079,12 +3120,22 @@ function ConductorScreen({ navigation, route }) {
                             </Text>
                           </View>
                         )}
-                        {punto && (
+                        {punto ? (
                           <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMaps(punto.lat, punto.lon)}>
                             <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Iniciar ruta</Text>
                           </TouchableOpacity>
-                        )}
+                        ) : (c.estado === "en_camino" && c.destino) ? (
+                          <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMapsTexto(c.destino)}>
+                            <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Navegar</Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
+                      {c.estado === "en_camino" && !punto && (
+                        <View style={{ backgroundColor: "#FFF3E6", borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#B85C00" }}>🏁 Destino: {c.destino}</Text>
+                          <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 2 }}>Este destino se pidió sin ubicación en el mapa. Usa 🧭 Navegar para ir por el nombre.</Text>
+                        </View>
+                      )}
                     </>
                   );
                 })()}
