@@ -739,6 +739,10 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "tarifa": c.tarifa,
         "notas": c.notas,
         "recogida": c.recogida,
+        "llego_recogida": c.llego_recogida,
+        "estrellas_conductor": c.estrellas_conductor,
+        "estrellas_cliente": c.estrellas_cliente,
+        "conductor_calificacion": conductor.calificacion if conductor else None,
         "fecha": c.fecha,
     }
 
@@ -947,6 +951,29 @@ def avisar_oferta_aceptada(conductor_id: int, carrera_id: int):
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
 
+@nunca_falla
+def avisar_conductor_llego(carrera_id: int):
+    """Le avisa al cliente que el conductor YA esta en el punto de recogida."""
+    db = SessionLocal()
+    try:
+        carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        if not carrera:
+            return
+        cliente = db.query(Usuario).filter(Usuario.id == carrera.cliente_id).first()
+        conductor = db.query(Usuario).filter(Usuario.id == carrera.conductor_id).first()
+        if not cliente or not cliente.push_token or not conductor:
+            return
+        placa = f" ({conductor.placa})" if conductor.placa else ""
+        mensajes = [push.mensaje(
+            cliente.push_token,
+            "Tu conductor llego",
+            f"{conductor.nombre}{placa} ya esta en el punto de recogida. Sal a encontrarlo.",
+            {"tipo": "conductor_llego", "carrera_id": carrera_id},
+        )]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
 @app.put("/usuarios/{usuario_id}/push-token")
 def guardar_push_token(usuario_id: int, token: str, db: Session = Depends(get_db),
                        actual: Usuario = Depends(usuario_actual)):
@@ -1145,7 +1172,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     es_carga_nueva = vehiculo_pedido in VEHICULOS_CARGA
     activas = db.query(Carrera).filter(
         Carrera.cliente_id == cliente_id,
-        Carrera.estado.in_(["buscando", "aceptada", "en_camino"])
+        Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])
     ).all()
     for a in activas:
         if (a.vehiculo_pedido in VEHICULOS_CARGA) == es_carga_nueva:
@@ -1335,9 +1362,10 @@ def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db:
     return carrera_dict(carrera, conductor)
 
 @app.put("/carreras/{carrera_id}/estado")
-def actualizar_estado_carrera(carrera_id: int, estado: str, tarifa: int = None, db: Session = Depends(get_db),
+def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTasks,
+                              tarifa: int = None, db: Session = Depends(get_db),
                               actual: Usuario = Depends(usuario_actual)):
-    validos = ["buscando", "aceptada", "en_camino", "finalizada", "cancelada"]
+    validos = ["buscando", "aceptada", "en_sitio", "en_camino", "finalizada", "cancelada"]
     if estado not in validos:
         raise HTTPException(status_code=400, detail=f"Estado invalido. Validos: {', '.join(validos)}")
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
@@ -1348,6 +1376,10 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tarifa: int = None, 
     # con el pasajero a bordo ya no se cancela: se finaliza o se resuelve hablando
     if estado == "cancelada" and carrera.estado == "en_camino":
         raise HTTPException(status_code=400, detail="El viaje ya esta en curso y no se puede cancelar. Si hay un problema, llama al conductor.")
+    # llegada al punto de recogida: se guarda el momento y se avisa al cliente
+    if estado == "en_sitio" and carrera.llego_recogida is None:
+        carrera.llego_recogida = datetime.now()
+        tareas.add_task(avisar_conductor_llego, carrera.id)
     carrera.estado = estado
     if tarifa is not None:
         carrera.tarifa = tarifa
@@ -1355,6 +1387,46 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tarifa: int = None, 
     db.refresh(carrera)
     conductor = db.query(Usuario).filter(Usuario.id == carrera.conductor_id).first() if carrera.conductor_id else None
     return carrera_dict(carrera, conductor)
+
+@app.put("/carreras/{carrera_id}/calificar")
+def calificar_carrera(carrera_id: int, estrellas: int, db: Session = Depends(get_db),
+                      actual: Usuario = Depends(usuario_actual)):
+    """Calificacion mutua al terminar (1 a 5). El cliente califica al conductor y
+    el conductor al cliente; segun quien llama se guarda en el campo que toca y se
+    recalcula el promedio del usuario calificado."""
+    if estrellas < 1 or estrellas > 5:
+        raise HTTPException(status_code=400, detail="Las estrellas van de 1 a 5")
+    carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if not carrera:
+        raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    if actual.id == carrera.cliente_id:
+        carrera.estrellas_conductor = estrellas        # el cliente califica al conductor
+        calificado_id, campo = carrera.conductor_id, "conductor"
+    elif actual.id == carrera.conductor_id:
+        carrera.estrellas_cliente = estrellas          # el conductor califica al cliente
+        calificado_id, campo = carrera.cliente_id, "cliente"
+    else:
+        raise HTTPException(status_code=403, detail="Esta carrera no es tuya")
+    db.commit()
+    _recalcular_calificacion(calificado_id, campo, db)
+    db.commit()
+    return {"ok": True}
+
+def _recalcular_calificacion(usuario_id, campo, db):
+    """Promedio de estrellas que ha recibido un usuario (como conductor o cliente),
+    guardado en Usuario.calificacion para mostrarlo sin recalcular cada vez."""
+    if not usuario_id:
+        return
+    if campo == "conductor":
+        vals = [c.estrellas_conductor for c in db.query(Carrera).filter(
+            Carrera.conductor_id == usuario_id, Carrera.estrellas_conductor.isnot(None)).all()]
+    else:
+        vals = [c.estrellas_cliente for c in db.query(Carrera).filter(
+            Carrera.cliente_id == usuario_id, Carrera.estrellas_cliente.isnot(None)).all()]
+    if vals:
+        u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+        if u:
+            u.calificacion = round(sum(vals) / len(vals), 2)
 
 @app.get("/carreras/cliente/{cliente_id}")
 def carreras_del_cliente(cliente_id: int, db: Session = Depends(get_db)):
@@ -1416,7 +1488,7 @@ def estadisticas_globales(db: Session = Depends(get_db), admin: Usuario = Depend
         "conductores_al_dia": sum(1 for c in conductores if suscripcion_al_dia(c, db)),
         "carreras_totales": len(todas),
         "canceladas": sum(1 for c in todas if c.estado == "cancelada"),
-        "en_curso": sum(1 for c in todas if c.estado in ("buscando", "aceptada", "en_camino")),
+        "en_curso": sum(1 for c in todas if c.estado in ("buscando", "aceptada", "en_sitio", "en_camino")),
         "visitas_hoy": cuenta("visita_pagina", hoy),
         "visitas_total": cuenta("visita_pagina", datetime.min),
         "descargas_hoy": cuenta("descarga_apk", hoy),
@@ -1504,7 +1576,8 @@ def obtener_conductores(db: Session = Depends(get_db)):
              "fotos": fotos_de(u)} for u in conductores]
 
 @app.put("/conductores/{conductor_id}/ubicacion")
-def reportar_ubicacion(conductor_id: int, lat: float, lon: float, db: Session = Depends(get_db)):
+def reportar_ubicacion(conductor_id: int, lat: float, lon: float, tareas: BackgroundTasks,
+                       db: Session = Depends(get_db)):
     """El conductor reporta donde va (cada pocos segundos mientras tiene carrera
     activa, incluso con la app en segundo plano). El cliente lo ve venir en el
     mapa. La respuesta avisa si aun tiene carrera activa: cuando ya no, el
@@ -1514,9 +1587,20 @@ def reportar_ubicacion(conductor_id: int, lat: float, lon: float, db: Session = 
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     u.ubic_lat, u.ubic_lon, u.ubic_fecha = lat, lon, datetime.now()
     db.commit()
+    # auto-llegada: si va a recoger (aceptada) y ya esta encima del punto (<130 m),
+    # pasa solo a "en_sitio" y le avisa al cliente, sin que tenga que tocar nada
+    car = db.query(Carrera).filter(
+        Carrera.conductor_id == conductor_id, Carrera.estado == "aceptada").first()
+    if car and car.origen_lat is not None and car.llego_recogida is None:
+        d = tarifas.distancia_km(lat, lon, car.origen_lat, car.origen_lon)
+        if d is not None and d <= 0.13:
+            car.estado = "en_sitio"
+            car.llego_recogida = datetime.now()
+            db.commit()
+            tareas.add_task(avisar_conductor_llego, car.id)
     activa = db.query(Carrera).filter(
         Carrera.conductor_id == conductor_id,
-        Carrera.estado.in_(["aceptada", "en_camino"])).first() is not None
+        Carrera.estado.in_(["aceptada", "en_sitio", "en_camino"])).first() is not None
     return {"ok": True, "carrera_activa": activa}
 
 @app.get("/conductores/{conductor_id}/estado-cuenta")

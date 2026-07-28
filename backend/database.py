@@ -192,7 +192,8 @@ class Carrera(Base):
     vehiculo_pedido = Column(String)
     # lo que el cliente ofrece pagar (modelo tipo inDrive: se negocia)
     tarifa_ofrecida = Column(Integer, nullable=True)
-    # buscando -> aceptada -> en_camino -> finalizada  (o cancelada en cualquier punto)
+    # buscando -> aceptada -> en_sitio -> en_camino -> finalizada  (o cancelada)
+    #   en_sitio = el conductor ya llego al punto de recogida (fase intermedia)
     estado = Column(String, default="buscando")
     # "rural" si origen o destino es vereda: el conductor lo ve antes de aceptar
     zona = Column(String, default="urbano")
@@ -200,6 +201,11 @@ class Carrera(Base):
     notas = Column(Text, nullable=True)
     # solo trasteos/carga: hora agendada de recogida. Null = lo antes posible
     recogida = Column(DateTime, nullable=True)
+    # momento en que el conductor llego al punto de recogida (fase en_sitio)
+    llego_recogida = Column(DateTime, nullable=True)
+    # calificacion mutua al terminar (1 a 5 estrellas)
+    estrellas_conductor = Column(Integer, nullable=True)   # el CLIENTE califica al conductor
+    estrellas_cliente = Column(Integer, nullable=True)     # el CONDUCTOR califica al cliente
     fecha = Column(DateTime, default=datetime.now)
 
 class Municipio(Base):
@@ -363,7 +369,8 @@ def crear_tablas():
     for columna in ("zona VARCHAR DEFAULT 'urbano'", "municipio VARCHAR DEFAULT 'Orito'",
                     "vehiculo_pedido VARCHAR", "origen_lat FLOAT", "origen_lon FLOAT",
                     "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
-                    "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER", "recogida TIMESTAMP"):
+                    "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER", "recogida TIMESTAMP",
+                    "llego_recogida TIMESTAMP", "estrellas_conductor INTEGER", "estrellas_cliente INTEGER"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))

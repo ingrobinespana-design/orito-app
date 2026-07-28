@@ -1857,6 +1857,41 @@ function navegarGoogleMapsTexto(texto) {
     .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`).catch(() => {}));
 }
 
+// ventana de calificacion mutua (1 a 5 estrellas) al terminar la carrera
+function ModalEstrellas({ visible, titulo, subtitulo, onEnviar, onCerrar }) {
+  const [sel, setSel] = useState(0);
+  useEffect(() => { if (visible) setSel(0); }, [visible]);
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCerrar}>
+      <View style={styles.fondoModal}>
+        <View style={styles.ventanaModal}>
+          <Text style={{ fontSize: 18, fontWeight: "800", color: "#111", textAlign: "center" }}>{titulo}</Text>
+          {subtitulo ? <Text style={{ fontSize: 14, color: "#666", textAlign: "center", marginTop: 4 }}>{subtitulo}</Text> : null}
+          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 18, marginBottom: 18 }}>
+            {[1, 2, 3, 4, 5].map(n => (
+              <TouchableOpacity key={n} onPress={() => setSel(n)} style={{ paddingHorizontal: 5 }}>
+                <Text style={{ fontSize: 42, opacity: n <= sel ? 1 : 0.22 }}>⭐</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity style={[styles.button, { backgroundColor: sel ? "#187830" : "#bbb", padding: 12 }]} disabled={!sel} onPress={() => onEnviar(sel)}>
+            <Text style={styles.buttonText}>Enviar calificación</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={{ padding: 10, marginTop: 2 }} onPress={onCerrar}>
+            <Text style={{ textAlign: "center", color: "#888" }}>Ahora no</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// muestra el promedio de estrellas de un usuario (ej. "⭐ 4.8")
+function Estrellas({ valor, size = 13, color = "#B8860B" }) {
+  if (valor == null) return null;
+  return <Text style={{ fontSize: size, color, fontWeight: "700" }}>⭐ {Number(valor).toFixed(1)}</Text>;
+}
+
 function PedirCarreraScreen({ navigation, route }) {
   const { usuario } = route.params;
   const [carrera, setCarrera] = useState(null);
@@ -1882,6 +1917,7 @@ function PedirCarreraScreen({ navigation, route }) {
   // seguimiento: un acarreo puede quedar horas esperando y no debe dejarlo preso
   const [activas, setActivas] = useState([]);
   const [verForm, setVerForm] = useState(false);
+  const [porCalificar, setPorCalificar] = useState(null);   // carrera terminada, pendiente de calificar al conductor
   // agendar recogida (solo trasteos): "lo antes posible" (default) o dia+hora
   const [programar, setProgramar] = useState(false);
   const [progDia, setProgDia] = useState(null);
@@ -2015,10 +2051,17 @@ function PedirCarreraScreen({ navigation, route }) {
       .then(r => r.json())
       .then(d => {
         if (!Array.isArray(d)) return;
-        const act = d.filter(c => ["buscando", "aceptada", "en_camino"].includes(c.estado));
+        const act = d.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
         setActivas(act);
         // se conserva la que se esta mirando; si ya termino, pasa a la siguiente
-        setCarrera(prev => (prev && act.find(c => c.id === prev.id)) || act[0] || null);
+        setCarrera(prev => {
+          // si la que miraba acaba de finalizar y no la ha calificado, se le pide
+          if (prev && !act.find(c => c.id === prev.id)) {
+            const fin = d.find(c => c.id === prev.id);
+            if (fin && fin.estado === "finalizada" && !fin.estrellas_conductor) setPorCalificar(fin);
+          }
+          return (prev && act.find(c => c.id === prev.id)) || act[0] || null;
+        });
       })
       .catch(() => {});
   };
@@ -2117,6 +2160,20 @@ function PedirCarreraScreen({ navigation, route }) {
       "Aceptar");
   };
 
+  const modalCalif = (
+    <ModalEstrellas
+      visible={!!porCalificar}
+      titulo="Califica a tu conductor"
+      subtitulo={porCalificar ? `¿Cómo estuvo el viaje con ${porCalificar.conductor_nombre || "tu conductor"}?` : ""}
+      onEnviar={(estrellas) => {
+        const id = porCalificar && porCalificar.id;
+        setPorCalificar(null);
+        if (id) userFetch(`${API}/carreras/${id}/calificar?estrellas=${estrellas}`, { method: "PUT" }).catch(() => {});
+      }}
+      onCerrar={() => setPorCalificar(null)}
+    />
+  );
+
   // --- ya tiene una solicitud en curso: se le hace seguimiento (salvo que haya
   //     tocado "pedir otro servicio" y este mirando el formulario)
   if (carrera && !verForm) {
@@ -2124,11 +2181,13 @@ function PedirCarreraScreen({ navigation, route }) {
     const tituloEstado = {
       buscando: "Buscando transportador...",
       aceptada: "Tu conductor va en camino",
+      en_sitio: "Tu conductor ya llegó",
       en_camino: "En viaje a tu destino",
     }[carrera.estado] || "Tu carrera";
+    const yendoARecoger = carrera.estado === "aceptada" || carrera.estado === "en_sitio";
     // mientras viene a recogerte, el punto de referencia es tu ORIGEN;
     // ya con vos a bordo, el DESTINO
-    const punto = carrera.estado === "aceptada"
+    const punto = yendoARecoger
       ? (carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null)
       : (carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null);
     const cond = carrera.conductor_lat != null ? { lat: carrera.conductor_lat, lon: carrera.conductor_lon } : null;
@@ -2139,6 +2198,7 @@ function PedirCarreraScreen({ navigation, route }) {
     const hayMapa = !buscando && (punto || cond);
     return (
       <SafeAreaView style={styles.container}>
+        {modalCalif}
         <View style={[styles.header, { backgroundColor: "#187830" }]}>
           <Text style={styles.headerSub}>Carrera #{carrera.id}</Text>
           <Text style={styles.headerTitle}>{tituloEstado}</Text>
@@ -2150,7 +2210,7 @@ function PedirCarreraScreen({ navigation, route }) {
               conductor={cond}
               recogida={carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null}
               destino={carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null}
-              rutaA={carrera.estado === "aceptada" ? "recogida" : "destino"}
+              rutaA={yendoARecoger ? "recogida" : "destino"}
               onInfo={setRutaInfo} lleno />
           </View>
         )}
@@ -2171,8 +2231,8 @@ function PedirCarreraScreen({ navigation, route }) {
           )}
           {!buscando && (
             <View style={styles.pasos}>
-              {[["aceptada", "✓ Aceptada"], ["en_camino", "🚗 En camino"], ["finalizada", "🏁 Fin"]].map(([est, lbl], i) => {
-                const orden = { aceptada: 0, en_camino: 1, finalizada: 2 };
+              {[["aceptada", "✓ Aceptada"], ["en_sitio", "📍 Llegó"], ["en_camino", "🚗 En viaje"], ["finalizada", "🏁 Fin"]].map(([est, lbl], i) => {
+                const orden = { aceptada: 0, en_sitio: 1, en_camino: 2, finalizada: 3 };
                 const activo = orden[carrera.estado] >= i;
                 return (
                   <View key={est} style={[styles.paso, activo && styles.pasoActivo]}>
@@ -2182,7 +2242,12 @@ function PedirCarreraScreen({ navigation, route }) {
               })}
             </View>
           )}
-          {hayMapa && (info || dist != null) && (
+          {carrera.estado === "en_sitio" ? (
+            <View style={{ backgroundColor: "#E7F0FF", borderRadius: 10, padding: 12, marginBottom: 12, alignItems: "center" }}>
+              <Text style={{ fontSize: 15, fontWeight: "800", color: "#1A73E8" }}>📍 Tu conductor ya está en el punto</Text>
+              <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Sal a encontrarlo para iniciar el viaje.</Text>
+            </View>
+          ) : hayMapa && (info || dist != null) && (
             <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
               <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
                 🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"}{" "}
@@ -2303,7 +2368,10 @@ function PedirCarreraScreen({ navigation, route }) {
                   </View>
                 )}
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
+                    <Estrellas valor={carrera.conductor_calificacion} size={14} />
+                  </View>
                   {carrera.conductor_vehiculo ? <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>🚕 {carrera.conductor_vehiculo}</Text> : null}
                 </View>
               </View>
@@ -2386,6 +2454,7 @@ function PedirCarreraScreen({ navigation, route }) {
   // --- formulario para pedir
   return (
     <SafeAreaView style={styles.container}>
+      {modalCalif}
       <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", alignItems: "center", gap: 12 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
@@ -2744,7 +2813,7 @@ function ConductorScreen({ navigation, route }) {
         animar(); setDisponibles(d);
       }).catch(() => {});
     fetch(`${API}/carreras/conductor/${usuario.id}`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setMias(d.filter(c => ["aceptada", "en_camino"].includes(c.estado))); })
+      .then(d => { if (Array.isArray(d)) setMias(d.filter(c => ["aceptada", "en_sitio", "en_camino"].includes(c.estado))); })
       .catch(() => {});
     fetch(`${API}/conductores/${usuario.id}/estado-cuenta`).then(r => r.json())
       .then(d => { if (d && !d.detail) setCuenta(d); }).catch(() => {});
@@ -2821,6 +2890,7 @@ function ConductorScreen({ navigation, route }) {
   // Alert.prompt solo existe en iPhone, asi que la ventana del cobro es propia
   const [cobrando, setCobrando] = useState(null);
   const [tarifa, setTarifa] = useState("");
+  const [calificarCliente, setCalificarCliente] = useState(null);   // carrera recien terminada, para calificar al cliente
 
   // llega pre-llenada con el precio ACORDADO: confirmar y listo. Solo se toca
   // si de verdad cambio (evita errores de dedo que dañan las estadisticas)
@@ -2828,10 +2898,10 @@ function ConductorScreen({ navigation, route }) {
 
   const confirmarCobro = () => {
     const t = parseInt((tarifa || "").replace(/\D/g, ""), 10);
-    const id = cobrando.id;
+    const car = cobrando;
     setCobrando(null);
-    userFetch(`${API}/carreras/${id}/estado?estado=finalizada${t ? `&tarifa=${t}` : ""}`, { method: "PUT" })
-      .then(cargar)
+    userFetch(`${API}/carreras/${car.id}/estado?estado=finalizada${t ? `&tarifa=${t}` : ""}`, { method: "PUT" })
+      .then(() => { setCalificarCliente(car); cargar(); })
       .catch(() => avisar("Error", "No hay conexion. Intenta de nuevo."));
   };
 
@@ -3023,13 +3093,18 @@ function ConductorScreen({ navigation, route }) {
         )
       )}
       {propia && c.estado === "aceptada" && (
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", marginTop: 10, padding: 11 }]} onPress={() => cambiarEstado(c, "en_sitio")}>
+          <Text style={styles.buttonText}>📍 Ya estoy en el punto</Text>
+        </TouchableOpacity>
+      )}
+      {propia && c.estado === "en_sitio" && (
         <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => cambiarEstado(c, "en_camino")}>
-          <Text style={styles.buttonText}>Ya lo recogi — En camino</Text>
+          <Text style={styles.buttonText}>🚗 Ya lo recogí — Iniciar viaje</Text>
         </TouchableOpacity>
       )}
       {propia && c.estado === "en_camino" && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => finalizar(c)}>
-          <Text style={styles.buttonText}>Carrera terminada</Text>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", marginTop: 10, padding: 11 }]} onPress={() => finalizar(c)}>
+          <Text style={styles.buttonText}>🏁 Finalizar carrera</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -3095,7 +3170,8 @@ function ConductorScreen({ navigation, route }) {
                   // el conductor tambien ve su ruta: al punto de recogida
                   // (aceptada) o al destino (en_camino), con su 🚗 moviendose
                   const c = mias[0];
-                  const punto = c.estado === "aceptada"
+                  const yendoARecoger = c.estado === "aceptada" || c.estado === "en_sitio";
+                  const punto = yendoARecoger
                     ? (c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null)
                     : (c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null);
                   if (!punto && !miUbic) return null;
@@ -3103,17 +3179,23 @@ function ConductorScreen({ navigation, route }) {
                   const info = rutaCond;
                   return (
                     <>
+                      {c.estado === "en_sitio" && (
+                        <View style={{ backgroundColor: "#E7F0FF", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#1A73E8" }}>📍 Estás en el punto de recogida</Text>
+                          <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Ya le avisamos al cliente. Cuando suba, toca "Ya lo recogí".</Text>
+                        </View>
+                      )}
                       <MapaSeguimiento key={"cond-" + c.estado}
                         conductor={miUbic}
                         recogida={c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null}
                         destino={c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null}
-                        rutaA={c.estado === "aceptada" ? "recogida" : "destino"}
+                        rutaA={yendoARecoger ? "recogida" : "destino"}
                         onInfo={setRutaCond} />
                       <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                         {(info || dist != null) && (
                           <View style={{ flex: 1, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, alignItems: "center", justifyContent: "center" }}>
                             <Text style={{ fontSize: 13, fontWeight: "700", color: "#187830" }}>
-                              {c.estado === "aceptada" ? "📍 Recogida" : "🏁 Destino"}:{" "}
+                              {yendoARecoger ? "📍 Recogida" : "🏁 Destino"}:{" "}
                               {info
                                 ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
                                 : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
@@ -3330,6 +3412,18 @@ function ConductorScreen({ navigation, route }) {
         </View>
       </Modal>
 
+      <ModalEstrellas
+        visible={!!calificarCliente}
+        titulo="Califica al cliente"
+        subtitulo={calificarCliente ? `¿Cómo fue el servicio con ${calificarCliente.cliente_nombre || "el cliente"}?` : ""}
+        onEnviar={(estrellas) => {
+          const id = calificarCliente && calificarCliente.id;
+          setCalificarCliente(null);
+          if (id) userFetch(`${API}/carreras/${id}/calificar?estrellas=${estrellas}`, { method: "PUT" }).catch(() => {});
+        }}
+        onCerrar={() => setCalificarCliente(null)}
+      />
+
       <Modal visible={!!contraofertando} transparent animationType="fade" onRequestClose={() => setContraofertando(null)}>
         <View style={styles.fondoModal}>
           <View style={styles.ventanaModal}>
@@ -3404,7 +3498,7 @@ function AdminCarrerasScreen({ navigation }) {
   };
 
   const activos = conductores.filter(c => c.al_dia).length;
-  const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_camino"].includes(c.estado));
+  const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
   const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
 
   return (
@@ -3522,7 +3616,7 @@ function AdminCarrerasScreen({ navigation }) {
           <View key={c.id} style={[styles.card, { marginBottom: 10 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
               <Text style={{ fontWeight: "600" }}>#{c.id} · {c.cliente_nombre}</Text>
-              <Text style={{ fontSize: 11, color: "#888" }}>{c.estado}</Text>
+              <Text style={{ fontSize: 11, color: "#888" }}>{({ en_sitio: "en el punto", en_camino: "en viaje" }[c.estado]) || c.estado}</Text>
             </View>
             <Text style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{c.origen} → {c.destino}</Text>
             {c.conductor_nombre ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🚕 {c.conductor_nombre}</Text> : null}
