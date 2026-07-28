@@ -2125,7 +2125,19 @@ function PedirCarreraScreen({ navigation, route }) {
           avisar("Vuelve a entrar", "Tu sesion se venció. Ingresa de nuevo con tu telefono y contraseña.");
           navigation.replace("Login"); return;
         }
-        if (!r.ok) { avisar("No se pudo pedir", (d && d.detail) || `El servidor respondio ${r.status}`); return; }
+        if (!r.ok) {
+          const msg = (d && d.detail) || `El servidor respondio ${r.status}`;
+          // si ya tiene una en curso, en vez de dejarlo sin salida se le lleva a
+          // esa carrera (donde puede verla o cancelarla y volver a pedir)
+          if (r.status === 400 && /ya tienes/i.test(msg)) {
+            avisar("Ya tienes una en curso", msg + "\n\nTe llevamos a ella para que la veas o la canceles.");
+            setVerForm(false);
+            cargarActiva();
+            return;
+          }
+          avisar("No se pudo pedir", msg);
+          return;
+        }
         if (!d || !d.id) { avisar("Error", "Respuesta inesperada del servidor."); return; }
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
         setOrigenCoords(null); setDestinoCoords(null); setEstimado(null); setOferta("");

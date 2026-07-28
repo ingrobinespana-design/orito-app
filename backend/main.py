@@ -155,6 +155,26 @@ def diag_push(clave: str = None, telefono: str = None, db: Session = Depends(get
         {"tipo": "diag"})])
     return {"estado": estado, "enviado": True, "token_muerto": bool(muertos)}
 
+@app.get("/soporte/liberar")
+def liberar_usuario(clave: str = None, telefono: str = None, db: Session = Depends(get_db)):
+    """Soporte: cancela las carreras activas atascadas de un usuario (por telefono)
+    para desbloquearlo cuando quedo con una 'en curso' que no cerro y no puede
+    pedir otra. Auth con RESPALDO_CLAVE. Es GET para poder abrirlo en el navegador."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    u = db.query(Usuario).filter(Usuario.telefono == telefono).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="No hay usuario con ese telefono")
+    activas = db.query(Carrera).filter(
+        Carrera.cliente_id == u.id,
+        Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])).all()
+    ids = [a.id for a in activas]
+    for a in activas:
+        a.estado = "cancelada"
+    db.commit()
+    return {"ok": True, "usuario": u.nombre, "telefono": u.telefono, "canceladas": ids}
+
 def solo_admin(x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Candado del panel: sin la llave de sesion de un usuario con rol admin,
     nadie toca config, precios, usuarios ni roles. Se usa como Depends()."""
@@ -1194,12 +1214,30 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         Carrera.cliente_id == cliente_id,
         Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])
     ).all()
+    # auto-limpieza: una carrera NORMAL que quedo colgada (nadie la tomo, o el
+    # conductor nunca la cerro) no debe bloquear al cliente para siempre. Pasado
+    # cierto tiempo se da por abandonada y se cancela sola. Los trasteos NO se
+    # tocan: pueden quedar dias esperando, sobre todo los programados.
+    ahora = datetime.now()
+    LIMITES = {"buscando": timedelta(minutes=30), "aceptada": timedelta(hours=2),
+               "en_sitio": timedelta(hours=2), "en_camino": timedelta(hours=4)}
+    libero = False
+    vivas = []
     for a in activas:
+        limite = None if (a.vehiculo_pedido in VEHICULOS_CARGA) else LIMITES.get(a.estado)
+        if limite and a.fecha and (ahora - a.fecha) > limite:
+            a.estado = "cancelada"   # abandonada: se libera
+            libero = True
+        else:
+            vivas.append(a)
+    if libero:
+        db.commit()
+    for a in vivas:
         if (a.vehiculo_pedido in VEHICULOS_CARGA) == es_carga_nueva:
             raise HTTPException(
                 status_code=400,
                 detail="Ya tienes un acarreo en curso. Espera a que lo tomen o cancelalo."
-                if es_carga_nueva else "Ya tienes una carrera en curso")
+                if es_carga_nueva else "Ya tienes una carrera en curso. Termínala o cancélala para pedir otra.")
     # el municipio viene de donde ESTA el cliente (GPS o manual), no de su registro
     municipio = municipio or cliente.municipio or "Orito"
     permitidos = vehiculos_de(municipio, db)
