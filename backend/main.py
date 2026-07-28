@@ -1499,12 +1499,8 @@ def carreras_del_cliente(cliente_id: int, db: Session = Depends(get_db)):
 
 @app.get("/carreras/conductor/{conductor_id}")
 def carreras_del_conductor(conductor_id: int, db: Session = Depends(get_db)):
-    try:
-        carreras = db.query(Carrera).filter(Carrera.conductor_id == conductor_id).order_by(Carrera.fecha.desc()).all()
-        return con_conductor(carreras, db)
-    except Exception as e:
-        import traceback
-        return {"_debug_error": str(e), "_tb": traceback.format_exc()[-1800:]}
+    carreras = db.query(Carrera).filter(Carrera.conductor_id == conductor_id).order_by(Carrera.fecha.desc()).all()
+    return con_conductor(carreras, db)
 
 def _periodos_desde():
     """Inicios de dia, semana (lunes), mes y año para agrupar."""

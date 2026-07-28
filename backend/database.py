@@ -57,6 +57,9 @@ class Usuario(Base):
     ubic_lat = Column(Float, nullable=True)
     ubic_lon = Column(Float, nullable=True)
     ubic_fecha = Column(DateTime, nullable=True)
+    # promedio de estrellas recibidas (conductor calificado por clientes y
+    # viceversa). Vacio = todavia sin calificaciones.
+    calificacion = Column(Float, nullable=True)
 
 class Restaurante(Base):
     __tablename__ = "restaurantes"
@@ -346,7 +349,7 @@ def crear_tablas():
                     "pago_nequi VARCHAR", "pago_daviplata VARCHAR", "pago_bancolombia VARCHAR",
                     "pago_breb VARCHAR", "foto_conductor VARCHAR", "foto_vehiculo VARCHAR",
                     "foto_tarjeta VARCHAR", "ubic_lat FLOAT", "ubic_lon FLOAT",
-                    "ubic_fecha TIMESTAMP", "token VARCHAR"):
+                    "ubic_fecha TIMESTAMP", "token VARCHAR", "calificacion FLOAT"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
