@@ -2004,6 +2004,21 @@ function PedirCarreraScreen({ navigation, route }) {
     }).catch(() => {});
   };
 
+  // resuelve las coordenadas de un lugar elegido de la lista (o escrito) cuando
+  // aun no las tiene: asi el mapa, la ruta y la tarifa funcionan sin marcar el pin
+  const resolverCoords = (texto, cual) => {
+    const m = muni ? muni.nombre : usuario.municipio;
+    if (!texto || !m) return;
+    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(texto)}&municipio=${encodeURIComponent(m)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d || d.lat == null) return;
+        if (cual === "destino") setDestinoCoords({ lat: d.lat, lon: d.lon });
+        else setOrigenCoords({ lat: d.lat, lon: d.lon });
+      })
+      .catch(() => {});
+  };
+
   const confirmarPunto = (coords) => {
     // marcar en el mapa ya deja el punto listo; si no habia texto, se pone una
     // etiqueta para que el conductor tenga referencia y no quede vacio
@@ -2522,7 +2537,7 @@ function PedirCarreraScreen({ navigation, route }) {
             onChange={(t) => setForm({ ...form, origen: t })}
             placeholder="Ej: Parque Central o Carrera 5a # 4-20"
             municipio={muni ? muni.nombre : usuario.municipio}
-            onSeleccionar={(l) => { if (l.lat != null) setOrigenCoords({ lat: l.lat, lon: l.lon }); }}
+            onSeleccionar={(l) => { if (l.lat != null) setOrigenCoords({ lat: l.lat, lon: l.lon }); else resolverCoords(l.nombre, "origen"); }}
           />
           <TextInput
             value={form.origen_detalle}
@@ -2657,7 +2672,7 @@ function PedirCarreraScreen({ navigation, route }) {
             onChange={(t) => setForm({ ...form, destino: t })}
             placeholder="Ej: ESE Hospital Orito o Vereda Monserrate"
             municipio={muni ? muni.nombre : usuario.municipio}
-            onSeleccionar={(l) => { if (l.lat != null) setDestinoCoords({ lat: l.lat, lon: l.lon }); }}
+            onSeleccionar={(l) => { if (l.lat != null) setDestinoCoords({ lat: l.lat, lon: l.lon }); else resolverCoords(l.nombre, "destino"); }}
           />
           <TextInput
             value={form.destino_detalle}

@@ -1053,6 +1053,26 @@ def geocodificar_texto(nombre: str, municipio: str, db: Session):
     except Exception:
         return None
 
+@app.get("/ubicacion/buscar")
+def buscar_coordenadas(texto: str, municipio: str = "Orito", db: Session = Depends(get_db)):
+    """Texto (elegido de la lista o escrito) -> coordenadas, para que el mapa, la
+    ruta y la tarifa funcionen aunque el cliente no haya marcado el pin. Primero
+    mira si ese lugar ya tiene ubicacion aprendida; si no, la geocodifica. Asi la
+    lista de sugerencias siempre puede desplegar el mapa."""
+    conocido = buscar_lugar(texto, municipio, db)
+    if conocido and conocido.lat is not None:
+        return {"lat": conocido.lat, "lon": conocido.lon, "fuente": "lugar"}
+    g = geocodificar_texto(texto, municipio, db)
+    if g:
+        # si ese lugar ya estaba en la lista pero sin ubicacion, se la aprende
+        # (queda con ✅ para el proximo); si es texto nuevo, no se crea aqui: se
+        # registra al pedir la carrera, para no llenar la lista de busquedas sueltas
+        if conocido and conocido.lat is None:
+            conocido.lat, conocido.lon = g[0], g[1]
+            db.commit()
+        return {"lat": g[0], "lon": g[1], "fuente": "geocode"}
+    return {"lat": None, "lon": None}
+
 def zona_de_la_carrera(origen: str, destino: str, municipio: str, db: Session):
     """Si cualquiera de las dos puntas es vereda, la carrera es rural."""
     for punta in (origen, destino):
