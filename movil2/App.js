@@ -2107,36 +2107,21 @@ function PedirCarreraScreen({ navigation, route }) {
 
   const pedir = async () => {
     if (!muni) { avisar("Falta el municipio", "Marca donde estas o elige el municipio."); return; }
-    // cada punto se cumple de UNA sola forma: texto/lista O pin en el mapa. No las dos.
-    const origenListo = form.origen.trim() || origenCoords;
-    const destinoListo = form.destino.trim() || destinoCoords;
-    if (!origenListo) { avisar("Falta el origen", "Escribe donde estas, elige de la lista o marcalo en el mapa"); return; }
-    if (!destinoListo) { avisar("Falta el destino", "Escribe para donde vas, elige de la lista o marcalo en el mapa"); return; }
+    // origen y destino SIEMPRE por GPS o pin en el mapa: nunca quedan sin ubicar
+    if (!origenCoords) {
+      avisar("Falta el origen", "Toca '📍 Usar mi ubicación actual' o marca en el mapa dónde estás.");
+      return;
+    }
+    if (!destinoCoords) {
+      avisar("Falta el destino", "Toca '🏁 Marcar a dónde vas en el mapa' para fijar el destino.");
+      return;
+    }
     if (!vehiculo) { avisar("Falta el vehiculo", "Elige que necesitas: carrera o trasteo"); return; }
     // en trasteos, si eligio "programar" pero no completo dia y hora, se avisa
     if (esCarga(vehiculo) && programar && !recogidaISO) {
       avisar("Falta la hora", "Elige el dia y la hora de recogida, o toca 'Lo antes posible'."); return;
     }
     if (!oferta.trim()) { avisar("Falta tu oferta", "Escribe cuanto ofreces pagar"); return; }
-    // GARANTIA DE UBICACION: donde hay GPS, el origen y el destino DEBEN quedar
-    // ubicados en el mapa para dar contexto de la ruta. Si el texto/lista no trae
-    // coordenadas, se intenta ubicar; si no se logra, se obliga a marcar en el mapa.
-    let oCoords = origenCoords, dCoords = destinoCoords;
-    if (muni.usa_gps) {
-      setCargando(true);
-      if (!oCoords && form.origen.trim()) oCoords = await resolverCoordsSync(form.origen);
-      if (!dCoords && form.destino.trim()) dCoords = await resolverCoordsSync(form.destino);
-      setCargando(false);
-      if (!oCoords) {
-        avisar("Ubica el sitio de recogida", "No pudimos ubicar en el mapa dónde estás. Usa '📍 Usar mi ubicación actual' o márcalo en el mapa.");
-        setMapaAbierto("origen"); return;
-      }
-      if (!dCoords) {
-        avisar("Ubica el destino", "No pudimos ubicar en el mapa a dónde vas. Márcalo tocando '🏁 Marcar a dónde vas en el mapa'.");
-        setMapaAbierto("destino"); return;
-      }
-      setOrigenCoords(oCoords); setDestinoCoords(dCoords);
-    }
     setCargando(true);
     const datos = {
       cliente_id: usuario.id,
@@ -2145,8 +2130,8 @@ function PedirCarreraScreen({ navigation, route }) {
       origen_detalle: form.origen_detalle.trim(), destino_detalle: form.destino_detalle.trim(),
       notas: form.notas.trim(), vehiculo_pedido: vehiculo, municipio: muni.nombre,
     };
-    if (oCoords) { datos.origen_lat = oCoords.lat; datos.origen_lon = oCoords.lon; }
-    if (dCoords) { datos.destino_lat = dCoords.lat; datos.destino_lon = dCoords.lon; }
+    datos.origen_lat = origenCoords.lat; datos.origen_lon = origenCoords.lon;
+    datos.destino_lat = destinoCoords.lat; datos.destino_lon = destinoCoords.lon;
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
     if (recogidaISO) datos.recogida = recogidaISO;
@@ -2575,15 +2560,14 @@ function PedirCarreraScreen({ navigation, route }) {
             </View>
           )}
 
-          <Text style={styles.ayuda}>Con el mapa o el GPS ya basta. Si prefieres, tambien puedes escribir o elegir de la lista:</Text>
-          <CampoLugar
-            etiqueta="EL SITIO (opcional si ya marcaste)"
-            valor={form.origen}
-            onChange={(t) => setForm({ ...form, origen: t })}
-            placeholder="Ej: Parque Central o Carrera 5a # 4-20"
-            municipio={muni ? muni.nombre : usuario.municipio}
-            onSeleccionar={(l) => { if (l.lat != null) setOrigenCoords({ lat: l.lat, lon: l.lon }); else resolverCoords(l.nombre, "origen"); }}
-          />
+          {origenCoords ? (
+            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10, marginTop: 4 }}>
+              <Text style={{ fontSize: 11, color: "#7A927F", fontWeight: "700" }}>SITIO DE RECOGIDA</Text>
+              <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830", marginTop: 2 }} numberOfLines={2}>{form.origen || "📍 Punto marcado"}</Text>
+            </View>
+          ) : (
+            <Text style={styles.ayuda}>Usa el GPS o marca el punto en el mapa para fijar dónde estás.</Text>
+          )}
           <TextInput
             value={form.origen_detalle}
             onChangeText={(t) => setForm({ ...form, origen_detalle: t })}
@@ -2710,15 +2694,14 @@ function PedirCarreraScreen({ navigation, route }) {
               {destinoCoords ? "✓ Destino marcado — cambiar en el mapa" : "🏁 Marcar a donde vas en el mapa"}
             </Text>
           </TouchableOpacity>
-          <Text style={styles.ayuda}>O escribelo / elige de la lista:</Text>
-          <CampoLugar
-            etiqueta=""
-            valor={form.destino}
-            onChange={(t) => setForm({ ...form, destino: t })}
-            placeholder="Ej: ESE Hospital Orito o Vereda Monserrate"
-            municipio={muni ? muni.nombre : usuario.municipio}
-            onSeleccionar={(l) => { if (l.lat != null) setDestinoCoords({ lat: l.lat, lon: l.lon }); else resolverCoords(l.nombre, "destino"); }}
-          />
+          {destinoCoords ? (
+            <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, padding: 10, marginTop: 4 }}>
+              <Text style={{ fontSize: 11, color: "#B08A5A", fontWeight: "700" }}>DESTINO</Text>
+              <Text style={{ fontSize: 15, fontWeight: "700", color: "#B85C00", marginTop: 2 }} numberOfLines={2}>{form.destino || "🏁 Punto marcado"}</Text>
+            </View>
+          ) : (
+            <Text style={styles.ayuda}>Marca en el mapa a dónde vas.</Text>
+          )}
           <TextInput
             value={form.destino_detalle}
             onChangeText={(t) => setForm({ ...form, destino_detalle: t })}

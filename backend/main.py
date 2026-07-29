@@ -1288,8 +1288,8 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         recogida=recogida_dt,
     )
     db.add(carrera)
-    registrar_lugar(origen, municipio, db, origen_lat, origen_lon)
-    registrar_lugar(destino, municipio, db, destino_lat, destino_lon)
+    # ya no se graban lugares: origen y destino se fijan siempre por GPS/mapa,
+    # asi que no hay lista pregrabada que alimentar (decision de precision)
     db.commit()
     db.refresh(carrera)
     tareas.add_task(avisar_carrera_nueva, carrera.id)
