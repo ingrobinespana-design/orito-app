@@ -3518,6 +3518,10 @@ function AdminCarrerasScreen({ navigation }) {
   const [municipios, setMunicipios] = useState([]);
   const [nuevaCiudad, setNuevaCiudad] = useState({ nombre: "", lat: null, lon: null, vehiculos: ["carro"] });
   const [marcandoCentro, setMarcandoCentro] = useState(false);
+  const [editCiudad, setEditCiudad] = useState(null);   // nombre de la ciudad cuyas tarifas se editan
+  const [tarBase, setTarBase] = useState("");
+  const [tarKm, setTarKm] = useState("");
+  const [tarMin, setTarMin] = useState("");
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
@@ -3549,6 +3553,28 @@ function AdminCarrerasScreen({ navigation }) {
   const toggleCiudad = (m) => {
     const nuevo = m.activo === "no" ? "si" : "no";
     adminFetch(`${API}/municipios/${encodeURIComponent(m.nombre)}?activo=${nuevo}`, { method: "PUT" }).then(cargar).catch(() => {});
+  };
+
+  const abrirTarifas = (m) => {
+    setEditCiudad(m.nombre);
+    setTarBase(m.tarifa_base ? String(m.tarifa_base) : "");
+    setTarKm(m.valor_km ? String(m.valor_km) : "");
+    setTarMin(m.tarifa_minima ? String(m.tarifa_minima) : "");
+  };
+
+  const guardarTarifas = (m) => {
+    const b = parseInt((tarBase || "").replace(/\D/g, ""), 10) || 0;
+    const k = parseInt((tarKm || "").replace(/\D/g, ""), 10) || 0;
+    const mn = parseInt((tarMin || "").replace(/\D/g, ""), 10) || 0;
+    // con tarifas se activa el GPS para poder sugerir precio por km
+    const p = `tarifa_base=${b}&valor_km=${k}&tarifa_minima=${mn}${(b || k || mn) ? "&usa_gps=si" : ""}`;
+    adminFetch(`${API}/municipios/${encodeURIComponent(m.nombre)}?${p}`, { method: "PUT" })
+      .then(async r => {
+        if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+        setEditCiudad(null); cargar();
+        avisar("Tarifas guardadas", `${m.nombre}: base $${b.toLocaleString()} + $${k.toLocaleString()}/km (mínima $${mn.toLocaleString()}).`);
+      })
+      .catch(() => avisar("Error", "No hay conexión."));
   };
 
   useEffect(() => {
@@ -3798,6 +3824,11 @@ function AdminCarrerasScreen({ navigation }) {
                     <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
                       {(m.vehiculos || []).map(vehIcono).join(" ")}{m.usa_gps ? "  · 🛰️ GPS" : ""}
                     </Text>
+                    <Text style={{ fontSize: 12, color: "#B85C00", marginTop: 2 }}>
+                      {(m.tarifa_base || m.valor_km)
+                        ? `💵 base $${(m.tarifa_base || 0).toLocaleString()} + $${(m.valor_km || 0).toLocaleString()}/km`
+                        : "💬 precio libre (sin tarifa sugerida)"}
+                    </Text>
                   </View>
                   <TouchableOpacity
                     style={[styles.chip, m.activo !== "no" && styles.chipOn]}
@@ -3807,6 +3838,40 @@ function AdminCarrerasScreen({ navigation }) {
                     </Text>
                   </TouchableOpacity>
                 </View>
+
+                {editCiudad === m.nombre ? (
+                  <View style={{ marginTop: 10, borderTopWidth: 0.5, borderTopColor: "#eee", paddingTop: 10 }}>
+                    <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+                      Tarifa SUGERIDA (solo orienta al cliente; el precio se sigue negociando). Deja todo en 0 para precio libre.
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.etiqueta}>BASE $</Text>
+                        <TextInput value={tarBase} onChangeText={setTarBase} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.etiqueta}>POR KM $</Text>
+                        <TextInput value={tarKm} onChangeText={setTarKm} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.etiqueta}>MÍNIMA $</Text>
+                        <TextInput value={tarMin} onChangeText={setTarMin} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                      <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", padding: 10 }]} onPress={() => setEditCiudad(null)}>
+                        <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => guardarTarifas(m)}>
+                        <Text style={[styles.buttonText, { fontSize: 14 }]}>Guardar</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={{ marginTop: 8, alignSelf: "flex-start" }} onPress={() => abrirTarifas(m)}>
+                    <Text style={{ color: "#1A73E8", fontWeight: "600", fontSize: 13 }}>✏️ Editar tarifas</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ))}
 
