@@ -3515,12 +3515,40 @@ function AdminCarrerasScreen({ navigation }) {
   const [gStats, setGStats] = useState(null);
   const [pestana, setPestana] = useState("conductores");
   const [telLiberar, setTelLiberar] = useState("");   // desbloquear a un usuario atascado
+  const [municipios, setMunicipios] = useState([]);
+  const [nuevaCiudad, setNuevaCiudad] = useState({ nombre: "", lat: null, lon: null, vehiculos: ["carro"] });
+  const [marcandoCentro, setMarcandoCentro] = useState(false);
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
     adminFetch(`${API}/carreras`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCarreras(d); }).catch(() => {});
     adminFetch(`${API}/estadisticas`).then(r => r.json()).then(d => { if (d && !d.detail) setGStats(d); }).catch(() => {});
     adminFetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
+    fetch(`${API}/municipios?todos=1`).then(r => r.json()).then(d => { if (Array.isArray(d)) setMunicipios(d); }).catch(() => {});
+  };
+
+  const TODOS_VEHICULOS = ["carro", "moto", "motocarguero", "camioneta", "camion", "furgon", "planchon", "grua"];
+
+  const crearCiudad = () => {
+    const nom = nuevaCiudad.nombre.trim();
+    if (nom.length < 3) { avisar("Falta el nombre", "Escribe el nombre de la ciudad."); return; }
+    if (nuevaCiudad.lat == null) { avisar("Falta el centro", "Marca el centro de la ciudad en el mapa."); return; }
+    if (!nuevaCiudad.vehiculos.length) { avisar("Faltan vehículos", "Elige al menos un tipo de vehículo."); return; }
+    const p = qs({ nombre: nom, centro_lat: nuevaCiudad.lat, centro_lon: nuevaCiudad.lon, vehiculos: nuevaCiudad.vehiculos.join(","), usa_gps: "si" });
+    adminFetch(`${API}/municipios?${p}`, { method: "POST" })
+      .then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+        setNuevaCiudad({ nombre: "", lat: null, lon: null, vehiculos: ["carro"] });
+        cargar();
+        avisar("Ciudad creada", `${nom} ya está activa. Los conductores de ahí ya pueden trabajar.`);
+      })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
+
+  const toggleCiudad = (m) => {
+    const nuevo = m.activo === "no" ? "si" : "no";
+    adminFetch(`${API}/municipios/${encodeURIComponent(m.nombre)}?activo=${nuevo}`, { method: "PUT" }).then(cargar).catch(() => {});
   };
 
   useEffect(() => {
@@ -3590,7 +3618,7 @@ function AdminCarrerasScreen({ navigation }) {
       </View>
 
       <View style={[styles.tabs, { marginHorizontal: 16 }]}>
-        {["numeros", "conductores", "carreras", "cobro"].map(p => (
+        {["numeros", "conductores", "carreras", "ciudades", "cobro"].map(p => (
           <TouchableOpacity key={p} style={[styles.tab, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
             <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{p[0].toUpperCase() + p.slice(1)}</Text>
           </TouchableOpacity>
@@ -3716,6 +3744,81 @@ function AdminCarrerasScreen({ navigation }) {
         ))}
         {pestana === "carreras" && carreras.length === 0 && (
           <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>Todavia no hay carreras</Text>
+        )}
+
+        {pestana === "ciudades" && (
+          <>
+            {/* --- formulario: abrir ciudad nueva --- */}
+            <View style={[styles.card, { marginBottom: 14, borderWidth: 1, borderColor: "#187830" }]}>
+              <Text style={{ fontWeight: "800", color: "#187830", fontSize: 15 }}>➕ Abrir ciudad nueva</Text>
+              <Text style={{ fontSize: 12, color: "#888", marginTop: 2, marginBottom: 10 }}>
+                Con esto la app detecta la ciudad por GPS y los conductores de ahí ya pueden trabajar. Sin actualizar la app.
+              </Text>
+              <TextInput
+                value={nuevaCiudad.nombre}
+                onChangeText={(t) => setNuevaCiudad({ ...nuevaCiudad, nombre: t })}
+                placeholder="Nombre de la ciudad (ej. Mocoa, Pasto, Florencia)"
+                style={styles.input}
+              />
+              <TouchableOpacity
+                style={[styles.botonMapa, nuevaCiudad.lat != null && styles.botonMapaOk]}
+                onPress={() => setMarcandoCentro(true)}>
+                <Text style={{ color: "#187830", fontWeight: "600" }}>
+                  {nuevaCiudad.lat != null ? "✓ Centro marcado — cambiar en el mapa" : "🗺️ Marcar el centro de la ciudad"}
+                </Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 12, color: "#666", fontWeight: "600", marginTop: 10, marginBottom: 4 }}>Vehículos permitidos:</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {TODOS_VEHICULOS.map((v) => {
+                  const on = nuevaCiudad.vehiculos.includes(v);
+                  return (
+                    <TouchableOpacity key={v}
+                      style={[styles.chip, on && styles.chipOn]}
+                      onPress={() => setNuevaCiudad({
+                        ...nuevaCiudad,
+                        vehiculos: on ? nuevaCiudad.vehiculos.filter(x => x !== v) : [...nuevaCiudad.vehiculos, v],
+                      })}>
+                      <Text style={[styles.chipTxt, on && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 14 }]} onPress={crearCiudad}>
+                <Text style={styles.buttonText}>Crear ciudad</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* --- lista de ciudades --- */}
+            <Text style={styles.seccionTitulo}>Ciudades ({municipios.length})</Text>
+            {municipios.map((m) => (
+              <View key={m.nombre} style={[styles.card, { marginBottom: 8, opacity: m.activo === "no" ? 0.55 : 1 }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: "700", fontSize: 15 }}>{m.nombre}</Text>
+                    <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
+                      {(m.vehiculos || []).map(vehIcono).join(" ")}{m.usa_gps ? "  · 🛰️ GPS" : ""}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.chip, m.activo !== "no" && styles.chipOn]}
+                    onPress={() => toggleCiudad(m)}>
+                    <Text style={[styles.chipTxt, m.activo !== "no" && styles.chipTxtOn]}>
+                      {m.activo === "no" ? "Apagada" : "Activa"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+
+            <MapaSelector
+              visible={marcandoCentro}
+              titulo="Marca el centro de la ciudad"
+              centro={nuevaCiudad.lat != null ? { lat: nuevaCiudad.lat, lon: nuevaCiudad.lon } : null}
+              municipio={nuevaCiudad.nombre || "Colombia"}
+              onConfirmar={(c) => { setNuevaCiudad((n) => ({ ...n, lat: c.lat, lon: c.lon })); setMarcandoCentro(false); }}
+              onCerrar={() => setMarcandoCentro(false)}
+            />
+          </>
         )}
 
         {pestana === "cobro" && (

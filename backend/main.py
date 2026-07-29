@@ -366,6 +366,7 @@ def municipio_dict(m: Municipio, db: Session):
         "nombre": m.nombre,
         "vehiculos": vehiculos_de(m.nombre, db),
         "usa_gps": m.usa_gps == "si",
+        "activo": m.activo,
         "tarifa_base": m.tarifa_base or 0,
         "valor_km": m.valor_km or 0,
         "tarifa_minima": m.tarifa_minima or 0,
@@ -448,12 +449,15 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
     return {"nombre": None, "fuente": None}
 
 @app.get("/municipios")
-def obtener_municipios(db: Session = Depends(get_db)):
+def obtener_municipios(todos: bool = False, db: Session = Depends(get_db)):
     """La app arma con esto las opciones del registro: en Orito no debe
     aparecer la opcion de moto porque alla todavia no hay mototaxi, y solo
-    donde usa_gps esta prendido se pide ubicacion y se sugiere tarifa."""
-    return [municipio_dict(m, db)
-            for m in db.query(Municipio).filter(Municipio.activo == "si").order_by(Municipio.nombre).all()]
+    donde usa_gps esta prendido se pide ubicacion y se sugiere tarifa.
+    'todos=1' (panel admin) incluye tambien las ciudades desactivadas."""
+    q = db.query(Municipio)
+    if not todos:
+        q = q.filter(Municipio.activo == "si")
+    return [municipio_dict(m, db) for m in q.order_by(Municipio.nombre).all()]
 
 def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     """Sugerencia segun el pueblo, el vehiculo y los km. Solo orienta la oferta
@@ -501,6 +505,33 @@ def actualizar_tarifa(tarifa_id: int, base: int = None, valor_km: int = None,
     db.commit()
     return {"id": t.id, "municipio": t.municipio, "vehiculo": t.vehiculo,
             "base": t.base, "valor_km": t.valor_km, "minima": t.minima}
+
+@app.post("/municipios")
+def crear_municipio(nombre: str, centro_lat: float, centro_lon: float,
+                    vehiculos: str = "carro", usa_gps: str = "si",
+                    tarifa_base: int = 0, valor_km: int = 0, tarifa_minima: int = 0,
+                    db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Abre una ciudad nueva (expansion): nombre + centro en el mapa + que
+    vehiculos se permiten. Con esto la app ya la detecta por GPS y los conductores
+    de ahi ven sus carreras. Sin recompilar nada."""
+    nombre = (nombre or "").strip()
+    if len(nombre) < 3:
+        raise HTTPException(status_code=400, detail="El nombre de la ciudad es muy corto")
+    if db.query(Municipio).filter(func.lower(Municipio.nombre) == nombre.lower()).first():
+        raise HTTPException(status_code=400, detail="Ya existe una ciudad con ese nombre")
+    pedidos = [v.strip() for v in vehiculos.split(",") if v.strip()]
+    if not pedidos or any(v not in VEHICULOS_VALIDOS for v in pedidos):
+        raise HTTPException(status_code=400, detail=f"Vehiculos validos: {', '.join(VEHICULOS_VALIDOS)}")
+    if usa_gps not in ("si", "no"):
+        raise HTTPException(status_code=400, detail="usa_gps solo acepta si o no")
+    m = Municipio(nombre=nombre, vehiculos=",".join(pedidos), activo="si", usa_gps=usa_gps,
+                  tarifa_base=max(0, tarifa_base or 0), valor_km=max(0, valor_km or 0),
+                  tarifa_minima=max(0, tarifa_minima or 0),
+                  centro_lat=centro_lat, centro_lon=centro_lon)
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return {**municipio_dict(m, db), "activo": m.activo}
 
 @app.put("/municipios/{nombre}")
 def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
