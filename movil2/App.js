@@ -1509,11 +1509,33 @@ function mapaHTML(lat, lon) {
 </script></body></html>`;
 }
 
-function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
+function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerrar }) {
   const webRef = useRef(null);
   const inicial = centro && centro.lat ? centro : { lat: 0.5083, lon: -76.4972 };
   const [coords, setCoords] = useState(inicial);
   const [buscando, setBuscando] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+  const [buscandoLugar, setBuscandoLugar] = useState(false);
+
+  // buscador: escribe un sitio, se geocodifica y el pin salta ahi en el mapa.
+  // No graba nada; solo mueve el pin para que confirmes/ajustes a mano.
+  const buscarLugar = () => {
+    const t = busqueda.trim();
+    if (!t) return;
+    setBuscandoLugar(true);
+    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(municipio || "Orito")}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.lat != null) {
+          setCoords({ lat: d.lat, lon: d.lon });
+          webRef.current && webRef.current.injectJavaScript(`irA(${d.lat}, ${d.lon}); true;`);
+        } else {
+          avisar("No lo ubicamos", "No encontramos ese sitio en el mapa. Muévete y marca el punto a mano, o intenta con el nombre completo.");
+        }
+      })
+      .catch(() => {})
+      .finally(() => setBuscandoLugar(false));
+  };
 
   const usarMiUbicacion = async () => {
     try {
@@ -1535,6 +1557,19 @@ function MapaSelector({ visible, titulo, centro, onConfirmar, onCerrar }) {
         <View style={{ padding: 14, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 0.5, borderBottomColor: "#eee" }}>
           <TouchableOpacity onPress={onCerrar}><Text style={{ fontSize: 22 }}>←</Text></TouchableOpacity>
           <Text style={{ fontSize: 16, fontWeight: "600", color: "#333" }}>{titulo}</Text>
+        </View>
+        <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingTop: 10 }}>
+          <TextInput
+            value={busqueda}
+            onChangeText={setBusqueda}
+            placeholder="🔎 Buscar un sitio (ej. Parque Principal)"
+            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+            onSubmitEditing={buscarLugar}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", paddingHorizontal: 16, justifyContent: "center" }]} onPress={buscarLugar} disabled={buscandoLugar}>
+            {buscandoLugar ? <ActivityIndicator color="#fff" /> : <Text style={[styles.buttonText, { fontSize: 14 }]}>Buscar</Text>}
+          </TouchableOpacity>
         </View>
         <View style={{ flex: 1 }}>
           <WebView
@@ -1790,11 +1825,14 @@ function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, l
   );
 }
 
-/** abre Google Maps con navegacion por voz hacia un punto (gratis: usa la app
- *  de Maps que ya tiene el celular) */
+/** abre Google Maps con navegacion hacia un punto (gratis: usa la app de Maps del
+ *  celular). Se usa la URL universal de direcciones como principal porque es la
+ *  mas confiable para que Maps TRACE la ruta; si no, el esquema de navegacion. */
 function navegarGoogleMaps(lat, lon) {
-  Linking.openURL(`google.navigation:q=${lat},${lon}`)
-    .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`).catch(() => {}));
+  const dir = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`;
+  Linking.openURL(dir)
+    .catch(() => Linking.openURL(`google.navigation:q=${lat},${lon}`)
+      .catch(() => Linking.openURL(`geo:${lat},${lon}?q=${lat},${lon}`).catch(() => {})));
 }
 
 // respaldo cuando el destino no tiene coordenadas: navega por el nombre escrito
@@ -2675,6 +2713,7 @@ function PedirCarreraScreen({ navigation, route }) {
         visible={!!mapaAbierto}
         titulo={mapaAbierto === "origen" ? "De donde sales" : "A donde vas"}
         centro={centroMapa(mapaAbierto)}
+        municipio={muni ? muni.nombre : usuario.municipio}
         onConfirmar={confirmarPunto}
         onCerrar={() => setMapaAbierto(null)}
       />
@@ -3137,6 +3176,11 @@ function ConductorScreen({ navigation, route }) {
                   const punto = yendoARecoger
                     ? (c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null)
                     : (c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null);
+                  const destinoPunto = c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null;
+                  // a donde navega el boton: yendo a recoger (aceptada) -> a la
+                  // recogida; ya en el punto o en viaje -> al DESTINO (si vas a la
+                  // recogida estando encima, Maps no traza nada y "rebota")
+                  const navTarget = c.estado === "aceptada" ? punto : destinoPunto;
                   if (!punto && !miUbic) return null;
                   const dist = punto && miUbic ? kmEntre(miUbic, punto) : null;
                   const info = rutaCond;
@@ -3165,11 +3209,11 @@ function ConductorScreen({ navigation, route }) {
                             </Text>
                           </View>
                         )}
-                        {punto ? (
-                          <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMaps(punto.lat, punto.lon)}>
-                            <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Iniciar ruta</Text>
+                        {navTarget ? (
+                          <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMaps(navTarget.lat, navTarget.lon)}>
+                            <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 {c.estado === "aceptada" ? "Iniciar ruta" : "Ir al destino"}</Text>
                           </TouchableOpacity>
-                        ) : (c.estado === "en_camino" && c.destino) ? (
+                        ) : (c.destino) ? (
                           <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 14 }]} onPress={() => navegarGoogleMapsTexto(c.destino)}>
                             <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Navegar</Text>
                           </TouchableOpacity>
