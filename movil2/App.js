@@ -1434,58 +1434,6 @@ function ElegirServicioScreen({ navigation, route }) {
   );
 }
 
-/** Campo de origen/destino: se puede escribir libre (nomenclatura, negocio, lo que sea)
- *  y va sugiriendo lo que otros ya han usado EN ESE MUNICIPIO (no mezcla pueblos). */
-function CampoLugar({ etiqueta, valor, onChange, placeholder, municipio, onSeleccionar }) {
-  const [sugerencias, setSugerencias] = useState([]);
-  const [mostrar, setMostrar] = useState(false);
-  const filtroMun = municipio ? `&municipio=${encodeURIComponent(municipio)}` : "";
-
-  const buscar = (texto) => {
-    onChange(texto);
-    if (texto.trim().length < 2) { setSugerencias([]); return; }
-    fetch(`${API}/lugares?buscar=${encodeURIComponent(texto.trim())}${filtroMun}`)
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setSugerencias(d); })
-      .catch(() => setSugerencias([]));
-  };
-
-  const verTodos = () => {
-    setMostrar(true);
-    fetch(`${API}/lugares?buscar=${filtroMun}`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setSugerencias(d); })
-      .catch(() => {});
-  };
-
-  return (
-    <View style={{ marginBottom: 4 }}>
-      <Text style={styles.etiqueta}>{etiqueta}</Text>
-      <TextInput
-        value={valor}
-        onChangeText={buscar}
-        onFocus={verTodos}
-        placeholder={placeholder}
-        style={styles.input}
-      />
-      {mostrar && sugerencias.length > 0 && (
-        <View style={styles.sugerencias}>
-          {sugerencias.slice(0, 6).map((l) => (
-            <TouchableOpacity
-              key={l.id}
-              style={styles.sugerenciaItem}
-              onPress={() => { onChange(l.nombre); onSeleccionar && onSeleccionar(l); setSugerencias([]); setMostrar(false); }}
-            >
-              <Text style={{ fontSize: 13, color: "#333" }}>
-                {(l.lat ? "✅ " : (l.zona === "rural" ? "🌄 " : "📍 "))}{l.nombre}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
-
 /** Mapa con OpenStreetMap (gratis, sin clave de Google) dentro de un WebView.
  *  Patron tipo Uber: el pin queda fijo en el centro y el mapa se mueve debajo,
  *  asi ubicar es facil con el dedo. Devuelve {lat, lon} del centro. */
@@ -2004,20 +1952,6 @@ function PedirCarreraScreen({ navigation, route }) {
     }).catch(() => {});
   };
 
-  // resuelve las coordenadas de un lugar elegido de la lista (o escrito) cuando
-  // aun no las tiene: asi el mapa, la ruta y la tarifa funcionan sin marcar el pin
-  const resolverCoords = (texto, cual) => {
-    const m = muni ? muni.nombre : usuario.municipio;
-    if (!texto || !m) return;
-    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(texto)}&municipio=${encodeURIComponent(m)}`)
-      .then(r => r.json())
-      .then(d => {
-        if (!d || d.lat == null) return;
-        if (cual === "destino") setDestinoCoords({ lat: d.lat, lon: d.lon });
-        else setOrigenCoords({ lat: d.lat, lon: d.lon });
-      })
-      .catch(() => {});
-  };
 
   const confirmarPunto = (coords) => {
     // marcar en el mapa ya deja el punto listo; si no habia texto, se pone una
@@ -2090,20 +2024,6 @@ function PedirCarreraScreen({ navigation, route }) {
     const toque = Notifications.addNotificationResponseReceivedListener(cargarActiva);
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
   }, []);
-
-  // resuelve un texto a coordenadas y ESPERA la respuesta (para exigir ubicacion
-  // antes de pedir). Devuelve {lat,lon} o null.
-  const resolverCoordsSync = async (texto) => {
-    const m = muni ? muni.nombre : usuario.municipio;
-    const t = (texto || "").trim();
-    if (!t || !m || /punto marcado|mi ubicacion/i.test(t)) return null;
-    try {
-      const r = await fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(m)}`);
-      const d = await r.json();
-      if (d && d.lat != null) return { lat: d.lat, lon: d.lon };
-    } catch (e) {}
-    return null;
-  };
 
   const pedir = async () => {
     if (!muni) { avisar("Falta el municipio", "Marca donde estas o elige el municipio."); return; }
@@ -2332,7 +2252,7 @@ function PedirCarreraScreen({ navigation, route }) {
                 </View>
                 {kmViaje == null && (
                   <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 6 }}>
-                    El destino se escribió sin ubicación en el mapa, por eso no hay distancia ni 🏁. Al pedir, marca el destino en el mapa o elígelo de las sugerencias para verlos.
+                    Esta carrera se pidió sin ubicación en el mapa (antes del cambio), por eso no muestra distancia ni 🏁.
                   </Text>
                 )}
               </View>
