@@ -2091,7 +2091,21 @@ function PedirCarreraScreen({ navigation, route }) {
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
   }, []);
 
-  const pedir = () => {
+  // resuelve un texto a coordenadas y ESPERA la respuesta (para exigir ubicacion
+  // antes de pedir). Devuelve {lat,lon} o null.
+  const resolverCoordsSync = async (texto) => {
+    const m = muni ? muni.nombre : usuario.municipio;
+    const t = (texto || "").trim();
+    if (!t || !m || /punto marcado|mi ubicacion/i.test(t)) return null;
+    try {
+      const r = await fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(m)}`);
+      const d = await r.json();
+      if (d && d.lat != null) return { lat: d.lat, lon: d.lon };
+    } catch (e) {}
+    return null;
+  };
+
+  const pedir = async () => {
     if (!muni) { avisar("Falta el municipio", "Marca donde estas o elige el municipio."); return; }
     // cada punto se cumple de UNA sola forma: texto/lista O pin en el mapa. No las dos.
     const origenListo = form.origen.trim() || origenCoords;
@@ -2104,6 +2118,25 @@ function PedirCarreraScreen({ navigation, route }) {
       avisar("Falta la hora", "Elige el dia y la hora de recogida, o toca 'Lo antes posible'."); return;
     }
     if (!oferta.trim()) { avisar("Falta tu oferta", "Escribe cuanto ofreces pagar"); return; }
+    // GARANTIA DE UBICACION: donde hay GPS, el origen y el destino DEBEN quedar
+    // ubicados en el mapa para dar contexto de la ruta. Si el texto/lista no trae
+    // coordenadas, se intenta ubicar; si no se logra, se obliga a marcar en el mapa.
+    let oCoords = origenCoords, dCoords = destinoCoords;
+    if (muni.usa_gps) {
+      setCargando(true);
+      if (!oCoords && form.origen.trim()) oCoords = await resolverCoordsSync(form.origen);
+      if (!dCoords && form.destino.trim()) dCoords = await resolverCoordsSync(form.destino);
+      setCargando(false);
+      if (!oCoords) {
+        avisar("Ubica el sitio de recogida", "No pudimos ubicar en el mapa dónde estás. Usa '📍 Usar mi ubicación actual' o márcalo en el mapa.");
+        setMapaAbierto("origen"); return;
+      }
+      if (!dCoords) {
+        avisar("Ubica el destino", "No pudimos ubicar en el mapa a dónde vas. Márcalo tocando '🏁 Marcar a dónde vas en el mapa'.");
+        setMapaAbierto("destino"); return;
+      }
+      setOrigenCoords(oCoords); setDestinoCoords(dCoords);
+    }
     setCargando(true);
     const datos = {
       cliente_id: usuario.id,
@@ -2112,8 +2145,8 @@ function PedirCarreraScreen({ navigation, route }) {
       origen_detalle: form.origen_detalle.trim(), destino_detalle: form.destino_detalle.trim(),
       notas: form.notas.trim(), vehiculo_pedido: vehiculo, municipio: muni.nombre,
     };
-    if (origenCoords) { datos.origen_lat = origenCoords.lat; datos.origen_lon = origenCoords.lon; }
-    if (destinoCoords) { datos.destino_lat = destinoCoords.lat; datos.destino_lon = destinoCoords.lon; }
+    if (oCoords) { datos.origen_lat = oCoords.lat; datos.origen_lon = oCoords.lon; }
+    if (dCoords) { datos.destino_lat = dCoords.lat; datos.destino_lon = dCoords.lon; }
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
     if (recogidaISO) datos.recogida = recogidaISO;
