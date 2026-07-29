@@ -1079,23 +1079,52 @@ def geocodificar_texto(nombre: str, municipio: str, db: Session):
     except Exception:
         return None
 
+def geocodificar_amplio(nombre: str, lat=None, lon=None):
+    """Geocoding SIN restringir al municipio: busca en toda Colombia (ciudades
+    principales, barrios, nomenclatura) y, si se sabe donde esta el usuario, se
+    sesga hacia ahi eligiendo el resultado mas cercano — asi 'Calle 49' cae en la
+    ciudad correcta. Devuelve (lat, lon) o None."""
+    nombre = (nombre or "").strip()
+    if len(nombre) < 3:
+        return None
+    try:
+        import urllib.request as _ur, urllib.parse as _up, json as _json
+        params = {"q": f"{nombre}, Colombia", "format": "jsonv2", "limit": "6",
+                  "countrycodes": "co", "accept-language": "es"}
+        if lat is not None and lon is not None:
+            d = 0.4   # caja de PREFERENCIA (sin bounded): sesga, no limita
+            params["viewbox"] = f"{lon - d},{lat - d},{lon + d},{lat + d}"
+        url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
+        req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
+        with _ur.urlopen(req, timeout=5) as r:
+            arr = _json.loads(r.read().decode("utf-8"))
+        if not arr:
+            return None
+        if lat is not None and lon is not None:
+            def cerca(item):
+                return tarifas.distancia_km(lat, lon, float(item["lat"]), float(item["lon"])) or 1e9
+            mejor = min(arr, key=cerca)
+        else:
+            mejor = arr[0]
+        return (float(mejor["lat"]), float(mejor["lon"]))
+    except Exception:
+        return None
+
 @app.get("/ubicacion/buscar")
-def buscar_coordenadas(texto: str, municipio: str = "Orito", db: Session = Depends(get_db)):
-    """Texto (elegido de la lista o escrito) -> coordenadas, para que el mapa, la
-    ruta y la tarifa funcionen aunque el cliente no haya marcado el pin. Primero
-    mira si ese lugar ya tiene ubicacion aprendida; si no, la geocodifica. Asi la
-    lista de sugerencias siempre puede desplegar el mapa."""
+def buscar_coordenadas(texto: str, municipio: str = "Orito",
+                       cerca_lat: float = None, cerca_lon: float = None,
+                       db: Session = Depends(get_db)):
+    """Texto -> coordenadas para el buscador del mapa. Si viene 'cerca_lat/lon'
+    (donde esta mirando el usuario) se busca AMPLIO en toda Colombia sesgado a ese
+    punto, para que funcione en cualquier ciudad. Sin sesgo, se limita al municipio."""
+    if cerca_lat is not None and cerca_lon is not None:
+        g = geocodificar_amplio(texto, cerca_lat, cerca_lon)
+        return {"lat": g[0], "lon": g[1], "fuente": "geocode"} if g else {"lat": None, "lon": None}
     conocido = buscar_lugar(texto, municipio, db)
     if conocido and conocido.lat is not None:
         return {"lat": conocido.lat, "lon": conocido.lon, "fuente": "lugar"}
     g = geocodificar_texto(texto, municipio, db)
     if g:
-        # si ese lugar ya estaba en la lista pero sin ubicacion, se la aprende
-        # (queda con ✅ para el proximo); si es texto nuevo, no se crea aqui: se
-        # registra al pedir la carrera, para no llenar la lista de busquedas sueltas
-        if conocido and conocido.lat is None:
-            conocido.lat, conocido.lon = g[0], g[1]
-            db.commit()
         return {"lat": g[0], "lon": g[1], "fuente": "geocode"}
     return {"lat": None, "lon": None}
 

@@ -1523,14 +1523,17 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
     const t = busqueda.trim();
     if (!t) return;
     setBuscandoLugar(true);
-    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(municipio || "Orito")}`)
+    // se sesga hacia donde esta mirando el mapa (coords) para que 'Calle 49' caiga
+    // en la ciudad correcta: busca AMPLIO en toda Colombia, no solo en el municipio
+    const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
+    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(municipio || "Orito")}${cerca}`)
       .then(r => r.json())
       .then(d => {
         if (d && d.lat != null) {
           setCoords({ lat: d.lat, lon: d.lon });
           webRef.current && webRef.current.injectJavaScript(`irA(${d.lat}, ${d.lon}); true;`);
         } else {
-          avisar("No lo ubicamos", "No encontramos ese sitio en el mapa. Muévete y marca el punto a mano, o intenta con el nombre completo.");
+          avisar("No lo ubicamos", "No encontramos ese sitio. Intenta con el nombre completo (ej. 'Calle 49 #10, Cali') o marca el punto a mano en el mapa.");
         }
       })
       .catch(() => {})
