@@ -1619,7 +1619,9 @@ function mapaSeguimientoHTML() {
 <style>
   html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}
   .em{font-size:34px;line-height:34px;text-align:center}
-  .em.carro{filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+  .leaflet-div-icon{background:transparent;border:none}
+  .carro-wrap{background:transparent;border:none}
+  .carro-rot{transition:transform .28s ease-out;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
   #btns{position:absolute;top:10px;right:10px;z-index:1000;display:flex;flex-direction:column;gap:8px}
   #btns button{border:none;border-radius:22px;padding:9px 13px;font-size:13px;font-weight:700;
     box-shadow:0 2px 6px rgba(0,0,0,.25);background:#fff;color:#187830}
@@ -1637,12 +1639,16 @@ function mapaSeguimientoHTML() {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
+  // tiles limpios y modernos (CartoDB Voyager, gratis) en vez del OSM cargado
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',{maxZoom:20,subdomains:'abcd'}).addTo(map);
+  // carro visto desde arriba (apunta al NORTE por defecto; se rota al rumbo)
+  var svgCarro = '<svg viewBox="0 0 32 32" width="34" height="34" style="display:block"><rect x="9" y="3" width="14" height="26" rx="6" fill="#1A73E8" stroke="#ffffff" stroke-width="2"/><rect x="11.5" y="6.5" width="9" height="6" rx="2" fill="#dceafe"/><rect x="11.5" y="19" width="9" height="6.5" rx="2" fill="#bcd6fb"/></svg>';
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
-  var icoCarro = L.divIcon({html:'🚗', className:'em carro', iconSize:[34,34], iconAnchor:[17,17]});
+  var icoCarro = L.divIcon({html:'<div class="carro-rot" style="width:34px;height:34px;transform:rotate(0deg)">'+svgCarro+'</div>', className:'carro-wrap', iconSize:[34,34], iconAnchor:[17,17]});
   var icoDest = L.divIcon({html:'🏁', className:'em', iconSize:[30,30], iconAnchor:[8,28]});
   var pin = null, carro = null, mDest = null;
   var linea = null, rutaCapa = null, capaDest = null, ultimaRuta = null;
+  var rutaPts = null, carIdx = 0;   // ruta actual (por calles) e indice del carro en ella
   var recLat = null, recLon = null, destLat = null, destLon = null;   // recogida (📍) y destino (🏁)
   var dLat = null, dLon = null;   // objetivo de la ruta VERDE, segun metaRuta
   var metaRuta = null;            // 'recogida' | 'destino'
@@ -1687,7 +1693,9 @@ function mapaSeguimientoHTML() {
       var pts = r.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
       if(rutaCapa){ map.removeLayer(rutaCapa); }
       if(linea){ map.removeLayer(linea); linea = null; }
-      rutaCapa = L.polyline(pts, {color:'#187830', weight:5, opacity:0.85}).addTo(map);
+      rutaCapa = L.polyline(pts, {color:'#187830', weight:6, opacity:0.9, lineCap:'round', lineJoin:'round'}).addTo(map);
+      rutaPts = pts;   // el carro seguira ESTOS puntos (van por la carretera)
+      carIdx = carro ? nearestIdx(carro.getLatLng().lat, carro.getLatLng().lng) : 0;
       ultimaRuta = [la, lo];
       if(window.ReactNativeWebView){
         window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)}));
@@ -1696,19 +1704,56 @@ function mapaSeguimientoHTML() {
       // alejaba el mapa y hacia que el carro se viera quieto
     }).catch(function(){ recta(la, lo); });
   }
-  // desliza el carrito de A a B en ~1.4s para que se vea moverse, no saltar
-  function animarCarro(desde, hasta){
-    if(animId) cancelAnimationFrame(animId);
-    var t0 = performance.now(), dur = 1400;
-    function paso(now){
-      var t = Math.min(1, (now - t0) / dur);
-      var la = desde[0] + (hasta[0]-desde[0])*t;
-      var lo = desde[1] + (hasta[1]-desde[1])*t;
-      carro.setLatLng([la, lo]);
-      if(seguir){ map.panTo([la, lo], {animate:false}); }   // camara pegada al carro
-      if(t < 1){ animId = requestAnimationFrame(paso); }
+  // rumbo (0-360, 0=norte) de A hacia B, para apuntar el carro a donde avanza
+  function rumbo(a, b){
+    var la1=a[0]*Math.PI/180, la2=b[0]*Math.PI/180, dlo=(b[1]-a[1])*Math.PI/180;
+    var y=Math.sin(dlo)*Math.cos(la2);
+    var x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dlo);
+    return (Math.atan2(y,x)*180/Math.PI+360)%360;
+  }
+  function rotarCarro(deg){
+    var el = document.querySelector('.carro-rot');
+    if(el){ el.style.transform = 'rotate(' + deg + 'deg)'; }
+  }
+  // indice del punto de la ruta mas cercano a (la,lo)
+  function nearestIdx(la, lo){
+    if(!rutaPts) return 0;
+    var best=0, bd=Infinity;
+    for(var i=0;i<rutaPts.length;i++){
+      var dx=rutaPts[i][0]-la, dy=rutaPts[i][1]-lo, d=dx*dx+dy*dy;
+      if(d<bd){ bd=d; best=i; }
     }
-    animId = requestAnimationFrame(paso);
+    return best;
+  }
+  // en vez de saltar en linea recta, el carro AVANZA por los puntos de la ruta
+  // (que van por la carretera) desde donde estaba hasta su nueva posicion
+  function moverEnRuta(la, lo){
+    var a = carro.getLatLng();
+    if(!rutaPts || rutaPts.length < 2){ animarSecuencia([[a.lat,a.lng],[la,lo]]); return; }
+    var idx = nearestIdx(la, lo);
+    var seq = [[a.lat, a.lng]];
+    if(idx >= carIdx){ for(var i=carIdx+1;i<=idx;i++){ seq.push(rutaPts[i]); } }
+    seq.push([la, lo]);
+    carIdx = idx;
+    animarSecuencia(seq);
+  }
+  // recorre una lista de puntos suave (~1.3s en total), rotando en cada tramo
+  function animarSecuencia(seq){
+    if(animId) cancelAnimationFrame(animId);
+    var pts = [seq[0]];
+    for(var k=1;k<seq.length;k++){ var p=seq[k], q=pts[pts.length-1]; if(p[0]!==q[0]||p[1]!==q[1]) pts.push(p); }
+    if(pts.length < 2){ if(carro) carro.setLatLng(pts[0]); return; }
+    var i=0, t0=performance.now(), segDur=1300/(pts.length-1);
+    function paso(now){
+      var t = Math.min(1, (now-t0)/segDur);
+      var a=pts[i], b=pts[i+1];
+      carro.setLatLng([a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t]);
+      rotarCarro(rumbo(a,b));
+      if(seguir){ map.panTo(carro.getLatLng(), {animate:false}); }
+      if(t>=1){ i++; if(i<pts.length-1){ t0=now; animId=requestAnimationFrame(paso); } }
+      else { animId=requestAnimationFrame(paso); }
+    }
+    animId=requestAnimationFrame(paso);
   }
   // cual punto persigue la ruta VERDE (y el km/min): recogida por defecto
   function aplicarMeta(){
@@ -1757,11 +1802,11 @@ function mapaSeguimientoHTML() {
   }
   function conductor(la, lo){
     if(!carro){
-      carro = L.marker([la, lo], {icon:icoCarro}).addTo(map);
+      carro = L.marker([la, lo], {icon:icoCarro, zIndexOffset:1000}).addTo(map);
+      carIdx = 0;
       if(primera){ map.setView([la, lo], ZOOM); primera = false; }   // arranca CERCA del carro
     } else {
-      var p = carro.getLatLng();
-      animarCarro([p.lat, p.lng], [la, lo]);
+      moverEnRuta(la, lo);   // avanza por la carretera, no en linea recta
     }
     // recalcular la ruta solo si se movio ~90m o es la primera vez (no saturar)
     var mover = !ultimaRuta || Math.sqrt(Math.pow(la-ultimaRuta[0],2) + Math.pow(lo-ultimaRuta[1],2)) > 0.0008;
