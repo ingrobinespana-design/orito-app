@@ -155,6 +155,13 @@ def diag_push(clave: str = None, telefono: str = None, db: Session = Depends(get
         {"tipo": "diag"})])
     return {"estado": estado, "enviado": True, "token_muerto": bool(muertos)}
 
+@app.get("/soporte/contacto")
+def contacto_soporte(db: Session = Depends(get_db)):
+    """Numero de WhatsApp de soporte, para que la app muestre el boton de ayuda.
+    Publico y configurable desde el panel (whatsapp_soporte) — el dia que cambie
+    el numero no hay que actualizar la app."""
+    return {"whatsapp": leer_config("whatsapp_soporte", db, "")}
+
 @app.get("/soporte/liberar")
 def liberar_usuario(clave: str = None, telefono: str = None,
                     x_admin_token: str = Header(None), db: Session = Depends(get_db)):
@@ -952,7 +959,7 @@ def obtener_config(db: Session = Depends(get_db), admin: Usuario = Depends(solo_
 @app.put("/config")
 def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db),
                       admin: Usuario = Depends(solo_admin)):
-    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url")
+    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url", "whatsapp_soporte")
     if clave not in permitidas:
         raise HTTPException(status_code=400, detail="Ajuste no permitido")
     if clave == "cobro_activo" and valor not in ("si", "no"):

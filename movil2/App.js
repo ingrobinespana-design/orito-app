@@ -179,6 +179,18 @@ function whatsapp(num) {
   Linking.openURL(`https://wa.me/${n}`).catch(() => {});
 }
 
+/** Abre el WhatsApp de soporte con un mensaje pre-llenado que identifica al
+ *  usuario (nombre, telefono, ciudad) para atenderlo rapido. */
+function soporteWhatsApp(num, usuario) {
+  let n = soloDigitos(num);
+  if (!n) { avisar("Soporte no configurado", "Aún no hay número de soporte. Inténtalo más tarde."); return; }
+  if (n.length === 10) n = "57" + n;
+  const u = usuario || {};
+  const txt = `Hola, soy ${u.nombre || ""} (${u.telefono || ""})${u.municipio ? " de " + u.municipio : ""}. Necesito ayuda con:`;
+  Linking.openURL(`https://wa.me/${n}?text=${encodeURIComponent(txt)}`)
+    .catch(() => Linking.openURL(`https://wa.me/${n}`).catch(() => {}));
+}
+
 /** Punto que "late" para dar sensacion de app viva/escuchando (el tic-tac). */
 function PuntoVivo({ color, activo }) {
   const a = useRef(new Animated.Value(0)).current;
@@ -4076,6 +4088,16 @@ function AdminCarrerasScreen({ navigation }) {
               style={styles.input}
             />
             <Text style={styles.ayuda}>Los conductores vencidos ven este numero para renovar</Text>
+
+            <Text style={[styles.etiqueta, { marginTop: 16 }]}>💬 WHATSAPP DE SOPORTE</Text>
+            <TextInput
+              defaultValue={config.whatsapp_soporte}
+              placeholder="Numero de WhatsApp Business para soporte"
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=whatsapp_soporte&valor=${encodeURIComponent(e.nativeEvent.text)}`, { method: "PUT" }).then(cargar)}
+              keyboardType="phone-pad"
+              style={styles.input}
+            />
+            <Text style={styles.ayuda}>Aquí llegan los mensajes de "Escribir al soporte" de la app</Text>
           </View>
         )}
       </ScrollView>
@@ -4102,6 +4124,7 @@ function ConfiguracionScreen({ navigation, route }) {
   const [notifOk, setNotifOk] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
+  const [soporteWa, setSoporteWa] = useState("");
   // zona de trabajo del conductor: puede mudarse o trabajar en el otro pueblo
   const [municipios, setMunicipios] = useState([]);
   const [miMuni, setMiMuni] = useState(usuario.municipio);
@@ -4109,6 +4132,7 @@ function ConfiguracionScreen({ navigation, route }) {
 
   useEffect(() => {
     Notifications.getPermissionsAsync().then(p => setNotifOk(p.status === "granted")).catch(() => {});
+    fetch(`${API}/soporte/contacto`).then(r => r.json()).then(d => { if (d && d.whatsapp) setSoporteWa(d.whatsapp); }).catch(() => {});
     if (esConductor) {
       fetch(`${API}/municipios`).then(r => r.json())
         .then(d => { if (Array.isArray(d)) setMunicipios(d); }).catch(() => {});
@@ -4255,6 +4279,14 @@ function ConfiguracionScreen({ navigation, route }) {
               <Text style={[styles.buttonText, { fontSize: 14 }]}>🔊 Probar tono</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={[styles.card, { marginBottom: 14 }]}>
+          <Text style={styles.seccionTitulo}>💬 Soporte y ayuda</Text>
+          <Text style={styles.ayuda}>¿Un problema, una duda o algo que reportar? Escríbenos por WhatsApp.</Text>
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#25D366", marginTop: 10 }]} onPress={() => soporteWhatsApp(soporteWa, usuario)}>
+            <Text style={styles.buttonText}>💬 Escribir al soporte</Text>
+          </TouchableOpacity>
         </View>
 
         {esConductor && municipios.length > 0 && (
