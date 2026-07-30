@@ -364,6 +364,7 @@ def vehiculos_de(municipio: str, db: Session):
 def municipio_dict(m: Municipio, db: Session):
     return {
         "nombre": m.nombre,
+        "departamento": m.departamento or "Putumayo",
         "vehiculos": vehiculos_de(m.nombre, db),
         "usa_gps": m.usa_gps == "si",
         "activo": m.activo,
@@ -508,7 +509,7 @@ def actualizar_tarifa(tarifa_id: int, base: int = None, valor_km: int = None,
 
 @app.post("/municipios")
 def crear_municipio(nombre: str, centro_lat: float, centro_lon: float,
-                    vehiculos: str = "carro", usa_gps: str = "si",
+                    departamento: str = "Putumayo", vehiculos: str = "carro", usa_gps: str = "si",
                     tarifa_base: int = 0, valor_km: int = 0, tarifa_minima: int = 0,
                     db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     """Abre una ciudad nueva (expansion): nombre + centro en el mapa + que
@@ -524,7 +525,8 @@ def crear_municipio(nombre: str, centro_lat: float, centro_lon: float,
         raise HTTPException(status_code=400, detail=f"Vehiculos validos: {', '.join(VEHICULOS_VALIDOS)}")
     if usa_gps not in ("si", "no"):
         raise HTTPException(status_code=400, detail="usa_gps solo acepta si o no")
-    m = Municipio(nombre=nombre, vehiculos=",".join(pedidos), activo="si", usa_gps=usa_gps,
+    m = Municipio(nombre=nombre, departamento=(departamento or "Putumayo").strip(),
+                  vehiculos=",".join(pedidos), activo="si", usa_gps=usa_gps,
                   tarifa_base=max(0, tarifa_base or 0), valor_km=max(0, valor_km or 0),
                   tarifa_minima=max(0, tarifa_minima or 0),
                   centro_lat=centro_lat, centro_lon=centro_lon)
@@ -536,13 +538,16 @@ def crear_municipio(nombre: str, centro_lat: float, centro_lon: float,
 @app.put("/municipios/{nombre}")
 def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
                          usa_gps: str = None, tarifa_base: int = None, valor_km: int = None,
-                         tarifa_minima: int = None, db: Session = Depends(get_db),
+                         tarifa_minima: int = None, departamento: str = None,
+                         db: Session = Depends(get_db),
                          admin: Usuario = Depends(solo_admin)):
     """Para habilitar moto en Orito cuando lleguen, prender el GPS en un pueblo
     o ajustar las tarifas — todo sin publicar app nueva."""
     m = db.query(Municipio).filter(Municipio.nombre == nombre).first()
     if not m:
         raise HTTPException(status_code=404, detail="Municipio no encontrado")
+    if departamento is not None and departamento.strip():
+        m.departamento = departamento.strip()
     if vehiculos is not None:
         pedidos = [v.strip() for v in vehiculos.split(",") if v.strip()]
         if not pedidos or any(v not in VEHICULOS_VALIDOS for v in pedidos):
@@ -561,6 +566,70 @@ def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
     db.commit()
     db.refresh(m)
     return {**municipio_dict(m, db), "activo": m.activo}
+
+@app.get("/admin/demanda")
+def demanda_por_zona(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Demanda por CIUDAD y DEPARTAMENTO: carreras, clientes y conductores de cada
+    zona, para ver donde esta pegando la app y donde reforzar conductores."""
+    ahora = datetime.now()
+    hoy0 = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
+    semana0 = hoy0 - timedelta(days=hoy0.weekday())
+    munis = db.query(Municipio).order_by(Municipio.nombre).all()
+    carreras = db.query(Carrera).all()
+    usuarios = db.query(Usuario).all()
+    activos = ("buscando", "aceptada", "en_sitio", "en_camino")
+    ciudades = []
+    for m in munis:
+        cs = [c for c in carreras if (c.municipio or "Orito") == m.nombre]
+        cli = [u for u in usuarios if u.rol == "cliente" and (u.municipio or "Orito") == m.nombre]
+        con = [u for u in usuarios if u.rol == "conductor" and (u.municipio or "Orito") == m.nombre]
+        ciudades.append({
+            "nombre": m.nombre,
+            "departamento": m.departamento or "Putumayo",
+            "activo": m.activo,
+            "carreras_total": len(cs),
+            "carreras_finalizadas": sum(1 for c in cs if c.estado == "finalizada"),
+            "carreras_hoy": sum(1 for c in cs if c.fecha and c.fecha >= hoy0),
+            "carreras_semana": sum(1 for c in cs if c.fecha and c.fecha >= semana0),
+            "en_curso": sum(1 for c in cs if c.estado in activos),
+            "clientes": len(cli),
+            "conductores": len(con),
+            "conductores_disponibles": sum(1 for u in con if u.disponible == "si"),
+        })
+    deptos = {}
+    for c in ciudades:
+        d = deptos.setdefault(c["departamento"], {
+            "departamento": c["departamento"], "ciudades": 0,
+            "carreras_total": 0, "carreras_hoy": 0, "clientes": 0, "conductores": 0})
+        d["ciudades"] += 1
+        for k in ("carreras_total", "carreras_hoy", "clientes", "conductores"):
+            d[k] += c[k]
+    return {"ciudades": ciudades,
+            "departamentos": sorted(deptos.values(), key=lambda x: -x["carreras_total"])}
+
+@app.get("/admin/usuarios")
+def buscar_usuarios(buscar: str = "", db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Busca usuarios por telefono o nombre, para soporte: identificar rapido a
+    alguien y ver su actividad (carreras hechas y si tiene algo en curso)."""
+    q = (buscar or "").strip()
+    consulta = db.query(Usuario)
+    if q:
+        like = f"%{q}%"
+        consulta = consulta.filter(Usuario.telefono.ilike(like) | Usuario.nombre.ilike(like))
+    usuarios = consulta.order_by(Usuario.id.desc()).limit(25).all()
+    activos = ["buscando", "aceptada", "en_sitio", "en_camino"]
+    salida = []
+    for u in usuarios:
+        salida.append({
+            "id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
+            "municipio": u.municipio, "calificacion": u.calificacion, "disponible": u.disponible,
+            "carreras_cliente": db.query(Carrera).filter(Carrera.cliente_id == u.id).count(),
+            "carreras_conductor": db.query(Carrera).filter(Carrera.conductor_id == u.id).count(),
+            "activas": db.query(Carrera).filter(
+                ((Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)),
+                Carrera.estado.in_(activos)).count(),
+        })
+    return salida
 
 @app.post("/login")
 def login(telefono: str, password: str, db: Session = Depends(get_db)):

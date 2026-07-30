@@ -217,6 +217,7 @@ class Municipio(Base):
     el dia que lleguen se habilita desde el panel, sin publicar app nueva."""
     __tablename__ = "municipios"
     nombre = Column(String, primary_key=True)
+    departamento = Column(String, default="Putumayo")   # para agrupar la demanda por zona
     vehiculos = Column(String, default="carro")   # separados por coma: "moto,carro"
     activo = Column(String, default="si")
     # con GPS y mapa (OpenStreetMap, gratis) se ubica y se sugiere tarifa por km
@@ -381,7 +382,8 @@ def crear_tablas():
             pass
     for columna in ("usa_gps VARCHAR DEFAULT 'no'", "tarifa_base INTEGER DEFAULT 0",
                     "valor_km INTEGER DEFAULT 0", "tarifa_minima INTEGER DEFAULT 0",
-                    "centro_lat FLOAT", "centro_lon FLOAT"):
+                    "centro_lat FLOAT", "centro_lon FLOAT",
+                    "departamento VARCHAR DEFAULT 'Putumayo'"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE municipios ADD COLUMN {columna}"))

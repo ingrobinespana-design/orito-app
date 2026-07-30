@@ -3516,8 +3516,11 @@ function AdminCarrerasScreen({ navigation }) {
   const [pestana, setPestana] = useState("conductores");
   const [telLiberar, setTelLiberar] = useState("");   // desbloquear a un usuario atascado
   const [municipios, setMunicipios] = useState([]);
-  const [nuevaCiudad, setNuevaCiudad] = useState({ nombre: "", lat: null, lon: null, vehiculos: ["carro"] });
+  const [demanda, setDemanda] = useState({ ciudades: [], departamentos: [] });
+  const [nuevaCiudad, setNuevaCiudad] = useState({ nombre: "", lat: null, lon: null, vehiculos: ["carro"], departamento: "Putumayo" });
   const [marcandoCentro, setMarcandoCentro] = useState(false);
+  const [buscaUsuario, setBuscaUsuario] = useState("");
+  const [usuariosHallados, setUsuariosHallados] = useState(null);
   const [editCiudad, setEditCiudad] = useState(null);   // nombre de la ciudad cuyas tarifas se editan
   const [tarBase, setTarBase] = useState("");
   const [tarKm, setTarKm] = useState("");
@@ -3529,21 +3532,32 @@ function AdminCarrerasScreen({ navigation }) {
     adminFetch(`${API}/estadisticas`).then(r => r.json()).then(d => { if (d && !d.detail) setGStats(d); }).catch(() => {});
     adminFetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
     fetch(`${API}/municipios?todos=1`).then(r => r.json()).then(d => { if (Array.isArray(d)) setMunicipios(d); }).catch(() => {});
+    adminFetch(`${API}/admin/demanda`).then(r => r.json()).then(d => { if (d && d.ciudades) setDemanda(d); }).catch(() => {});
   };
 
   const TODOS_VEHICULOS = ["carro", "moto", "motocarguero", "camioneta", "camion", "furgon", "planchon", "grua"];
+  const DEPARTAMENTOS = ["Putumayo", "Cauca", "Nariño", "Caquetá"];
+  const demandaDe = (nombre) => (demanda.ciudades || []).find(c => c.nombre === nombre) || {};
+
+  const buscarUsuarios = () => {
+    setUsuariosHallados(null);
+    adminFetch(`${API}/admin/usuarios?buscar=${encodeURIComponent(buscaUsuario.trim())}`)
+      .then(r => r.json())
+      .then(d => setUsuariosHallados(Array.isArray(d) ? d : []))
+      .catch(() => setUsuariosHallados([]));
+  };
 
   const crearCiudad = () => {
     const nom = nuevaCiudad.nombre.trim();
     if (nom.length < 3) { avisar("Falta el nombre", "Escribe el nombre de la ciudad."); return; }
     if (nuevaCiudad.lat == null) { avisar("Falta el centro", "Marca el centro de la ciudad en el mapa."); return; }
     if (!nuevaCiudad.vehiculos.length) { avisar("Faltan vehículos", "Elige al menos un tipo de vehículo."); return; }
-    const p = qs({ nombre: nom, centro_lat: nuevaCiudad.lat, centro_lon: nuevaCiudad.lon, vehiculos: nuevaCiudad.vehiculos.join(","), usa_gps: "si" });
+    const p = qs({ nombre: nom, centro_lat: nuevaCiudad.lat, centro_lon: nuevaCiudad.lon, vehiculos: nuevaCiudad.vehiculos.join(","), departamento: nuevaCiudad.departamento || "Putumayo", usa_gps: "si" });
     adminFetch(`${API}/municipios?${p}`, { method: "POST" })
       .then(async r => {
         const d = await r.json().catch(() => null);
         if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
-        setNuevaCiudad({ nombre: "", lat: null, lon: null, vehiculos: ["carro"] });
+        setNuevaCiudad({ nombre: "", lat: null, lon: null, vehiculos: ["carro"], departamento: nuevaCiudad.departamento || "Putumayo" });
         cargar();
         avisar("Ciudad creada", `${nom} ya está activa. Los conductores de ahí ya pueden trabajar.`);
       })
@@ -3583,14 +3597,16 @@ function AdminCarrerasScreen({ navigation }) {
     return () => clearInterval(intervalo);
   }, []);
 
-  const liberarUsuario = () => {
-    const tel = (telLiberar || "").replace(/\D/g, "");
+  const liberarUsuario = (telArg) => {
+    const base = typeof telArg === "string" ? telArg : telLiberar;
+    const tel = (base || "").replace(/\D/g, "");
     if (!tel) { avisar("Falta el teléfono", "Escribe el número del usuario a liberar."); return; }
     adminFetch(`${API}/soporte/liberar?telefono=${tel}`)
       .then(async r => {
         const d = await r.json().catch(() => null);
         if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
         setTelLiberar(""); cargar();
+        if (usuariosHallados) buscarUsuarios();   // refresca la búsqueda si estaba abierta
         const n = (d.canceladas || []).length;
         avisar("Usuario liberado", `${d.usuario}: se cancelaron ${n} carrera(s) atascada(s)${n ? ` [#${d.canceladas.join(", #")}]` : ""}. Ya puede pedir de nuevo.`);
       })
@@ -3750,10 +3766,51 @@ function AdminCarrerasScreen({ navigation }) {
                 keyboardType="phone-pad"
                 style={[styles.input, { flex: 1, marginBottom: 0 }]}
               />
-              <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", paddingHorizontal: 16, justifyContent: "center" }]} onPress={liberarUsuario}>
+              <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", paddingHorizontal: 16, justifyContent: "center" }]} onPress={() => liberarUsuario()}>
                 <Text style={[styles.buttonText, { fontSize: 14 }]}>Liberar</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        )}
+
+        {pestana === "carreras" && (
+          <View style={[styles.card, { marginBottom: 12, backgroundColor: "#EDF3FF", borderWidth: 1, borderColor: "#B8CDF0" }]}>
+            <Text style={{ fontWeight: "800", color: "#1A4C9B", fontSize: 14 }}>🔎 Buscar usuario</Text>
+            <Text style={{ fontSize: 12, color: "#1A4C9B", marginTop: 2 }}>
+              Por teléfono o nombre — para identificarlo y ver su actividad (soporte).
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+              <TextInput
+                value={buscaUsuario}
+                onChangeText={setBuscaUsuario}
+                placeholder="Teléfono o nombre"
+                style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                onSubmitEditing={buscarUsuarios}
+                returnKeyType="search"
+              />
+              <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 16, justifyContent: "center" }]} onPress={buscarUsuarios}>
+                <Text style={[styles.buttonText, { fontSize: 14 }]}>Buscar</Text>
+              </TouchableOpacity>
+            </View>
+            {usuariosHallados != null && (usuariosHallados.length === 0 ? (
+              <Text style={{ fontSize: 12, color: "#888", marginTop: 10 }}>No se encontró ningún usuario.</Text>
+            ) : usuariosHallados.map((u) => (
+              <View key={u.id} style={{ backgroundColor: "#fff", borderRadius: 8, padding: 10, marginTop: 8 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontWeight: "700", fontSize: 14 }}>{u.nombre || "(sin nombre)"}</Text>
+                  <Text style={{ fontSize: 11, color: "#854F0B", fontWeight: "700" }}>{u.rol}</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>📞 {u.telefono} · 📍 {u.municipio || "—"}{u.calificacion != null ? ` · ⭐ ${Number(u.calificacion).toFixed(1)}` : ""}</Text>
+                <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>
+                  🚗 {u.carreras_cliente} pedidas · 🚕 {u.carreras_conductor} manejadas{u.activas ? ` · 🟠 ${u.activas} en curso` : ""}
+                </Text>
+                {u.activas > 0 && (
+                  <TouchableOpacity style={{ marginTop: 6, alignSelf: "flex-start" }} onPress={() => liberarUsuario(u.telefono)}>
+                    <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 12 }}>🔓 Liberar sus carreras atascadas</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )))}
           </View>
         )}
 
@@ -3786,6 +3843,16 @@ function AdminCarrerasScreen({ navigation }) {
                 placeholder="Nombre de la ciudad (ej. Mocoa, Pasto, Florencia)"
                 style={styles.input}
               />
+              <Text style={{ fontSize: 12, color: "#666", fontWeight: "600", marginBottom: 4 }}>Departamento:</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                {DEPARTAMENTOS.map((dep) => (
+                  <TouchableOpacity key={dep}
+                    style={[styles.chip, nuevaCiudad.departamento === dep && styles.chipOn]}
+                    onPress={() => setNuevaCiudad({ ...nuevaCiudad, departamento: dep })}>
+                    <Text style={[styles.chipTxt, nuevaCiudad.departamento === dep && styles.chipTxtOn]}>{dep}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
               <TouchableOpacity
                 style={[styles.botonMapa, nuevaCiudad.lat != null && styles.botonMapaOk]}
                 onPress={() => setMarcandoCentro(true)}>
@@ -3814,16 +3881,40 @@ function AdminCarrerasScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            {/* --- lista de ciudades --- */}
+            {/* --- demanda por departamento --- */}
+            {(demanda.departamentos || []).length > 0 && (
+              <>
+                <Text style={styles.seccionTitulo}>Demanda por departamento</Text>
+                {demanda.departamentos.map((d) => (
+                  <View key={d.departamento} style={[styles.card, { marginBottom: 8, backgroundColor: "#EAF6EC" }]}>
+                    <Text style={{ fontWeight: "800", color: "#187830", fontSize: 15 }}>📍 {d.departamento}</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 6 }}>
+                      <Text style={{ fontSize: 12, color: "#333" }}>🏙️ {d.ciudades} ciudad(es)</Text>
+                      <Text style={{ fontSize: 12, color: "#333" }}>🚗 {d.carreras_total} carreras</Text>
+                      <Text style={{ fontSize: 12, color: "#333" }}>📅 {d.carreras_hoy} hoy</Text>
+                      <Text style={{ fontSize: 12, color: "#333" }}>👤 {d.clientes} clientes</Text>
+                      <Text style={{ fontSize: 12, color: "#333" }}>🚕 {d.conductores} conductores</Text>
+                    </View>
+                  </View>
+                ))}
+              </>
+            )}
+
+            {/* --- lista de ciudades (agrupadas por departamento) --- */}
             <Text style={styles.seccionTitulo}>Ciudades ({municipios.length})</Text>
-            {municipios.map((m) => (
+            {[...municipios].sort((a, b) => (a.departamento || "").localeCompare(b.departamento || "") || a.nombre.localeCompare(b.nombre)).map((m) => (
               <View key={m.nombre} style={[styles.card, { marginBottom: 8, opacity: m.activo === "no" ? 0.55 : 1 }]}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: "700", fontSize: 15 }}>{m.nombre}</Text>
+                    <Text style={{ fontWeight: "700", fontSize: 15 }}>{m.nombre} <Text style={{ fontSize: 11, color: "#999", fontWeight: "400" }}>· {m.departamento}</Text></Text>
                     <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
                       {(m.vehiculos || []).map(vehIcono).join(" ")}{m.usa_gps ? "  · 🛰️ GPS" : ""}
                     </Text>
+                    {(() => { const dm = demandaDe(m.nombre); return (
+                      <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>
+                        🚗 {dm.carreras_total || 0} carreras ({dm.carreras_hoy || 0} hoy) · 👤 {dm.clientes || 0} · 🚕 {dm.conductores || 0} ({dm.conductores_disponibles || 0} en línea)
+                      </Text>
+                    ); })()}
                     <Text style={{ fontSize: 12, color: "#B85C00", marginTop: 2 }}>
                       {(m.tarifa_base || m.valor_km)
                         ? `💵 base $${(m.tarifa_base || 0).toLocaleString()} + $${(m.valor_km || 0).toLocaleString()}/km`
