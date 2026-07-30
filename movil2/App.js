@@ -3525,6 +3525,7 @@ function AdminCarrerasScreen({ navigation }) {
   const [tarBase, setTarBase] = useState("");
   const [tarKm, setTarKm] = useState("");
   const [tarMin, setTarMin] = useState("");
+  const [editDepto, setEditDepto] = useState("Putumayo");
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
@@ -3574,6 +3575,7 @@ function AdminCarrerasScreen({ navigation }) {
     setTarBase(m.tarifa_base ? String(m.tarifa_base) : "");
     setTarKm(m.valor_km ? String(m.valor_km) : "");
     setTarMin(m.tarifa_minima ? String(m.tarifa_minima) : "");
+    setEditDepto(m.departamento || "Putumayo");
   };
 
   const guardarTarifas = (m) => {
@@ -3581,7 +3583,7 @@ function AdminCarrerasScreen({ navigation }) {
     const k = parseInt((tarKm || "").replace(/\D/g, ""), 10) || 0;
     const mn = parseInt((tarMin || "").replace(/\D/g, ""), 10) || 0;
     // con tarifas se activa el GPS para poder sugerir precio por km
-    const p = `tarifa_base=${b}&valor_km=${k}&tarifa_minima=${mn}${(b || k || mn) ? "&usa_gps=si" : ""}`;
+    const p = `tarifa_base=${b}&valor_km=${k}&tarifa_minima=${mn}&departamento=${encodeURIComponent(editDepto || "Putumayo")}${(b || k || mn) ? "&usa_gps=si" : ""}`;
     adminFetch(`${API}/municipios/${encodeURIComponent(m.nombre)}?${p}`, { method: "PUT" })
       .then(async r => {
         if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
@@ -3932,6 +3934,16 @@ function AdminCarrerasScreen({ navigation }) {
 
                 {editCiudad === m.nombre ? (
                   <View style={{ marginTop: 10, borderTopWidth: 0.5, borderTopColor: "#eee", paddingTop: 10 }}>
+                    <Text style={{ fontSize: 12, color: "#666", fontWeight: "600", marginBottom: 4 }}>Departamento:</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                      {DEPARTAMENTOS.map((dep) => (
+                        <TouchableOpacity key={dep}
+                          style={[styles.chip, editDepto === dep && styles.chipOn]}
+                          onPress={() => setEditDepto(dep)}>
+                          <Text style={[styles.chipTxt, editDepto === dep && styles.chipTxtOn]}>{dep}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                     <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
                       Tarifa SUGERIDA (solo orienta al cliente; el precio se sigue negociando). Deja todo en 0 para precio libre.
                     </Text>
@@ -3960,7 +3972,7 @@ function AdminCarrerasScreen({ navigation }) {
                   </View>
                 ) : (
                   <TouchableOpacity style={{ marginTop: 8, alignSelf: "flex-start" }} onPress={() => abrirTarifas(m)}>
-                    <Text style={{ color: "#1A73E8", fontWeight: "600", fontSize: 13 }}>✏️ Editar tarifas</Text>
+                    <Text style={{ color: "#1A73E8", fontWeight: "600", fontSize: 13 }}>✏️ Editar (departamento y tarifas)</Text>
                   </TouchableOpacity>
                 )}
               </View>
