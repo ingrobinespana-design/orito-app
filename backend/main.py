@@ -127,14 +127,20 @@ def actualizar_apk_url(clave: str, valor: str, db: Session = Depends(get_db)):
     return {"ok": True, "apk_url": valor}
 
 @app.get("/diag-push")
-def diag_push(clave: str = None, telefono: str = None, db: Session = Depends(get_db)):
+def diag_push(clave: str = None, telefono: str = None,
+              x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Diagnostico: dice el estado real de un conductor y le manda un push directo
     SALTANDOSE todos los filtros (disponible/vehiculo/municipio/suscripcion).
     Sirve para aislar si el problema es la ENTREGA del push o los FILTROS.
-    Autoriza con RESPALDO_CLAVE (nunca abierto por accidente)."""
+    Autoriza con RESPALDO_CLAVE (link en navegador) o con la sesion del admin
+    (boton del panel — no hace falta la clave)."""
     esperada = os.environ.get("RESPALDO_CLAVE")
-    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
-        raise HTTPException(status_code=403, detail="Clave invalida")
+    ok = bool(esperada) and bool(clave) and secrets.compare_digest(clave, esperada)
+    if not ok and x_admin_token:
+        adm = db.query(Usuario).filter(Usuario.token == x_admin_token).first()
+        ok = bool(adm and adm.rol == "admin")
+    if not ok:
+        raise HTTPException(status_code=403, detail="No autorizado")
     u = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not u:
         raise HTTPException(status_code=404, detail="No hay usuario con ese telefono")

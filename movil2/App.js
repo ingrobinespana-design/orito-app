@@ -3631,6 +3631,23 @@ function AdminCarrerasScreen({ navigation }) {
       .catch(() => avisar("Error", "No hay conexión."));
   };
 
+  // manda un tono de prueba DIRECTO al conductor (salta todos los filtros): si su
+  // telefono suena, la entrega del push funciona y el problema son los filtros
+  const probarTonoConductor = (u) => {
+    adminFetch(`${API}/diag-push?telefono=${encodeURIComponent(u.telefono)}`)
+      .then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+        const e = d.estado || {};
+        if (!d.enviado) {
+          avisar("Sin registro de tono", `${e.nombre || u.nombre}: ${d.motivo || "no tiene token"}. Que abra la app y toque '⚙️ → 🔔 → Re-registrar'.`);
+          return;
+        }
+        avisar("Tono enviado ✅", `A ${e.nombre || u.nombre}. Su teléfono debe sonar en unos segundos.\n\nDisponible: ${e.disponible} · Token: ${e.tiene_token ? "sí" : "no"}${d.token_muerto ? "\n\n⚠️ El token está MUERTO: que reinstale el APK y re-registre." : ""}`);
+      })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
+
   const crearCiudad = () => {
     const nom = nuevaCiudad.nombre.trim();
     if (nom.length < 3) { avisar("Falta el nombre", "Escribe el nombre de la ciudad."); return; }
@@ -3892,6 +3909,11 @@ function AdminCarrerasScreen({ navigation }) {
                   🚗 {u.carreras_cliente} pedidas · 🚕 {u.carreras_conductor} manejadas{u.activas ? ` · 🟠 ${u.activas} en curso` : ""}
                 </Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 8 }}>
+                  {u.rol === "conductor" && (
+                    <TouchableOpacity onPress={() => probarTonoConductor(u)}>
+                      <Text style={{ color: "#F06000", fontWeight: "700", fontSize: 12 }}>🔔 Probar tono</Text>
+                    </TouchableOpacity>
+                  )}
                   {u.activas > 0 && (
                     <TouchableOpacity onPress={() => liberarUsuario(u.telefono)}>
                       <Text style={{ color: "#B85C00", fontWeight: "700", fontSize: 12 }}>🔓 Liberar carreras</Text>
