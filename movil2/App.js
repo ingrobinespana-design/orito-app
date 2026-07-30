@@ -2902,6 +2902,8 @@ function ConductorScreen({ navigation, route }) {
         // carga solo memorizamos, no sonamos, para no pitar al abrir la app
         if (idsVistos.current === null) {
           idsVistos.current = idsAhora;
+          // al abrir la app, si YA hay solicitudes pendientes y esta disponible, avisa una vez
+          if (d.length > 0 && dispRef.current) pingSolicitud();
         } else {
           const hayNueva = d.some(c => !idsVistos.current.has(c.id));
           idsVistos.current = idsAhora;
