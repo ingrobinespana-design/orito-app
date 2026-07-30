@@ -301,8 +301,13 @@ function avisar(titulo, mensaje) {
 async function registrarNotificaciones(usuarioId) {
   try {
     if (Platform.OS === "android") {
+      // Los canales de Android son INMUTABLES: si "carreras2" se creo alguna vez
+      // sin el tono, ya no se le puede cambiar el sonido. Se borran los viejos y
+      // se crea uno NUEVO ("carreras3") para forzar el tono propio en todos.
+      try { await Notifications.deleteNotificationChannelAsync("carreras"); } catch (e) {}
+      try { await Notifications.deleteNotificationChannelAsync("carreras2"); } catch (e) {}
       // El canal define que suene fuerte y salte en pantalla.
-      await Notifications.setNotificationChannelAsync("carreras2", {
+      await Notifications.setNotificationChannelAsync("carreras3", {
         name: "Carreras",
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 500, 220, 500],
@@ -2850,7 +2855,7 @@ function ConductorScreen({ navigation, route }) {
     // ademas el tono de notificacion (si dio permiso y no esta en silencio)
     Notifications.scheduleNotificationAsync({
       content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "tono.wav" },
-      trigger: Platform.OS === "android" ? { channelId: "carreras2", seconds: 1 } : null,
+      trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
     }).catch(() => {});
   };
 
@@ -4173,7 +4178,7 @@ function ConfiguracionScreen({ navigation, route }) {
     try {
       await Notifications.scheduleNotificationAsync({
         content: { title: "🔔 Prueba de tono", body: "Así suena cuando entra una carrera.", sound: "tono.wav" },
-        trigger: Platform.OS === "android" ? { channelId: "carreras2", seconds: 1 } : null,
+        trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
       });
       avisar("Probando…", "En 1 segundo debe sonar el tono y vibrar. Si vibra pero no suena, revisa el volumen de notificaciones o la 'Pausa de actividad'.");
     } catch (e) {
