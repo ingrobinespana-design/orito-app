@@ -40,19 +40,47 @@ const userFetch = (url, opciones = {}) =>
 const TAREA_UBICACION = "tukan-ubicacion-carrera";
 let conductorRastreado = null;   // id del conductor; lo fija ConductorScreen
 
+let idsVistosFondo = null;   // carreras ya vistas por el servicio en segundo plano
+let ultimoSonido = 0;        // anti-rebote: no sonar dos veces (fondo + pantalla)
+
+// evita sonar dos veces seguidas (cuando app abierta corren el ping y el fondo)
+function puedeSonar() {
+  if (Date.now() - ultimoSonido < 7000) return false;
+  ultimoSonido = Date.now();
+  return true;
+}
+
+// SUENA fuerte aunque la app este minimizada o cerrada, SIN depender del push:
+// lo dispara el servicio en segundo plano al detectar una carrera nueva.
+function sonarCarreraFondo() {
+  if (!puedeSonar()) return;
+  try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
+  Notifications.scheduleNotificationAsync({
+    content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "tono.wav" },
+    trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
+  }).catch(() => {});
+}
+
 try {
   TaskManager.defineTask(TAREA_UBICACION, ({ data, error }) => {
     if (error || !conductorRastreado) return;
+    // 1) reporta la ubicacion (para el seguimiento del cliente si hay carrera activa)
     const locs = data && data.locations;
-    if (!locs || !locs.length) return;
-    const p = locs[locs.length - 1].coords;
-    fetch(`${API}/conductores/${conductorRastreado}/ubicacion?lat=${p.latitude}&lon=${p.longitude}`,
-      { method: "PUT" })
+    if (locs && locs.length) {
+      const p = locs[locs.length - 1].coords;
+      fetch(`${API}/conductores/${conductorRastreado}/ubicacion?lat=${p.latitude}&lon=${p.longitude}`,
+        { method: "PUT" }).catch(() => {});
+    }
+    // 2) revisa carreras nuevas y SUENA — aunque la app este minimizada o cerrada
+    fetch(`${API}/carreras/disponibles?conductor_id=${conductorRastreado}`)
       .then((r) => r.json())
       .then((d) => {
-        // la carrera termino (o el cliente cancelo) con la app en segundo plano:
-        // el servicio se apaga solo para no gastar bateria
-        if (d && d.carrera_activa === false) detenerRastreoFondo();
+        if (!Array.isArray(d)) return;
+        const ids = d.map((c) => c.id);
+        if (idsVistosFondo === null) { idsVistosFondo = ids; return; }   // primera vez: solo memoriza
+        const hayNueva = ids.some((id) => idsVistosFondo.indexOf(id) === -1);
+        idsVistosFondo = ids;
+        if (hayNueva) sonarCarreraFondo();
       })
       .catch(() => {});
   });
@@ -61,6 +89,7 @@ try {
 async function iniciarRastreoFondo(conductorId) {
   try {
     conductorRastreado = conductorId;
+    idsVistosFondo = null;   // arranca fresco: memoriza y luego suena solo con las NUEVAS
     if (Platform.OS === "web") return false;
     const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
     if (ya) return true;
@@ -69,11 +98,11 @@ async function iniciarRastreoFondo(conductorId) {
     await Location.requestBackgroundPermissionsAsync().catch(() => {});
     await Location.startLocationUpdatesAsync(TAREA_UBICACION, {
       accuracy: Location.Accuracy.Balanced,
-      timeInterval: 8000,          // cada ~8s
-      distanceInterval: 20,        // o cada ~20m, lo que pase primero
+      timeInterval: 9000,          // cada ~9s revisa carreras y reporta ubicacion
+      distanceInterval: 0,         // por tiempo, no por distancia (para oir aunque este quieto)
       foregroundService: {
-        notificationTitle: "Tukán — carrera en curso",
-        notificationBody: "Compartiendo tu ubicacion para que el cliente te vea venir",
+        notificationTitle: "🚕 Tukán activo — buscando carreras",
+        notificationBody: "Te avisamos con sonido cuando entre una solicitud, aunque tengas la app cerrada.",
         notificationColor: "#187830",
       },
     });
@@ -2849,6 +2878,7 @@ function ConductorScreen({ navigation, route }) {
   // alcance a llegar mientras el conductor mira la pantalla.
   const pingSolicitud = () => {
     if (Platform.OS === "web") return;
+    if (!puedeSonar()) return;   // anti-rebote compartido con el servicio de fondo
     // vibracion fuerte: se siente aunque el telefono este en silencio (no
     // depende del permiso de notificaciones ni de modulos nativos extra)
     try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
@@ -2914,13 +2944,19 @@ function ConductorScreen({ navigation, route }) {
     userFetch(`${API}/conductores/${usuario.id}?disponible=${nuevo ? "si" : "no"}`, { method: "PUT" }).catch(() => {});
   };
 
-  // mientras tiene carrera activa: el servicio en SEGUNDO PLANO transmite la
-  // ubicacion (aunque cierre la app o navegue con Google Maps) y ademas, con la
-  // app abierta, un refresco cada 8s alimenta su propio mapa en pantalla
+  // El servicio en SEGUNDO PLANO corre cuando el conductor esta DISPONIBLE o tiene
+  // una carrera activa: mantiene viva la app (notificacion fija) para SONAR cuando
+  // entre una carrera aunque este minimizada/cerrada, y transmite la ubicacion en
+  // carrera. Con la app abierta y carrera activa, ademas alimenta su mapa cada 8s.
   const tieneCarreraActiva = mias.length > 0;
+  const debeCorrerFondo = disponible || tieneCarreraActiva;
   useEffect(() => {
-    if (!tieneCarreraActiva) { detenerRastreoFondo(); return; }
+    if (!debeCorrerFondo) { detenerRastreoFondo(); return; }
     iniciarRastreoFondo(usuario.id);
+  }, [debeCorrerFondo]);
+
+  useEffect(() => {
+    if (!tieneCarreraActiva) return;
     let vivo = true;
     const reportar = async () => {
       try {
