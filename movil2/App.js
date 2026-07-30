@@ -3548,6 +3548,34 @@ function AdminCarrerasScreen({ navigation }) {
       .catch(() => setUsuariosHallados([]));
   };
 
+  const eliminarUsuario = (u) => {
+    const tieneHist = ((u.carreras_cliente || 0) + (u.carreras_conductor || 0)) > 0;
+    const msg = tieneHist
+      ? `${u.nombre} tiene historial de carreras. Se BLOQUEARÁ (no podrá entrar ni trabajar), pero se conserva su historial para las estadísticas. Podrás reactivarlo después.`
+      : `${u.nombre} no tiene carreras. Se ELIMINARÁ por completo de la base.`;
+    confirmar("Eliminar usuario", msg, () => {
+      adminFetch(`${API}/admin/usuarios/${u.id}`, { method: "DELETE" })
+        .then(async r => {
+          const d = await r.json().catch(() => null);
+          if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+          buscarUsuarios(); cargar();
+          avisar(d.modo === "eliminado" ? "Usuario eliminado" : "Usuario bloqueado",
+            d.modo === "eliminado" ? `${d.nombre} se borró por completo.` : `${d.nombre}: cuenta bloqueada. Ya no puede entrar. Puedes reactivarlo desde la búsqueda.`);
+        })
+        .catch(() => avisar("Error", "No hay conexión."));
+    }, "Sí, eliminar");
+  };
+
+  const reactivarUsuario = (u) => {
+    adminFetch(`${API}/admin/usuarios/${u.id}/reactivar`, { method: "POST" })
+      .then(async r => {
+        if (!r.ok) { avisar("No se pudo", `Error ${r.status}`); return; }
+        buscarUsuarios();
+        avisar("Reactivado", `${u.nombre} ya puede entrar de nuevo.`);
+      })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
+
   const crearCiudad = () => {
     const nom = nuevaCiudad.nombre.trim();
     if (nom.length < 3) { avisar("Falta el nombre", "Escribe el nombre de la ciudad."); return; }
@@ -3797,20 +3825,33 @@ function AdminCarrerasScreen({ navigation }) {
             {usuariosHallados != null && (usuariosHallados.length === 0 ? (
               <Text style={{ fontSize: 12, color: "#888", marginTop: 10 }}>No se encontró ningún usuario.</Text>
             ) : usuariosHallados.map((u) => (
-              <View key={u.id} style={{ backgroundColor: "#fff", borderRadius: 8, padding: 10, marginTop: 8 }}>
+              <View key={u.id} style={{ backgroundColor: "#fff", borderRadius: 8, padding: 10, marginTop: 8, borderWidth: u.activo === "no" ? 1 : 0, borderColor: "#C0392B" }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontWeight: "700", fontSize: 14 }}>{u.nombre || "(sin nombre)"}</Text>
+                  <Text style={{ fontWeight: "700", fontSize: 14 }}>
+                    {u.nombre || "(sin nombre)"}{u.activo === "no" ? <Text style={{ color: "#C0392B", fontWeight: "800" }}>  · BLOQUEADO</Text> : null}
+                  </Text>
                   <Text style={{ fontSize: 11, color: "#854F0B", fontWeight: "700" }}>{u.rol}</Text>
                 </View>
                 <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>📞 {u.telefono} · 📍 {u.municipio || "—"}{u.calificacion != null ? ` · ⭐ ${Number(u.calificacion).toFixed(1)}` : ""}</Text>
                 <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>
                   🚗 {u.carreras_cliente} pedidas · 🚕 {u.carreras_conductor} manejadas{u.activas ? ` · 🟠 ${u.activas} en curso` : ""}
                 </Text>
-                {u.activas > 0 && (
-                  <TouchableOpacity style={{ marginTop: 6, alignSelf: "flex-start" }} onPress={() => liberarUsuario(u.telefono)}>
-                    <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 12 }}>🔓 Liberar sus carreras atascadas</Text>
-                  </TouchableOpacity>
-                )}
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 8 }}>
+                  {u.activas > 0 && (
+                    <TouchableOpacity onPress={() => liberarUsuario(u.telefono)}>
+                      <Text style={{ color: "#B85C00", fontWeight: "700", fontSize: 12 }}>🔓 Liberar carreras</Text>
+                    </TouchableOpacity>
+                  )}
+                  {u.activo === "no" ? (
+                    <TouchableOpacity onPress={() => reactivarUsuario(u)}>
+                      <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>♻️ Reactivar</Text>
+                    </TouchableOpacity>
+                  ) : u.rol !== "admin" ? (
+                    <TouchableOpacity onPress={() => eliminarUsuario(u)}>
+                      <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 12 }}>🗑️ Eliminar</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
             )))}
           </View>

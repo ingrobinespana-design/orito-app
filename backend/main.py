@@ -623,6 +623,7 @@ def buscar_usuarios(buscar: str = "", db: Session = Depends(get_db), admin: Usua
         salida.append({
             "id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
             "municipio": u.municipio, "calificacion": u.calificacion, "disponible": u.disponible,
+            "activo": u.activo or "si",
             "carreras_cliente": db.query(Carrera).filter(Carrera.cliente_id == u.id).count(),
             "carreras_conductor": db.query(Carrera).filter(Carrera.conductor_id == u.id).count(),
             "activas": db.query(Carrera).filter(
@@ -630,6 +631,47 @@ def buscar_usuarios(buscar: str = "", db: Session = Depends(get_db), admin: Usua
                 Carrera.estado.in_(activos)).count(),
         })
     return salida
+
+@app.delete("/admin/usuarios/{usuario_id}")
+def eliminar_usuario(usuario_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Elimina o bloquea un usuario (reportado, retirado o mal registrado). Si NO
+    tiene carreras (registro malo/duplicado) se borra de verdad. Si tiene
+    historial, se BLOQUEA (no entra ni trabaja) pero se conservan sus carreras
+    para las estadisticas. Nunca se elimina a un admin."""
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.rol == "admin":
+        raise HTTPException(status_code=400, detail="No se puede eliminar una cuenta de administrador")
+    # cancela lo que tenga en curso para no dejar carreras colgadas
+    db.query(Carrera).filter(
+        ((Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)),
+        Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])
+    ).update({"estado": "cancelada"}, synchronize_session=False)
+    tiene_historial = db.query(Carrera).filter(
+        (Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)).count() > 0
+    nombre = u.nombre
+    if tiene_historial:
+        u.activo = "no"
+        u.disponible = "no"
+        u.push_token = None
+        u.token = None   # lo saca de cualquier sesion abierta
+        modo = "bloqueado"
+    else:
+        db.delete(u)
+        modo = "eliminado"
+    db.commit()
+    return {"ok": True, "modo": modo, "nombre": nombre}
+
+@app.post("/admin/usuarios/{usuario_id}/reactivar")
+def reactivar_usuario(usuario_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Reactiva una cuenta que se habia bloqueado."""
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    u.activo = "si"
+    db.commit()
+    return {"ok": True, "nombre": u.nombre}
 
 @app.post("/login")
 def login(telefono: str, password: str, db: Session = Depends(get_db)):
@@ -641,6 +683,8 @@ def login(telefono: str, password: str, db: Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if not usuario or not pwd_context.verify(password, usuario.password):
         raise HTTPException(status_code=400, detail="Telefono o contraseña incorrectos")
+    if usuario.activo == "no":
+        raise HTTPException(status_code=403, detail="Tu cuenta está desactivada. Comunícate con el soporte.")
     limpiar_limite(clave)   # entro bien: se le perdonan los intentos previos
     # llave de sesion nueva en cada entrada: si alguien se quedo con la vieja,
     # deja de servirle apenas el dueño vuelve a entrar
@@ -992,6 +1036,7 @@ def avisar_carrera_nueva(carrera_id: int):
                 Usuario.rol == "conductor",
                 Usuario.disponible == "si",
                 Usuario.push_token.isnot(None),
+                Usuario.activo != "no",
             ).all()
             # solo los del mismo municipio, con el vehiculo que pidieron y al dia
             if le_sirve_la_carrera(c, carrera) and suscripcion_al_dia(c, db)
@@ -1333,6 +1378,8 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if cliente.activo == "no":
+        raise HTTPException(status_code=403, detail="Tu cuenta está desactivada. Comunícate con el soporte.")
     # trasteos: hora agendada de recogida (texto ISO local). Si no viene o no
     # se puede leer, queda "lo antes posible" (None) sin tumbar la carrera
     recogida_dt = None

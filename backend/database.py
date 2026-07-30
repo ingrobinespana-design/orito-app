@@ -60,6 +60,8 @@ class Usuario(Base):
     # promedio de estrellas recibidas (conductor calificado por clientes y
     # viceversa). Vacio = todavia sin calificaciones.
     calificacion = Column(Float, nullable=True)
+    # "no" = cuenta bloqueada/retirada: no puede entrar ni trabajar (soporte)
+    activo = Column(String, default="si")
 
 class Restaurante(Base):
     __tablename__ = "restaurantes"
@@ -350,7 +352,8 @@ def crear_tablas():
                     "pago_nequi VARCHAR", "pago_daviplata VARCHAR", "pago_bancolombia VARCHAR",
                     "pago_breb VARCHAR", "foto_conductor VARCHAR", "foto_vehiculo VARCHAR",
                     "foto_tarjeta VARCHAR", "ubic_lat FLOAT", "ubic_lon FLOAT",
-                    "ubic_fecha TIMESTAMP", "token VARCHAR", "calificacion FLOAT"):
+                    "ubic_fecha TIMESTAMP", "token VARCHAR", "calificacion FLOAT",
+                    "activo VARCHAR DEFAULT 'si'"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
