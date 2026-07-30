@@ -2836,9 +2836,13 @@ function ConductorScreen({ navigation, route }) {
   // cuenta regresiva de 6s por solicitud nueva: guardamos cuando la vimos por
   // primera vez. Mientras < 6s se muestra grande con contraoferta rapida; luego
   // baja al listado normal (sigue disponible). primeraCarga evita sonar al abrir.
-  const VENTANA = 6000;
+  const VENTANA = 10000;
   const recibidas = useRef({});
   const idsVistos = useRef(null);
+  // recuadro tipo Uber cuando entra una solicitud: salta, vibra y cuenta 10s
+  const [entrante, setEntrante] = useState(null);
+  const barraEntrante = useRef(new Animated.Value(1)).current;   // ancho de la barra (10s)
+  const escalaEntrante = useRef(new Animated.Value(0.85)).current; // animacion de entrada
   const [ahora, setAhora] = useState(Date.now());
 
   useEffect(() => {
@@ -2889,6 +2893,18 @@ function ConductorScreen({ navigation, route }) {
     }).catch(() => {});
   };
 
+  // recuadro tipo Uber: aparece de golpe, vibra y corre una barra de 10 segundos
+  const mostrarEntrante = (c) => {
+    setEntrante(c);
+    try { Vibration.vibrate([0, 400, 180, 400, 180, 400]); } catch (e) {}
+    escalaEntrante.setValue(0.85);
+    Animated.spring(escalaEntrante, { toValue: 1, friction: 6, tension: 90, useNativeDriver: true }).start();
+    barraEntrante.setValue(1);
+    Animated.timing(barraEntrante, { toValue: 0, duration: VENTANA, useNativeDriver: false })
+      .start(({ finished }) => { if (finished) setEntrante(null); });
+  };
+  const cerrarEntrante = () => { barraEntrante.stopAnimation(); setEntrante(null); };
+
   const cargar = () => {
     // con conductor_id el servidor filtra por municipio y tipo de vehiculo
     fetch(`${API}/carreras/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
@@ -2902,12 +2918,12 @@ function ConductorScreen({ navigation, route }) {
         // carga solo memorizamos, no sonamos, para no pitar al abrir la app
         if (idsVistos.current === null) {
           idsVistos.current = idsAhora;
-          // al abrir la app, si YA hay solicitudes pendientes y esta disponible, avisa una vez
-          if (d.length > 0 && dispRef.current) pingSolicitud();
+          // al abrir la app, si YA hay solicitudes pendientes y esta disponible, avisa y muestra la ultima
+          if (d.length > 0 && dispRef.current) { pingSolicitud(); mostrarEntrante(d[0]); }
         } else {
-          const hayNueva = d.some(c => !idsVistos.current.has(c.id));
+          const nuevas = d.filter(c => !idsVistos.current.has(c.id));
           idsVistos.current = idsAhora;
-          if (hayNueva && dispRef.current) pingSolicitud();
+          if (nuevas.length && dispRef.current) { pingSolicitud(); mostrarEntrante(nuevas[0]); }
         }
         animar(); setDisponibles(d);
       }).catch(() => {});
@@ -3533,6 +3549,62 @@ function ConductorScreen({ navigation, route }) {
         }}
         onCerrar={() => setCalificarCliente(null)}
       />
+
+      {/* RECUADRO tipo Uber: salta cuando entra una solicitud, con barra de 10s */}
+      <Modal visible={!!entrante} transparent animationType="fade" onRequestClose={cerrarEntrante}>
+        <View style={styles.entranteFondo}>
+          <Animated.View style={[styles.entranteCard, { transform: [{ scale: escalaEntrante }] }]}>
+            <View style={styles.entranteBarraBg}>
+              <Animated.View style={[styles.entranteBarra, { width: barraEntrante.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }]} />
+            </View>
+            {entrante && (() => {
+              const c = entrante;
+              const kmAlOrigen = miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
+              const kmViaje = c.distancia_km != null ? c.distancia_km
+                : (c.origen_lat != null && c.destino_lat != null
+                    ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon }) : null);
+              const fmt = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
+              return (
+                <View style={{ padding: 18 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>🔔 NUEVA SOLICITUD</Text>
+                    {c.tarifa_ofrecida ? <Text style={{ fontSize: 24, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text> : null}
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: "#444", marginTop: 8 }}>
+                    {vehIcono(c.vehiculo_pedido)} {vehLabel(c.vehiculo_pedido)}{esCarga(c.vehiculo_pedido) ? " · trasteo" : ""}{c.zona === "rural" ? " · 🌄 vereda" : ""}
+                  </Text>
+                  <Text style={{ fontSize: 15, color: "#333", marginTop: 8 }} numberOfLines={1}>🟢 {c.origen}</Text>
+                  <Text style={{ fontSize: 15, color: "#333", marginTop: 2 }} numberOfLines={1}>🏁 {c.destino}</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                    {kmAlOrigen != null && (
+                      <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 9 }}>
+                        <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700" }}>📍 Recogida a ~{fmt(kmAlOrigen)}</Text>
+                      </View>
+                    )}
+                    {kmViaje != null && (
+                      <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 9 }}>
+                        <Text style={{ fontSize: 12.5, color: "#B85C00", fontWeight: "700" }}>🛣️ Viaje ~{fmt(kmViaje)}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={{ fontSize: 12.5, color: "#999", marginTop: 8 }}>👤 {c.cliente_nombre}</Text>
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1.3, backgroundColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); aceptar(c); }}>
+                      <Text style={styles.buttonText}>Aceptar{c.tarifa_ofrecida ? ` $${c.tarifa_ofrecida.toLocaleString()}` : ""}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); setMontoOferta(c.tarifa_ofrecida ? String(c.tarifa_ofrecida) : ""); setContraofertando(c); }}>
+                      <Text style={{ color: "#187830", fontWeight: "700" }}>Contraofertar</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity style={{ padding: 10, marginTop: 4 }} onPress={cerrarEntrante}>
+                    <Text style={{ textAlign: "center", color: "#999", fontSize: 13 }}>Descartar</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
+          </Animated.View>
+        </View>
+      </Modal>
 
       <Modal visible={!!contraofertando} transparent animationType="fade" onRequestClose={() => setContraofertando(null)}>
         <View style={styles.fondoModal}>
@@ -4582,6 +4654,11 @@ const styles = StyleSheet.create({
   catSub: { fontSize: 12, color: "#888", marginTop: 1 },
   fondoModal: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
   ventanaModal: { backgroundColor: "#fff", borderRadius: 16, padding: 20 },
+  entranteFondo: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", padding: 20 },
+  entranteCard: { backgroundColor: "#fff", borderRadius: 20, overflow: "hidden", borderWidth: 2, borderColor: "#187830",
+    shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 12 },
+  entranteBarraBg: { height: 6, backgroundColor: "#E7EFE8", width: "100%" },
+  entranteBarra: { height: 6, backgroundColor: "#F06000" },
   restauranteCard: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "center", elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
   restauranteNombre: { fontSize: 15, fontWeight: "600", color: "#333" },
   restauranteCategoria: { fontSize: 12, color: "#888", marginTop: 2 },
