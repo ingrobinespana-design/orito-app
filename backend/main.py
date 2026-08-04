@@ -1239,7 +1239,7 @@ def geocodificar_texto(nombre: str, municipio: str, db: Session):
             km = tarifas.distancia_km(clat, clon, lat, lon)
             if km is not None and km > 40:
                 return None
-        return (lat, lon)
+        return (lat, lon, arr[0].get("display_name"))
     except Exception:
         return None
 
@@ -1271,7 +1271,7 @@ def geocodificar_amplio(nombre: str, lat=None, lon=None, acotado=False):
             mejor = min(arr, key=cerca)
         else:
             mejor = arr[0]
-        return (float(mejor["lat"]), float(mejor["lon"]))
+        return (float(mejor["lat"]), float(mejor["lon"]), mejor.get("display_name"))
     except Exception:
         return None
 
@@ -1292,16 +1292,16 @@ def buscar_coordenadas(texto: str, municipio: str = "Orito",
     if cerca_lat is not None and cerca_lon is not None:
         g = geocodificar_amplio(texto, cerca_lat, cerca_lon, acotado=True)
         if g:
-            return {"lat": g[0], "lon": g[1], "fuente": "cerca"}
+            return {"lat": g[0], "lon": g[1], "nombre": g[2], "fuente": "cerca"}
     # 3) acotado a la ciudad configurada (por su centro), si no vino 'cerca'
     g = geocodificar_texto(texto, municipio, db)
     if g:
-        return {"lat": g[0], "lon": g[1], "fuente": "ciudad"}
+        return {"lat": g[0], "lon": g[1], "nombre": g[2], "fuente": "ciudad"}
     # 4) ultimo respaldo: amplio en toda Colombia, solo sesgado
     if cerca_lat is not None and cerca_lon is not None:
         g = geocodificar_amplio(texto, cerca_lat, cerca_lon)
         if g:
-            return {"lat": g[0], "lon": g[1], "fuente": "geocode"}
+            return {"lat": g[0], "lon": g[1], "nombre": g[2], "fuente": "geocode"}
     return {"lat": None, "lon": None}
 
 def zona_de_la_carrera(origen: str, destino: str, municipio: str, db: Session):
@@ -1470,7 +1470,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         else:
             g = geocodificar_texto(origen, municipio, db)
             if g:
-                origen_lat, origen_lon = g
+                origen_lat, origen_lon = g[0], g[1]
     if destino_lat is None:
         conocido = buscar_lugar(destino, municipio, db)
         if conocido and conocido.lat is not None:
@@ -1478,7 +1478,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         else:
             g = geocodificar_texto(destino, municipio, db)
             if g:
-                destino_lat, destino_lon = g
+                destino_lat, destino_lon = g[0], g[1]
     # donde hay GPS se calcula distancia y tarifa sugerida; donde no, quedan vacias
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)

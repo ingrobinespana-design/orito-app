@@ -1575,6 +1575,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   const [buscando, setBuscando] = useState(false);
   const [busqueda, setBusqueda] = useState("");
   const [buscandoLugar, setBuscandoLugar] = useState(false);
+  const [encontrado, setEncontrado] = useState(null);   // nombre del sitio hallado, para confirmar "es aqui"
 
   // buscador: escribe un sitio, se geocodifica y el pin salta ahi en el mapa.
   // No graba nada; solo mueve el pin para que confirmes/ajustes a mano.
@@ -1582,6 +1583,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
     const t = busqueda.trim();
     if (!t) return;
     setBuscandoLugar(true);
+    setEncontrado(null);
     // se sesga hacia donde esta mirando el mapa (coords) para que 'Calle 49' caiga
     // en la ciudad correcta: busca AMPLIO en toda Colombia, no solo en el municipio
     const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
@@ -1590,8 +1592,13 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
       .then(d => {
         if (d && d.lat != null) {
           setCoords({ lat: d.lat, lon: d.lon });
+          // el nombre de Nominatim viene largo ("Calle 5, Barrio, Cali, Valle..."):
+          // dejamos las primeras 3 partes, que es lo que ubica al usuario
+          const corto = (d.nombre || "").split(",").slice(0, 3).join(",").trim();
+          setEncontrado(corto || t);
           webRef.current && webRef.current.injectJavaScript(`irA(${d.lat}, ${d.lon}); true;`);
         } else {
+          setEncontrado(null);
           avisar("No lo ubicamos", "No encontramos ese sitio. Intenta con el nombre completo (ej. 'Calle 49 #10, Cali') o marca el punto a mano en el mapa.");
         }
       })
@@ -1633,6 +1640,14 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             {buscandoLugar ? <ActivityIndicator color="#fff" /> : <Text style={[styles.buttonText, { fontSize: 14 }]}>Buscar</Text>}
           </TouchableOpacity>
         </View>
+        {encontrado ? (
+          <View style={{ marginHorizontal: 14, marginTop: 8, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ fontSize: 16 }}>📍</Text>
+            <Text style={{ flex: 1, fontSize: 13, color: "#187830", fontWeight: "600" }} numberOfLines={2}>
+              {encontrado}  ·  ¿es aquí? Ajusta el pin si hace falta y confirma abajo.
+            </Text>
+          </View>
+        ) : null}
         <View style={{ flex: 1 }}>
           <WebView
             ref={webRef}
@@ -1640,7 +1655,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             // baseUrl le da un origen https valido: sin esto Android usa "about:blank"
             // y varios servidores de mapas rechazan las peticiones de imagenes
             source={{ html: mapaHTML(inicial.lat, inicial.lon), baseUrl: "https://orito.app/" }}
-            onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); } catch (_) {} }}
+            onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); setEncontrado(null); } catch (_) {} }}
             javaScriptEnabled
             domStorageEnabled
             mixedContentMode="always"
@@ -2868,6 +2883,29 @@ function ConductorScreen({ navigation, route }) {
   const barraEntrante = useRef(new Animated.Value(1)).current;   // ancho de la barra (10s)
   const escalaEntrante = useRef(new Animated.Value(0.85)).current; // animacion de entrada
   const [ahora, setAhora] = useState(Date.now());
+  // tarifas por ciudad: para sugerir un precio que suma recogida + viaje.
+  // En Pasto/Cali/Florencia el $/km es distinto, asi el conductor ve cuanto
+  // cobrar sin perder la contraoferta (es solo una sugerencia).
+  const [munis, setMunis] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API}/municipios`)
+      .then((r) => r.json())
+      .then((d) => Array.isArray(d) && setMunis(d))
+      .catch(() => {});
+  }, []);
+
+  // precio sugerido para el conductor = base + (km a la recogida + km del viaje) x $/km
+  // de la ciudad, redondeado al mil y nunca por debajo de la minima. Si la ciudad
+  // no tiene $/km configurado, devuelve null (precio libre, sin sugerencia).
+  const sugeridoConductor = (c, kmAlOrigen, kmViaje) => {
+    const t = munis.find((m) => m.nombre === c.municipio);
+    if (!t || !t.valor_km) return null;
+    const km = (kmAlOrigen || 0) + (kmViaje || 0);
+    if (!km) return null;
+    const bruto = (t.tarifa_base || 0) + km * t.valor_km;
+    return Math.max(Math.ceil(bruto / 1000) * 1000, t.tarifa_minima || 0);
+  };
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -3156,6 +3194,8 @@ function ConductorScreen({ navigation, route }) {
           ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon })
           : null);
     const fmtKm = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
+    // sugerencia = recogida + viaje x $/km de la ciudad (solo antes de tomarla)
+    const sug = !propia ? sugeridoConductor(c, kmAlOrigen, kmViaje) : null;
     return (
     <View key={c.id} style={styles.log}>
       {/* fila de encabezado tipo log: tiempo — precio */}
@@ -3208,6 +3248,14 @@ function ConductorScreen({ navigation, route }) {
         </View>
       )}
 
+      {/* precio sugerido: recogida + viaje segun la tarifa de la ciudad. Es una
+          guia; el conductor puede aceptar la oferta del cliente o proponer otro */}
+      {sug != null && (
+        <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, marginTop: 8, alignSelf: "flex-start" }}>
+          <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700" }}>💡 Sugerido (recogida + viaje): ${sug.toLocaleString()}</Text>
+        </View>
+      )}
+
       {(c.origen_detalle || c.notas) ? (
         <Text style={{ fontSize: 12, color: "#888", marginTop: 4 }} numberOfLines={2}>
           {c.origen_detalle || ""}{c.origen_detalle && c.notas ? " · " : ""}{c.notas || ""}
@@ -3232,7 +3280,7 @@ function ConductorScreen({ navigation, route }) {
             <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptar(c)}>
               <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar ${c.tarifa_ofrecida.toLocaleString()}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoOferta(String(c.tarifa_ofrecida)); setContraofertando(c); }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoOferta(String(sug || c.tarifa_ofrecida)); setContraofertando(c); }}>
               <Text style={{ color: "#187830", fontWeight: "600", fontSize: 14 }}>Proponer otro</Text>
             </TouchableOpacity>
           </View>
@@ -3260,6 +3308,17 @@ function ConductorScreen({ navigation, route }) {
     </View>
     );
   };
+
+  // sugerido para el modal de contraoferta (misma cuenta: recogida + viaje)
+  const sugContra = (() => {
+    const c = contraofertando;
+    if (!c) return null;
+    const kmO = miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
+    const kmV = c.distancia_km != null ? c.distancia_km
+      : (c.origen_lat != null && c.destino_lat != null
+          ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon }) : null);
+    return sugeridoConductor(c, kmO, kmV);
+  })();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -3593,6 +3652,7 @@ function ConductorScreen({ navigation, route }) {
                 : (c.origen_lat != null && c.destino_lat != null
                     ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon }) : null);
               const fmt = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
+              const sug = sugeridoConductor(c, kmAlOrigen, kmViaje);
               return (
                 <View style={{ padding: 18 }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -3616,12 +3676,17 @@ function ConductorScreen({ navigation, route }) {
                       </View>
                     )}
                   </View>
+                  {sug != null && (
+                    <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, marginTop: 9, alignSelf: "flex-start" }}>
+                      <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700" }}>💡 Sugerido (recogida + viaje): ${sug.toLocaleString()}</Text>
+                    </View>
+                  )}
                   <Text style={{ fontSize: 12.5, color: "#999", marginTop: 8 }}>👤 {c.cliente_nombre}</Text>
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
                     <TouchableOpacity style={[styles.button, { flex: 1.3, backgroundColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); aceptar(c); }}>
                       <Text style={styles.buttonText}>Aceptar{c.tarifa_ofrecida ? ` $${c.tarifa_ofrecida.toLocaleString()}` : ""}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); setMontoOferta(c.tarifa_ofrecida ? String(c.tarifa_ofrecida) : ""); setContraofertando(c); }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); setMontoOferta(String(sug || c.tarifa_ofrecida || "")); setContraofertando(c); }}>
                       <Text style={{ color: "#187830", fontWeight: "700" }}>Contraofertar</Text>
                     </TouchableOpacity>
                   </View>
@@ -3639,11 +3704,16 @@ function ConductorScreen({ navigation, route }) {
         <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View style={styles.ventanaModal}>
             <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Proponer tu precio</Text>
-            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
+            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: contraofertando && sugContra != null ? 8 : 14 }}>
               {contraofertando && contraofertando.tarifa_ofrecida
                 ? `El cliente ofrece $${contraofertando.tarifa_ofrecida.toLocaleString()}. Cuanto quieres cobrar?`
                 : "Cuanto quieres cobrar?"}
             </Text>
+            {contraofertando && sugContra != null && (
+              <TouchableOpacity onPress={() => setMontoOferta(String(sugContra))} style={{ backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 7, paddingHorizontal: 10, marginBottom: 14, alignSelf: "flex-start" }}>
+                <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700" }}>💡 Sugerido (recogida + viaje): ${sugContra.toLocaleString()} · tocar para usar</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.ofertaFila}>
               <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
               <TextInput value={montoOferta} onChangeText={(t) => setMontoOferta(t.replace(/\D/g, ""))}
