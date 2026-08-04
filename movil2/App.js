@@ -15,6 +15,12 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 // Produccion por defecto. Para probar contra un servidor local se arranca con
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
+// Mapbox: tiles profesionales (estilo navegacion, como las apps grandes). El
+// token publico (pk.) es seguro en la app; se puede restringir por dominio luego.
+const MAPBOX_TOKEN = "pk.eyJ1IjoiZGFyd2luZSIsImEiOiJjbXNkeW4xMGgwMTJxMzlvcDlnaDNzNmJqIn0.bsvVbyLVEUSnaOpN1XI-6A";
+const MAPBOX_TILES = `https://api.mapbox.com/styles/v1/mapbox/navigation-day-v1/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`;
+const MAPBOX_STREETS = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`;
+const MAPBOX_SAT = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`;
 const Stack = createNativeStackNavigator();
 
 // Llave de sesion. En memoria (al cerrar la app se pide entrar de nuevo).
@@ -1506,9 +1512,9 @@ function mapaHTML(lat, lon) {
   // OSM estandar de primero: es el que muestra nombres de calles Y negocios
   // (el mas parecido a Google Maps, gratis). Respaldo: Carto -> Esri.
   var proveedores = [
+    {url:'${MAPBOX_STREETS}', opt:{maxZoom:20, tileSize:512, zoomOffset:-1}},
     {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opt:{maxZoom:19, subdomains:'abc'}},
-    {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', opt:{maxZoom:20, subdomains:'abcd'}},
-    {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opt:{maxZoom:19}}
+    {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', opt:{maxZoom:20, subdomains:'abcd'}}
   ];
   var idx=0, capa=null, satelite=false, capaSat=null, capaEtiq=null;
   function ponerCapa(){
@@ -1533,8 +1539,7 @@ function mapaHTML(lat, lon) {
     document.getElementById('btnsat').textContent = satelite ? '🗺️' : '🛰️';
     if(satelite){
       if(capa) map.removeLayer(capa);
-      capaSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19}).addTo(map);
-      capaEtiq = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png', {maxZoom:20, subdomains:'abcd'}).addTo(map);
+      capaSat = L.tileLayer('${MAPBOX_SAT}', {maxZoom:20, tileSize:512, zoomOffset:-1}).addTo(map);
     } else {
       if(capaSat) map.removeLayer(capaSat);
       if(capaEtiq) map.removeLayer(capaEtiq);
@@ -1685,8 +1690,8 @@ function mapaSeguimientoHTML() {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
-  // tiles limpios y modernos (CartoDB Voyager, gratis) en vez del OSM cargado
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',{maxZoom:20,subdomains:'abcd'}).addTo(map);
+  // Mapbox estilo NAVEGACION (como Uber/inDrive): vias claras, limpio, nitido
+  L.tileLayer('${MAPBOX_TILES}',{maxZoom:20,tileSize:512,zoomOffset:-1}).addTo(map);
   // carro visto desde arriba (apunta al NORTE por defecto; se rota al rumbo)
   var svgCarro = '<svg viewBox="0 0 32 32" width="34" height="34" style="display:block"><rect x="9" y="3" width="14" height="26" rx="6" fill="#1A73E8" stroke="#ffffff" stroke-width="2"/><rect x="11.5" y="6.5" width="9" height="6" rx="2" fill="#dceafe"/><rect x="11.5" y="19" width="9" height="6.5" rx="2" fill="#bcd6fb"/></svg>';
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
@@ -2983,19 +2988,24 @@ function ConductorScreen({ navigation, route }) {
   useEffect(() => {
     if (!tieneCarreraActiva) return;
     let vivo = true;
-    const reportar = async () => {
+    let sub = null;
+    (async () => {
       try {
         const p = await Location.getForegroundPermissionsAsync();
         if (p.status !== "granted") return;
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (!vivo) return;
-        setMiUbic({ lat: pos.coords.latitude, lon: pos.coords.longitude });   // alimenta su propio mapa
-        fetch(`${API}/conductores/${usuario.id}/ubicacion?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`, { method: "PUT" }).catch(() => {});
+        // rastreo CONTINUO (no getCurrentPosition, que a veces da posicion en cache
+        // y el carro se ve quieto): reporta al moverse ~12m o cada 4s
+        sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, timeInterval: 4000, distanceInterval: 12 },
+          (pos) => {
+            if (!vivo) return;
+            setMiUbic({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+            fetch(`${API}/conductores/${usuario.id}/ubicacion?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`, { method: "PUT" }).catch(() => {});
+          }
+        );
       } catch (e) {}
-    };
-    reportar();
-    const t = setInterval(reportar, 5000);   // cada 5s: seguimiento mas en vivo
-    return () => { vivo = false; clearInterval(t); };
+    })();
+    return () => { vivo = false; if (sub) { try { sub.remove(); } catch (e) {} } };
   }, [tieneCarreraActiva]);
 
   const aceptar = (c) => {
