@@ -1850,7 +1850,14 @@ function mapaSeguimientoHTML() {
     if(!carro){
       carro = L.marker([la, lo], {icon:icoCarro, zIndexOffset:1000}).addTo(map);
       carIdx = 0;
-      if(primera){ map.setView([la, lo], ZOOM); primera = false; }   // arranca CERCA del carro
+      if(primera){
+        // primera ubicacion del conductor: si ya hay a donde va, encuadra el
+        // carro Y el objetivo para que SIEMPRE se vea venir el vehiculo; si no,
+        // centra en el carro
+        if(dLat != null){ seguir = false; botones(); map.fitBounds(L.latLngBounds([[la,lo],[dLat,dLon]]).pad(0.35)); }
+        else { map.setView([la, lo], ZOOM); }
+        primera = false;
+      }
     } else {
       moverEnRuta(la, lo);   // avanza por la carretera, no en linea recta
     }
@@ -2987,7 +2994,7 @@ function ConductorScreen({ navigation, route }) {
       } catch (e) {}
     };
     reportar();
-    const t = setInterval(reportar, 8000);
+    const t = setInterval(reportar, 5000);   // cada 5s: seguimiento mas en vivo
     return () => { vivo = false; clearInterval(t); };
   }, [tieneCarreraActiva]);
 
