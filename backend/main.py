@@ -476,12 +476,20 @@ def obtener_municipios(todos: bool = False, db: Session = Depends(get_db)):
 def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     """Sugerencia segun el pueblo, el vehiculo y los km. Solo orienta la oferta
     del cliente; el precio de verdad lo negocian las partes."""
-    if km is None or not vehiculo:
+    if km is None:
         return None
-    t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
-    if not t:
-        return None
-    return tarifas.calcular_tarifa(km, t.base, t.valor_km, t.minima)
+    # 1) tarifa por VEHICULO si el pueblo la tiene (donde moto y carro cobran distinto)
+    if vehiculo:
+        t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
+        if t and t.valor_km:
+            return tarifas.calcular_tarifa(km, t.base, t.valor_km, t.minima)
+    # 2) respaldo: el $/km de la CIUDAD (el que se pone en el panel "Ciudades").
+    #    Asi Pasto/Cali/Florencia muestran el sugerido al cliente aunque no tengan
+    #    tarifa por vehiculo; es la MISMA base que ve el conductor (solo viaje aca).
+    m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
+    if m and m.valor_km:
+        return tarifas.calcular_tarifa(km, m.tarifa_base or 0, m.valor_km, m.tarifa_minima or 0)
+    return None
 
 @app.get("/tarifa")
 def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon: float,

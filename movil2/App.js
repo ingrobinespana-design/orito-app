@@ -2417,6 +2417,11 @@ function PedirCarreraScreen({ navigation, route }) {
                       <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }}>💵 ${tarifa.toLocaleString()}</Text>
                     </View>
                   ) : null}
+                  {carrera.tarifa_sugerida && carrera.tarifa_ofrecida && carrera.tarifa_ofrecida < carrera.tarifa_sugerida ? (
+                    <View style={{ backgroundColor: "#FDECEA", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9 }}>
+                      <Text style={{ fontSize: 12.5, color: "#C0392B", fontWeight: "700" }}>Mín. sugerido ${carrera.tarifa_sugerida.toLocaleString()}</Text>
+                    </View>
+                  ) : null}
                 </View>
                 {kmViaje == null && (
                   <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 6 }}>
@@ -2811,16 +2816,28 @@ function PedirCarreraScreen({ navigation, route }) {
 
         {/* 4. OFERTA */}
         <View style={styles.card}>
-          {muni && muni.usa_gps && estimado && estimado.distancia_km && (
-            <View style={[styles.estimado, { marginBottom: 12 }]}>
-              <Text style={{ fontSize: 13, color: "#555" }}>Distancia: {estimado.distancia_km} km</Text>
-              {estimado.tarifa_sugerida ? (
-                <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
-                  La gente suele pagar ~${estimado.tarifa_sugerida.toLocaleString()}
-                </Text>
-              ) : null}
+          {/* tarifa sugerida = mínimo recomendado (distancia x $/km de la ciudad).
+              Se muestra SIEMPRE que la ciudad tenga tarifa; el cliente arranca de
+              ahi. El conductor puede aceptarla o contraofertar. */}
+          {muni && muni.usa_gps && estimado && estimado.tarifa_sugerida ? (
+            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+              <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>💵 TARIFA SUGERIDA (mínimo)</Text>
+              <Text style={{ fontSize: 26, fontWeight: "800", color: "#187830", marginTop: 2 }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
+              <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>
+                Para ~{estimado.distancia_km} km. Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido.
+              </Text>
+              {String(estimado.tarifa_sugerida) !== oferta && (
+                <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#187830", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
+                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Usar ${estimado.tarifa_sugerida.toLocaleString()}</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          )}
+          ) : (muni && muni.usa_gps && estimado && estimado.distancia_km ? (
+            <View style={[styles.estimado, { marginBottom: 12 }]}>
+              <Text style={{ fontSize: 13, color: "#555" }}>Distancia: ~{estimado.distancia_km} km</Text>
+              <Text style={{ fontSize: 12.5, color: "#888", marginTop: 2 }}>Aún no hay tarifa para esta ciudad. Ofrece lo que consideres justo.</Text>
+            </View>
+          ) : null)}
           <Text style={styles.etiqueta}>CUANTO OFRECES PAGAR</Text>
           <View style={styles.ofertaFila}>
             <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
@@ -2833,7 +2850,13 @@ function PedirCarreraScreen({ navigation, route }) {
               onFocus={() => setTimeout(() => scrollForm.current && scrollForm.current.scrollToEnd({ animated: true }), 250)}
             />
           </View>
-          <Text style={styles.ayuda}>Un conductor puede aceptar tu precio o proponerte otro, y tu eliges</Text>
+          {estimado && estimado.tarifa_sugerida && oferta && Number(oferta) < estimado.tarifa_sugerida ? (
+            <Text style={{ fontSize: 12.5, color: "#C0392B", fontWeight: "600", marginTop: 6 }}>
+              ⚠️ Estás ofreciendo menos del sugerido (${estimado.tarifa_sugerida.toLocaleString()}). Puede que ningún conductor la tome o te propongan más.
+            </Text>
+          ) : (
+            <Text style={styles.ayuda}>Un conductor puede aceptar tu precio o proponerte otro, y tu eliges</Text>
+          )}
         </View>
 
         <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
