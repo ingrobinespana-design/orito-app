@@ -1690,8 +1690,8 @@ function mapaSeguimientoHTML() {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
-  // Mapbox estilo NAVEGACION (como Uber/inDrive): vias claras, limpio, nitido
-  L.tileLayer('${MAPBOX_TILES}',{maxZoom:20,tileSize:512,zoomOffset:-1}).addTo(map);
+  // Mapbox estilo CALLES limpio (como Google/Uber): vias claras y sin recargar
+  L.tileLayer('${MAPBOX_STREETS}',{maxZoom:20,tileSize:512,zoomOffset:-1}).addTo(map);
   // carro visto desde arriba (apunta al NORTE por defecto; se rota al rumbo)
   var svgCarro = '<svg viewBox="0 0 32 32" width="34" height="34" style="display:block"><rect x="9" y="3" width="14" height="26" rx="6" fill="#1A73E8" stroke="#ffffff" stroke-width="2"/><rect x="11.5" y="6.5" width="9" height="6" rx="2" fill="#dceafe"/><rect x="11.5" y="19" width="9" height="6.5" rx="2" fill="#bcd6fb"/></svg>';
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
