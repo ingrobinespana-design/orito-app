@@ -17,7 +17,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 const API = process.env.EXPO_PUBLIC_API_URL || "https://orito-app-production.up.railway.app";
 // Mapbox: tiles profesionales (estilo navegacion, como las apps grandes). El
 // token publico (pk.) es seguro en la app; se puede restringir por dominio luego.
-const MAPBOX_TOKEN = "pk.eyJ1IjoiZGFyd2luZSIsImEiOiJjbXNkeW4xMGgwMTJxMzlvcDlnaDNzNmJqIn0.bsvVbyLVEUSnaOpN1XI-6A";
+const MAPBOX_TOKEN = "pk.eyJ1IjoiZGFyd2luZSIsImEiOiJjbXNkenQ2Ym4wMDN3MnhxMGoxZGlyN3R2In0.WwBcBvXWmpy-I55Ceud-Lg";
 const MAPBOX_TILES = `https://api.mapbox.com/styles/v1/mapbox/navigation-day-v1/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`;
 const MAPBOX_STREETS = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`;
 const MAPBOX_SAT = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`;
