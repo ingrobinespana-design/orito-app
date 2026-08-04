@@ -2583,7 +2583,7 @@ function PedirCarreraScreen({ navigation, route }) {
         </View>
       </View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 160 }} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 300 }} keyboardShouldPersistTaps="handled">
         {/* sus solicitudes siguen vivas mientras pide otra cosa */}
         {activas.length > 0 && (
           <TouchableOpacity
