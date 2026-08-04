@@ -3694,7 +3694,7 @@ function AdminCarrerasScreen({ navigation }) {
   };
 
   const TODOS_VEHICULOS = ["carro", "moto", "motocarguero", "camioneta", "camion", "furgon", "planchon", "grua"];
-  const DEPARTAMENTOS = ["Putumayo", "Cauca", "Nariño", "Caquetá"];
+  const DEPARTAMENTOS = ["Putumayo", "Cauca", "Nariño", "Caquetá", "Valle del Cauca", "Huila"];
   const demandaDe = (nombre) => (demanda.ciudades || []).find(c => c.nombre === nombre) || {};
 
   const buscarUsuarios = () => {
