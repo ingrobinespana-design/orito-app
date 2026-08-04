@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -401,6 +401,7 @@ function LoginScreen({ navigation }) {
   const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "Orito", categoria: "cliente", comoMe: "cliente", placa: "" });
   const [municipios, setMunicipios] = useState([]);
   const [cargandoMun, setCargandoMun] = useState(true);
+  const [verPass, setVerPass] = useState(false);   // mostrar/ocultar la contraseña
 
   const cargarMunicipios = () => {
     setCargandoMun(true);
@@ -460,7 +461,8 @@ function LoginScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={[styles.header, { flexDirection: "row", alignItems: "center", gap: 14 }]}>
           <Image source={require("./assets/icon.png")} style={{ width: 54, height: 54, borderRadius: 14 }} />
           <View>
@@ -588,7 +590,12 @@ function LoginScreen({ navigation }) {
             </>
           )}
           <TextInput placeholder="Telefono" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
-          <TextInput placeholder="Contrasena" value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={styles.input} secureTextEntry />
+          <View style={{ justifyContent: "center" }}>
+            <TextInput placeholder="Contrasena" value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} />
+            <TouchableOpacity style={{ position: "absolute", right: 6, padding: 10, top: 2 }} onPress={() => setVerPass(v => !v)}>
+              <Text style={{ fontSize: 18 }}>{verPass ? "🙈" : "👁️"}</Text>
+            </TouchableOpacity>
+          </View>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={cargando}>
             {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{modo === "login" ? "Ingresar" : "Crear cuenta"}</Text>}
@@ -603,6 +610,7 @@ function LoginScreen({ navigation }) {
           )}
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -3527,7 +3535,7 @@ function ConductorScreen({ navigation, route }) {
       </View>
 
       <Modal visible={!!cobrando} transparent animationType="fade" onRequestClose={() => setCobrando(null)}>
-        <View style={styles.fondoModal}>
+        <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View style={styles.ventanaModal}>
             <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Carrera terminada</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
@@ -3552,7 +3560,7 @@ function ConductorScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ModalEstrellas
@@ -3624,7 +3632,7 @@ function ConductorScreen({ navigation, route }) {
       </Modal>
 
       <Modal visible={!!contraofertando} transparent animationType="fade" onRequestClose={() => setContraofertando(null)}>
-        <View style={styles.fondoModal}>
+        <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View style={styles.ventanaModal}>
             <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Proponer tu precio</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
@@ -3646,7 +3654,7 @@ function ConductorScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
