@@ -2005,6 +2005,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [estimado, setEstimado] = useState(null);   // {distancia_km, tarifa_sugerida}
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
+  const scrollForm = useRef(null);                   // para subir el campo de oferta sobre el teclado
   const [contraofertas, setContraofertas] = useState([]);
   // cuenta regresiva de 6s por contraoferta nueva: cuando el cliente la vio por
   // primera vez. Mientras < 6s se resalta con la cuenta; luego sigue en la lista.
@@ -2581,7 +2582,8 @@ function PedirCarreraScreen({ navigation, route }) {
           <Text style={styles.headerTitle}>Pedir carrera</Text>
         </View>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 160 }} keyboardShouldPersistTaps="handled">
         {/* sus solicitudes siguen vivas mientras pide otra cosa */}
         {activas.length > 0 && (
           <TouchableOpacity
@@ -2813,6 +2815,7 @@ function PedirCarreraScreen({ navigation, route }) {
               placeholder="0"
               keyboardType="number-pad"
               style={styles.ofertaInput}
+              onFocus={() => setTimeout(() => scrollForm.current && scrollForm.current.scrollToEnd({ animated: true }), 250)}
             />
           </View>
           <Text style={styles.ayuda}>Un conductor puede aceptar tu precio o proponerte otro, y tu eliges</Text>
@@ -2822,6 +2825,7 @@ function PedirCarreraScreen({ navigation, route }) {
           {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Pedir carrera</Text>}
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <MapaSelector
         visible={!!mapaAbierto}
