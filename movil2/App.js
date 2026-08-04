@@ -3682,6 +3682,7 @@ function AdminCarrerasScreen({ navigation }) {
   const [tarKm, setTarKm] = useState("");
   const [tarMin, setTarMin] = useState("");
   const [editDepto, setEditDepto] = useState("Putumayo");
+  const [reCentrar, setReCentrar] = useState(null);   // ciudad a la que se le corrige el centro en el mapa
 
   const cargar = () => {
     fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
@@ -3769,6 +3770,12 @@ function AdminCarrerasScreen({ navigation }) {
   const toggleCiudad = (m) => {
     const nuevo = m.activo === "no" ? "si" : "no";
     adminFetch(`${API}/municipios/${encodeURIComponent(m.nombre)}?activo=${nuevo}`, { method: "PUT" }).then(cargar).catch(() => {});
+  };
+
+  const guardarCentro = (nombre, c) => {
+    adminFetch(`${API}/municipios/${encodeURIComponent(nombre)}?centro_lat=${c.lat}&centro_lon=${c.lon}`, { method: "PUT" })
+      .then(() => { setReCentrar(null); cargar(); avisar("Centro corregido", `El centro de ${nombre} quedó bien ubicado.`); })
+      .catch(() => avisar("Error", "No hay conexión."));
   };
 
   const abrirTarifas = (m) => {
@@ -4180,7 +4187,17 @@ function AdminCarrerasScreen({ navigation }) {
                         <TextInput value={tarMin} onChangeText={setTarMin} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
                       </View>
                     </View>
-                    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                    <TouchableOpacity
+                      style={[styles.botonMapa, { marginTop: 12 }, m.centro_lat != null && styles.botonMapaOk]}
+                      onPress={() => setReCentrar(m.nombre)}>
+                      <Text style={{ color: "#187830", fontWeight: "600" }}>
+                        {m.centro_lat != null ? "🗺️ Corregir el centro en el mapa" : "🗺️ Marcar el centro en el mapa"}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={{ fontSize: 11, color: "#8A5A00", marginBottom: 4 }}>
+                      El centro es donde la app detecta la ciudad por GPS. Si quedó mal, corrígelo aquí.
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
                       <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", padding: 10 }]} onPress={() => setEditCiudad(null)}>
                         <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
                       </TouchableOpacity>
@@ -4204,6 +4221,14 @@ function AdminCarrerasScreen({ navigation }) {
               municipio={nuevaCiudad.nombre || "Colombia"}
               onConfirmar={(c) => { setNuevaCiudad((n) => ({ ...n, lat: c.lat, lon: c.lon })); setMarcandoCentro(false); }}
               onCerrar={() => setMarcandoCentro(false)}
+            />
+            <MapaSelector
+              visible={!!reCentrar}
+              titulo={`Centro de ${reCentrar || ""}`}
+              centro={null}
+              municipio={reCentrar || "Colombia"}
+              onConfirmar={(c) => guardarCentro(reCentrar, c)}
+              onCerrar={() => setReCentrar(null)}
             />
           </>
         )}

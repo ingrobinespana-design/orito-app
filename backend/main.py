@@ -552,13 +552,16 @@ def crear_municipio(nombre: str, centro_lat: float, centro_lon: float,
 def actualizar_municipio(nombre: str, vehiculos: str = None, activo: str = None,
                          usa_gps: str = None, tarifa_base: int = None, valor_km: int = None,
                          tarifa_minima: int = None, departamento: str = None,
+                         centro_lat: float = None, centro_lon: float = None,
                          db: Session = Depends(get_db),
                          admin: Usuario = Depends(solo_admin)):
-    """Para habilitar moto en Orito cuando lleguen, prender el GPS en un pueblo
-    o ajustar las tarifas — todo sin publicar app nueva."""
+    """Para habilitar moto en Orito cuando lleguen, prender el GPS en un pueblo,
+    ajustar tarifas o corregir el CENTRO de la ciudad — todo sin publicar app nueva."""
     m = db.query(Municipio).filter(Municipio.nombre == nombre).first()
     if not m:
         raise HTTPException(status_code=404, detail="Municipio no encontrado")
+    if centro_lat is not None and centro_lon is not None:
+        m.centro_lat, m.centro_lon = centro_lat, centro_lon
     if departamento is not None and departamento.strip():
         m.departamento = departamento.strip()
     if vehiculos is not None:
@@ -1284,16 +1287,18 @@ def buscar_coordenadas(texto: str, municipio: str = "Orito",
     conocido = buscar_lugar(texto, municipio, db)
     if conocido and conocido.lat is not None:
         return {"lat": conocido.lat, "lon": conocido.lon, "fuente": "lugar"}
-    # 2) geocode ACOTADO a la ciudad configurada (preciso para calles/nomenclatura)
-    g = geocodificar_texto(texto, municipio, db)
-    if g:
-        return {"lat": g[0], "lon": g[1], "fuente": "ciudad"}
-    # 3) acotado a DONDE MIRA el usuario (sirve aunque la ciudad no este configurada)
+    # 2) acotado a DONDE MIRA el usuario (lo mas confiable: su GPS/centro del mapa;
+    #    no depende de que el centro de la ciudad este bien configurado)
     if cerca_lat is not None and cerca_lon is not None:
         g = geocodificar_amplio(texto, cerca_lat, cerca_lon, acotado=True)
         if g:
             return {"lat": g[0], "lon": g[1], "fuente": "cerca"}
-        # 4) ultimo respaldo: amplio en toda Colombia, solo sesgado
+    # 3) acotado a la ciudad configurada (por su centro), si no vino 'cerca'
+    g = geocodificar_texto(texto, municipio, db)
+    if g:
+        return {"lat": g[0], "lon": g[1], "fuente": "ciudad"}
+    # 4) ultimo respaldo: amplio en toda Colombia, solo sesgado
+    if cerca_lat is not None and cerca_lon is not None:
         g = geocodificar_amplio(texto, cerca_lat, cerca_lon)
         if g:
             return {"lat": g[0], "lon": g[1], "fuente": "geocode"}
