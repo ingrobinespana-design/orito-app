@@ -1210,15 +1210,18 @@ def geocodificar_texto(nombre: str, municipio: str, db: Session):
     m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
     clat = m.centro_lat if m else None
     clon = m.centro_lon if m else None
+    depto = (m.departamento if m else None) or "Colombia"   # departamento REAL (no hardcodeado)
     try:
         import urllib.request as _ur, urllib.parse as _up, json as _json
         params = {
-            "q": f"{nombre}, {municipio}, Putumayo, Colombia",
+            "q": f"{nombre}, {municipio}, {depto}, Colombia",
             "format": "jsonv2", "limit": "1",
             "countrycodes": "co", "accept-language": "es",
         }
         if clat is not None and clon is not None:
-            d = 0.5   # ~55 km de caja alrededor del pueblo, con preferencia
+            # caja ACOTADA a la ciudad: asi 'Carrera 11' cae en ESTA ciudad y no
+            # en Bogota. ~44 km cubre una ciudad grande + su area
+            d = 0.4
             params["viewbox"] = f"{clon - d},{clat - d},{clon + d},{clat + d}"
             params["bounded"] = "1"
         url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
@@ -1228,20 +1231,19 @@ def geocodificar_texto(nombre: str, municipio: str, db: Session):
         if not arr:
             return None
         lat = float(arr[0]["lat"]); lon = float(arr[0]["lon"])
-        # cordura: debe caer cerca del pueblo (<=45 km) si sabemos el centro
+        # cordura: debe caer cerca de la ciudad (<=40 km) si sabemos el centro
         if clat is not None and clon is not None:
             km = tarifas.distancia_km(clat, clon, lat, lon)
-            if km is not None and km > 45:
+            if km is not None and km > 40:
                 return None
         return (lat, lon)
     except Exception:
         return None
 
-def geocodificar_amplio(nombre: str, lat=None, lon=None):
-    """Geocoding SIN restringir al municipio: busca en toda Colombia (ciudades
-    principales, barrios, nomenclatura) y, si se sabe donde esta el usuario, se
-    sesga hacia ahi eligiendo el resultado mas cercano — asi 'Calle 49' cae en la
-    ciudad correcta. Devuelve (lat, lon) o None."""
+def geocodificar_amplio(nombre: str, lat=None, lon=None, acotado=False):
+    """Geocoding en toda Colombia sesgado hacia (lat,lon). Si 'acotado' es True,
+    RESTRINGE los resultados a la caja alrededor de ese punto (para nomenclatura de
+    una ciudad); si no, solo sesga y elige el mas cercano. Devuelve (lat, lon)."""
     nombre = (nombre or "").strip()
     if len(nombre) < 3:
         return None
@@ -1250,8 +1252,10 @@ def geocodificar_amplio(nombre: str, lat=None, lon=None):
         params = {"q": f"{nombre}, Colombia", "format": "jsonv2", "limit": "6",
                   "countrycodes": "co", "accept-language": "es"}
         if lat is not None and lon is not None:
-            d = 0.4   # caja de PREFERENCIA (sin bounded): sesga, no limita
+            d = 0.4   # ~44 km alrededor del punto
             params["viewbox"] = f"{lon - d},{lat - d},{lon + d},{lat + d}"
+            if acotado:
+                params["bounded"] = "1"   # SOLO dentro de la caja (esta ciudad)
         url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
         req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
         with _ur.urlopen(req, timeout=5) as r:
@@ -1272,18 +1276,27 @@ def geocodificar_amplio(nombre: str, lat=None, lon=None):
 def buscar_coordenadas(texto: str, municipio: str = "Orito",
                        cerca_lat: float = None, cerca_lon: float = None,
                        db: Session = Depends(get_db)):
-    """Texto -> coordenadas para el buscador del mapa. Si viene 'cerca_lat/lon'
-    (donde esta mirando el usuario) se busca AMPLIO en toda Colombia sesgado a ese
-    punto, para que funcione en cualquier ciudad. Sin sesgo, se limita al municipio."""
-    if cerca_lat is not None and cerca_lon is not None:
-        g = geocodificar_amplio(texto, cerca_lat, cerca_lon)
-        return {"lat": g[0], "lon": g[1], "fuente": "geocode"} if g else {"lat": None, "lon": None}
+    """Texto -> coordenadas para el buscador. Primero busca ACOTADO a la ciudad
+    (con su departamento real y una caja alrededor del centro): asi la nomenclatura
+    ('Carrera 11', 'Calle 18') cae en ESA ciudad, no en otra. Si no encuentra y hay
+    'cerca_lat/lon', cae al modo AMPLIO (sesgado) como respaldo."""
+    # 1) lugar aprendido de esa ciudad
     conocido = buscar_lugar(texto, municipio, db)
     if conocido and conocido.lat is not None:
         return {"lat": conocido.lat, "lon": conocido.lon, "fuente": "lugar"}
+    # 2) geocode ACOTADO a la ciudad configurada (preciso para calles/nomenclatura)
     g = geocodificar_texto(texto, municipio, db)
     if g:
-        return {"lat": g[0], "lon": g[1], "fuente": "geocode"}
+        return {"lat": g[0], "lon": g[1], "fuente": "ciudad"}
+    # 3) acotado a DONDE MIRA el usuario (sirve aunque la ciudad no este configurada)
+    if cerca_lat is not None and cerca_lon is not None:
+        g = geocodificar_amplio(texto, cerca_lat, cerca_lon, acotado=True)
+        if g:
+            return {"lat": g[0], "lon": g[1], "fuente": "cerca"}
+        # 4) ultimo respaldo: amplio en toda Colombia, solo sesgado
+        g = geocodificar_amplio(texto, cerca_lat, cerca_lon)
+        if g:
+            return {"lat": g[0], "lon": g[1], "fuente": "geocode"}
     return {"lat": None, "lon": None}
 
 def zona_de_la_carrera(origen: str, destino: str, municipio: str, db: Session):
