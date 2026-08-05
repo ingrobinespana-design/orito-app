@@ -1532,6 +1532,17 @@ def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks,
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     if not suscripcion_al_dia(conductor, db):
         raise HTTPException(status_code=402, detail="Tu suscripcion se vencio. Comunicate con el administrador para renovarla.")
+    # una carrera a la vez: si ya tiene otra en curso (yendo a recoger, en el punto
+    # o en viaje) no puede aceptar una segunda y quedar con dos en paralelo. La
+    # solicitud NO desaparece: sigue en "buscando" para el (o para otro) hasta que
+    # alguien la tome. Al terminar la suya, ya la puede aceptar.
+    en_curso = db.query(Carrera).filter(
+        Carrera.conductor_id == conductor_id,
+        Carrera.estado.in_(["aceptada", "en_sitio", "en_camino"]),
+        Carrera.id != carrera_id,
+    ).first()
+    if en_curso:
+        raise HTTPException(status_code=409, detail="Ya tienes una carrera en curso. Termínala antes de aceptar otra.")
     pedida = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     if pedida and not le_sirve_la_carrera(conductor, pedida):
         raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
@@ -1549,6 +1560,10 @@ def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks,
     if tomada == 0:
         raise HTTPException(status_code=409, detail="Esa carrera ya fue tomada por otro conductor")
     db.query(Oferta).filter(Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente").update(
+        {"estado": "descartada"}, synchronize_session=False)
+    # ya quedo ocupado: se descartan TODAS sus ofertas pendientes en otras carreras,
+    # asi ningun cliente puede aceptarle una vieja y dejarlo con dos en paralelo.
+    db.query(Oferta).filter(Oferta.conductor_id == conductor_id, Oferta.estado == "pendiente").update(
         {"estado": "descartada"}, synchronize_session=False)
     db.commit()
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
@@ -1582,6 +1597,14 @@ def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: Backgr
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     if not suscripcion_al_dia(conductor, db):
         raise HTTPException(status_code=402, detail="Tu suscripcion se vencio. Comunicate con el administrador para renovarla.")
+    # tampoco puede ofertar si ya va en otra carrera: si el cliente le aceptara la
+    # oferta quedaria con dos en paralelo. Primero termina la que tiene.
+    en_curso = db.query(Carrera).filter(
+        Carrera.conductor_id == conductor_id,
+        Carrera.estado.in_(["aceptada", "en_sitio", "en_camino"]),
+    ).first()
+    if en_curso:
+        raise HTTPException(status_code=409, detail="Ya tienes una carrera en curso. Termínala antes de ofertar otra.")
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     if not carrera:
         raise HTTPException(status_code=404, detail="Carrera no encontrada")
@@ -1623,6 +1646,16 @@ def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db:
     oferta = db.query(Oferta).filter(Oferta.id == oferta_id, Oferta.carrera_id == carrera_id).first()
     if not oferta:
         raise HTTPException(status_code=404, detail="Oferta no encontrada")
+    # el conductor pudo ocuparse entre que ofertó y que el cliente aceptó: si ya va
+    # en otra carrera, no se le asigna esta (evita las dos en paralelo).
+    ocupado = db.query(Carrera).filter(
+        Carrera.conductor_id == oferta.conductor_id,
+        Carrera.estado.in_(["aceptada", "en_sitio", "en_camino"]),
+    ).first()
+    if ocupado:
+        oferta.estado = "descartada"
+        db.commit()
+        raise HTTPException(status_code=409, detail="Ese transportador ya está en otra carrera. Elige otra oferta o espera a que se desocupe.")
     tomada = db.query(Carrera).filter(
         Carrera.id == carrera_id, Carrera.estado == "buscando"
     ).update({"conductor_id": oferta.conductor_id, "estado": "aceptada", "tarifa": oferta.monto},

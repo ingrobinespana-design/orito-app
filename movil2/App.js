@@ -2955,6 +2955,10 @@ function ConductorScreen({ navigation, route }) {
   // el setInterval de cargar() captura el 'disponible' del primer render (stale
   // closure); este ref siempre tiene el valor actual para el ping
   const dispRef = useRef(usuario.disponible === "si");
+  // igual que dispRef pero para "ya tengo una carrera en curso": el setInterval de
+  // cargar() usa un closure viejo, este ref siempre tiene el valor actual. Sirve
+  // para NO saltar el popup ni el tono de una solicitud que no podria aceptar.
+  const tieneActivaRef = useRef(false);
   const [cuenta, setCuenta] = useState(null);
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("solicitudes");
@@ -3068,19 +3072,27 @@ function ConductorScreen({ navigation, route }) {
         d.forEach(c => { if (!recibidas.current[c.id]) recibidas.current[c.id] = t; });
         // detectar nuevas (no en la carga anterior) para el ping; en la primera
         // carga solo memorizamos, no sonamos, para no pitar al abrir la app
+        // si ya va en una carrera, no lo interrumpimos con tono/popup por una
+        // solicitud que ahora no puede aceptar; igual la ve en la lista de abajo
+        const puedeTomar = dispRef.current && !tieneActivaRef.current;
         if (idsVistos.current === null) {
           idsVistos.current = idsAhora;
           // al abrir la app, si YA hay solicitudes pendientes y esta disponible, avisa y muestra la ultima
-          if (d.length > 0 && dispRef.current) { pingSolicitud(); mostrarEntrante(d[0]); }
+          if (d.length > 0 && puedeTomar) { pingSolicitud(); mostrarEntrante(d[0]); }
         } else {
           const nuevas = d.filter(c => !idsVistos.current.has(c.id));
           idsVistos.current = idsAhora;
-          if (nuevas.length && dispRef.current) { pingSolicitud(); mostrarEntrante(nuevas[0]); }
+          if (nuevas.length && puedeTomar) { pingSolicitud(); mostrarEntrante(nuevas[0]); }
         }
         animar(); setDisponibles(d);
       }).catch(() => {});
     fetch(`${API}/carreras/conductor/${usuario.id}`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setMias(d.filter(c => ["aceptada", "en_sitio", "en_camino"].includes(c.estado))); })
+      .then(d => {
+        if (!Array.isArray(d)) return;
+        const activas = d.filter(c => ["aceptada", "en_sitio", "en_camino"].includes(c.estado));
+        setMias(activas);
+        tieneActivaRef.current = activas.length > 0;
+      })
       .catch(() => {});
     fetch(`${API}/conductores/${usuario.id}/estado-cuenta`).then(r => r.json())
       .then(d => { if (d && !d.detail) setCuenta(d); }).catch(() => {});
@@ -3156,7 +3168,7 @@ function ConductorScreen({ navigation, route }) {
     userFetch(`${API}/carreras/${c.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" })
       .then(async (r) => {
         const d = await r.json();
-        if (r.status === 409) { avisar("Servicio ya tomado", "Otro transportador lo tomo primero."); cargar(); return; }
+        if (r.status === 409) { avisar("No se pudo", d.detail || "Otro transportador lo tomo primero."); cargar(); return; }
         if (r.status === 402) { avisar("Suscripcion vencida", d.detail); cargar(); return; }
         if (d.detail) { avisar("No se pudo", d.detail); cargar(); return; }
         avisar("✅ Servicio asignado", "La carrera es tuya. Ve por el pasajero.");
@@ -3371,7 +3383,15 @@ function ConductorScreen({ navigation, route }) {
       )}
 
       {!propia && (
-        c.tarifa_ofrecida ? (
+        tieneCarreraActiva ? (
+          // ya tiene una carrera en curso: la puede VER (para agarrarla apenas
+          // termine), pero no aceptarla ahora. La solicitud sigue viva hasta que
+          // alguien la tome; no desaparece.
+          <View style={{ backgroundColor: "#FFF4E0", borderRadius: 8, padding: 10, marginTop: 10, alignItems: "center" }}>
+            <Text style={{ fontSize: 12.5, color: "#8A5A00", fontWeight: "700", textAlign: "center" }}>🚫 Termina tu carrera actual para aceptar esta</Text>
+            <Text style={{ fontSize: 11.5, color: "#8A5A00", marginTop: 2, textAlign: "center" }}>Sigue disponible: si nadie la toma, la puedes agarrar apenas termines.</Text>
+          </View>
+        ) : c.tarifa_ofrecida ? (
           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
             <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptar(c)}>
               <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar ${c.tarifa_ofrecida.toLocaleString()}</Text>
