@@ -1149,7 +1149,13 @@ def avisar_carrera_a_todos(carrera_id: int):
         carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
         if not carrera or carrera.estado != "buscando":
             return   # ya la tomaron: no molestamos a nadie mas
-        mensajes = _mensajes_carrera(carrera, _candidatos_carrera(carrera, db), "Carrera libre")
+        # NO se le reofrece a quien ya contraoferto: esta esperando la respuesta
+        # del cliente. Reofrecersela lo hacia tomarla al precio original y pisar
+        # su propia oferta.
+        con_oferta = {o.conductor_id for o in db.query(Oferta).filter(
+            Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente").all()}
+        destinatarios = [c for c in _candidatos_carrera(carrera, db) if c.id not in con_oferta]
+        mensajes = _mensajes_carrera(carrera, destinatarios, "Carrera libre")
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
@@ -1593,6 +1599,10 @@ def carreras_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
         if not conductor:
             raise HTTPException(status_code=404, detail="Conductor no encontrado")
         carreras = [c for c in carreras if le_sirve_la_carrera(conductor, c)]
+        # sus contraofertas pendientes: para mostrar "ya ofertaste $X" y no volver a
+        # sonarle/saltarle por una carrera donde ya esta esperando al cliente
+        mis_ofertas = {o.carrera_id: o.monto for o in db.query(Oferta).filter(
+            Oferta.conductor_id == conductor_id, Oferta.estado == "pendiente").all()}
         # se anota, para ESTE conductor: a que distancia esta de cada recogida y si
         # ya le toca el aviso fuerte (cercano, o ya paso la ventana). La app ordena
         # por cercania y solo suena/salta por las que tienen 'alertar'.
@@ -1602,7 +1612,9 @@ def carreras_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
             d = carrera_dict(c)
             km = km_conductor_a_recogida(conductor, c, ahora)
             d["km_a_recogida"] = round(km, 2) if km is not None else None
-            d["alertar"] = le_toca_aviso(conductor, c, ahora)
+            d["mi_oferta"] = mis_ofertas.get(c.id)
+            # si ya oferto en esta, no se le vuelve a alertar (espera al cliente)
+            d["alertar"] = le_toca_aviso(conductor, c, ahora) and c.id not in mis_ofertas
             salida.append(d)
         return salida
     return [carrera_dict(c) for c in carreras]

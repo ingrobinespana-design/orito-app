@@ -3416,6 +3416,27 @@ function ConductorScreen({ navigation, route }) {
             <Text style={{ fontSize: 12.5, color: "#8A5A00", fontWeight: "700", textAlign: "center" }}>🚫 Termina tu carrera actual para aceptar esta</Text>
             <Text style={{ fontSize: 11.5, color: "#8A5A00", marginTop: 2, textAlign: "center" }}>Sigue disponible: si nadie la toma, la puedes agarrar apenas termines.</Text>
           </View>
+        ) : c.mi_oferta ? (
+          // ya contraoferto: no debe aceptar el precio original por accidente y
+          // pisar su propia oferta. Se muestra su oferta pendiente y, si de verdad
+          // quiere el original, tiene que confirmarlo (cancela su oferta).
+          <View style={{ marginTop: 10 }}>
+            <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 13, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${c.mi_oferta.toLocaleString()}</Text>
+              <Text style={{ fontSize: 11.5, color: "#5a7a9a", marginTop: 2 }}>Esperando que el cliente acepte tu precio o responda.</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 10 }]} onPress={() => { setMontoOferta(String(c.mi_oferta)); setContraofertando(c); }}>
+                <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Cambiar mi oferta</Text>
+              </TouchableOpacity>
+              {c.tarifa_ofrecida ? (
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", padding: 10 }]}
+                  onPress={() => confirmar("Aceptar el precio original", `Vas a tomar la carrera a $${c.tarifa_ofrecida.toLocaleString()} (el precio del cliente). Esto CANCELA tu oferta de $${c.mi_oferta.toLocaleString()}. ¿Seguro?`, () => aceptar(c), "Sí, aceptar")}>
+                  <Text style={{ color: "#888", fontWeight: "600", fontSize: 12.5, textAlign: "center" }}>Aceptar ${c.tarifa_ofrecida.toLocaleString()} original</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
         ) : c.tarifa_ofrecida ? (
           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
             <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptar(c)}>
