@@ -235,7 +235,7 @@ class Municipio(Base):
 # "carga" es el modulo de trasteos/acarreos (mudanzas, mercancia, etc.). Todos
 # se piden y negocian igual; lo unico que cambia es el tipo.
 VEHICULOS_PERSONAS = ("moto", "carro")
-VEHICULOS_CARGA = ("motocarguero", "camioneta", "camion", "furgon", "planchon", "grua")
+VEHICULOS_CARGA = ("motocarguero", "camion_pequeno", "camioneta", "camion", "furgon", "planchon", "grua")
 VEHICULOS_VALIDOS = VEHICULOS_PERSONAS + VEHICULOS_CARGA
 _CARGA_CSV = ",".join(VEHICULOS_CARGA)
 

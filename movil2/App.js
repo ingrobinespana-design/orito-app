@@ -149,6 +149,7 @@ const VEHICULOS = {
   moto:         { label: "Moto",         icono: "🏍️", grupo: "personas" },
   carro:        { label: "Carro",        icono: "🚗", grupo: "personas" },
   motocarguero: { label: "Motocarguero", icono: "🛺", grupo: "carga" },
+  camion_pequeno: { label: "Camión pequeño (Piaggio)", icono: "🛻", grupo: "carga" },
   camioneta:    { label: "Camioneta",    icono: "🛻", grupo: "carga" },
   camion:       { label: "Camion",       icono: "🚚", grupo: "carga" },
   furgon:       { label: "Furgon",       icono: "🚐", grupo: "carga" },
@@ -3921,7 +3922,7 @@ function AdminCarrerasScreen({ navigation }) {
     adminFetch(`${API}/admin/demanda`).then(r => r.json()).then(d => { if (d && d.ciudades) setDemanda(d); }).catch(() => {});
   };
 
-  const TODOS_VEHICULOS = ["carro", "moto", "motocarguero", "camioneta", "camion", "furgon", "planchon", "grua"];
+  const TODOS_VEHICULOS = ["carro", "moto", "motocarguero", "camion_pequeno", "camioneta", "camion", "furgon", "planchon", "grua"];
   const DEPARTAMENTOS = ["Putumayo", "Cauca", "Nariño", "Caquetá", "Valle del Cauca", "Huila"];
   const demandaDe = (nombre) => (demanda.ciudades || []).find(c => c.nombre === nombre) || {};
 
