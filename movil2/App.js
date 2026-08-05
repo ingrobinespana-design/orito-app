@@ -4162,16 +4162,15 @@ function AdminCarrerasScreen({ navigation }) {
         <View style={styles.mini}><Text style={styles.miniNum}>{activos}</Text><Text style={styles.miniTxt}>Al dia</Text></View>
       </View>
 
-      {/* barra de pestañas con scroll horizontal: ya son 6, no caben fijas */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}
-        style={{ marginHorizontal: 16, marginBottom: 20, flexGrow: 0 }}
-        contentContainerStyle={{ backgroundColor: "#F6F1E6", borderRadius: 8, padding: 4, gap: 2 }}>
+      {/* pestañas: fila que envuelve a 2 renglones (ya son 6, no caben en una).
+          Se evita el ScrollView horizontal porque en columna flex se colapsaba. */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginHorizontal: 16, marginBottom: 16, backgroundColor: "#F6F1E6", borderRadius: 8, padding: 5 }}>
         {[["numeros", "Números"], ["conductores", "Conductores"], ["usuarios", "Usuarios"], ["carreras", "Carreras"], ["ciudades", "Ciudades"], ["cobro", "Cobro"]].map(([p, lbl]) => (
-          <TouchableOpacity key={p} style={[{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, alignItems: "center" }, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
+          <TouchableOpacity key={p} style={[{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 }, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
             <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{lbl}</Text>
           </TouchableOpacity>
         ))}
-      </ScrollView>
+      </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4 }}>
         {pestana === "numeros" && gStats && (
