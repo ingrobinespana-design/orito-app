@@ -479,6 +479,10 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     del cliente; el precio de verdad lo negocian las partes."""
     if km is None:
         return None
+    # los ACARREOS no llevan sugerido: el precio lo pone el cliente y el
+    # transportador contraoferta (depende del peso, la ayuda, los pisos, etc.)
+    if vehiculo in VEHICULOS_CARGA:
+        return None
     # 1) tarifa por VEHICULO si el pueblo la tiene (donde moto y carro cobran distinto)
     if vehiculo:
         t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()

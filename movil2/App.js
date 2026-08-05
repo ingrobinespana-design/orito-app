@@ -3000,6 +3000,8 @@ function ConductorScreen({ navigation, route }) {
   // de la ciudad, redondeado al mil y nunca por debajo de la minima. Si la ciudad
   // no tiene $/km configurado, devuelve null (precio libre, sin sugerencia).
   const sugeridoConductor = (c, kmAlOrigen, kmViaje) => {
+    // acarreos: sin sugerido, se negocia (peso, ayuda, pisos). Solo oferta+contra.
+    if (esCarga(c.vehiculo_pedido)) return null;
     const t = munis.find((m) => m.nombre === c.municipio);
     if (!t || !t.valor_km) return null;
     const km = (kmAlOrigen || 0) + (kmViaje || 0);
@@ -4145,6 +4147,41 @@ function AdminCarrerasScreen({ navigation }) {
                 </View>
               ))}
             </View>
+
+            {/* --- de donde son: registro por DEPARTAMENTO y CIUDAD --- */}
+            {(demanda.departamentos || []).length > 0 && (
+              <View style={[styles.card, { marginTop: 4 }]}>
+                <Text style={styles.seccionTitulo}>📍 De dónde son (clientes y conductores)</Text>
+                <Text style={[styles.ayuda, { marginTop: -2, marginBottom: 10 }]}>
+                  Registros por departamento y ciudad. Sirve para ver dónde está creciendo la app y dónde faltan conductores.
+                </Text>
+                {[...(demanda.departamentos || [])]
+                  .sort((a, b) => (b.clientes + b.conductores) - (a.clientes + a.conductores))
+                  .map((dep) => {
+                    const suyas = (demanda.ciudades || [])
+                      .filter((c) => (c.departamento || "Putumayo") === dep.departamento)
+                      .sort((a, b) => (b.clientes + b.conductores) - (a.clientes + a.conductores));
+                    return (
+                      <View key={dep.departamento} style={{ marginBottom: 12 }}>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 7, paddingHorizontal: 10 }}>
+                          <Text style={{ fontWeight: "800", color: "#187830", fontSize: 14 }}>{dep.departamento}</Text>
+                          <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700" }}>👤 {dep.clientes} · 🚕 {dep.conductores}</Text>
+                        </View>
+                        {suyas.map((c) => (
+                          <View key={c.nombre} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 0.5, borderBottomColor: "#f2f2f2" }}>
+                            <Text style={{ fontSize: 13, color: c.activo === "no" ? "#aaa" : "#333" }}>
+                              {c.nombre}{c.activo === "no" ? "  · apagada" : ""}
+                            </Text>
+                            <Text style={{ fontSize: 12.5, color: "#555" }}>
+                              👤 {c.clientes} · 🚕 {c.conductores}{c.conductores_disponibles ? `  (${c.conductores_disponibles} en línea)` : ""}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })}
+              </View>
+            )}
           </>
         )}
         {pestana === "conductores" && conductores.map(c => (
@@ -4153,6 +4190,7 @@ function AdminCarrerasScreen({ navigation }) {
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: "600", fontSize: 15 }}>{c.nombre}</Text>
                 <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📞 {c.telefono}</Text>
+                {c.municipio ? <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>📍 {c.municipio}{c.tipo_vehiculo ? `  ·  ${vehIcono(c.tipo_vehiculo)} ${vehLabel(c.tipo_vehiculo)}` : ""}</Text> : null}
                 {c.placa ? <Text style={{ fontSize: 12, color: "#888" }}>🚕 {c.vehiculo} - {c.placa}</Text> : null}
               </View>
               <View style={[styles.estadoBadge, { backgroundColor: c.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
