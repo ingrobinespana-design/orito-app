@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -2021,6 +2021,21 @@ function PedirCarreraScreen({ navigation, route }) {
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
   const scrollForm = useRef(null);                   // para subir el campo de oferta sobre el teclado
+  // sube CUALQUIER campo por encima del teclado al enfocarlo (no solo la oferta):
+  // usa el metodo nativo del ScrollView, que mide el input y lo deja visible.
+  // Asi los campos del acarreo (descripcion, detalle) ya no quedan tapados.
+  const subirCampo = (ref) => {
+    setTimeout(() => {
+      const sr = scrollForm.current && scrollForm.current.getScrollResponder && scrollForm.current.getScrollResponder();
+      const nodo = ref && ref.current && findNodeHandle(ref.current);
+      if (sr && nodo && sr.scrollResponderScrollNativeHandleToKeyboard) {
+        sr.scrollResponderScrollNativeHandleToKeyboard(nodo, 120, true);
+      }
+    }, 80);
+  };
+  const refCarga = useRef(null);
+  const refDestDet = useRef(null);
+  const refNotas = useRef(null);
   const [contraofertas, setContraofertas] = useState([]);
   // cuenta regresiva de 6s por contraoferta nueva: cuando el cliente la vio por
   // primera vez. Mientras < 6s se resalta con la cuenta; luego sigue en la lista.
@@ -2715,6 +2730,8 @@ function PedirCarreraScreen({ navigation, route }) {
           <View style={styles.card}>
             <Text style={styles.etiqueta}>DESCRIPCION DE LA CARGA</Text>
             <TextInput
+              ref={refCarga}
+              onFocus={() => subirCampo(refCarga)}
               value={form.notas}
               onChangeText={(t) => setForm({ ...form, notas: t })}
               placeholder="Ej: dos neveras, una lavadora y varias cajas"
@@ -2797,6 +2814,8 @@ function PedirCarreraScreen({ navigation, route }) {
             <Text style={styles.ayuda}>Marca en el mapa a dónde vas.</Text>
           )}
           <TextInput
+            ref={refDestDet}
+            onFocus={() => subirCampo(refDestDet)}
             value={form.destino_detalle}
             onChangeText={(t) => setForm({ ...form, destino_detalle: t })}
             placeholder="Detalle del destino (opcional)"
@@ -2806,6 +2825,8 @@ function PedirCarreraScreen({ navigation, route }) {
           {/* en carga la descripcion va arriba; aqui solo para carreras de personas */}
           {!esCarga(vehiculo) && (
             <TextInput
+              ref={refNotas}
+              onFocus={() => subirCampo(refNotas)}
               value={form.notas}
               onChangeText={(t) => setForm({ ...form, notas: t })}
               placeholder="Algo mas que deba saber? (opcional)"
@@ -3219,6 +3240,12 @@ function ConductorScreen({ navigation, route }) {
     const fmtKm = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
     // sugerencia = recogida + viaje x $/km de la ciudad (solo antes de tomarla)
     const sug = !propia ? sugeridoConductor(c, kmAlOrigen, kmViaje) : null;
+    // para la carrera propia YENDO a recoger, mostramos la MISMA distancia real
+    // por calles que el banner de arriba (rutaCond), no la linea recta: asi no
+    // salen dos numeros distintos ("9.4 km" arriba y "5.4 km" abajo) para la
+    // misma recogida. Si la ruta aun no se calcula, cae a la linea recta.
+    const yendoARecoger = c.estado === "aceptada" || c.estado === "en_sitio";
+    const kmRecogida = (propia && yendoARecoger && rutaCond && rutaCond.km != null) ? rutaCond.km : kmAlOrigen;
     return (
     <View key={c.id} style={styles.log}>
       {/* fila de encabezado tipo log: tiempo — precio */}
@@ -3256,10 +3283,10 @@ function ConductorScreen({ navigation, route }) {
           mientras hace el servicio (no desaparecen al tomar la carrera) */}
       {(kmAlOrigen != null || kmViaje != null) && (
         <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          {kmAlOrigen != null && (
+          {kmRecogida != null && (
             <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
               <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>
-                📍 {propia ? "Recogida a" : "A"} ~{fmtKm(kmAlOrigen)} de ti
+                📍 {propia ? "Recogida a" : "A"} ~{fmtKm(kmRecogida)} de ti
               </Text>
             </View>
           )}
@@ -3515,10 +3542,20 @@ function ConductorScreen({ navigation, route }) {
                 <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>Estas desconectado.{"\n"}Conectate arriba para recibir solicitudes.</Text>
               </View>
             ) : disponibles.length === 0 ? (
-              <View style={{ alignItems: "center", padding: 30 }}>
-                <Text style={{ fontSize: 40 }}>😴</Text>
-                <Text style={{ color: "#888", marginTop: 8 }}>Esperando solicitudes...</Text>
-              </View>
+              tieneCarreraActiva ? (
+                // ya tomo una carrera: no tiene sentido decirle "esperando", ya
+                // esta en servicio. Se lo recordamos en vez del emoji dormido.
+                <View style={{ alignItems: "center", padding: 24 }}>
+                  <Text style={{ fontSize: 34 }}>🚗</Text>
+                  <Text style={{ color: "#187830", marginTop: 8, fontWeight: "700" }}>Estás en una carrera</Text>
+                  <Text style={{ color: "#888", marginTop: 2, textAlign: "center", fontSize: 12.5 }}>Termínala para recibir nuevas solicitudes.</Text>
+                </View>
+              ) : (
+                <View style={{ alignItems: "center", padding: 30 }}>
+                  <Text style={{ fontSize: 40 }}>😴</Text>
+                  <Text style={{ color: "#888", marginTop: 8 }}>Esperando solicitudes...</Text>
+                </View>
+              )
             ) : disponibles.map(c => {
               // recien llegada (< 6s): tarjeta grande con cuenta regresiva y
               // contraoferta rapida. Pasados los 6s baja al listado normal.
