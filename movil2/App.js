@@ -77,12 +77,15 @@ try {
       fetch(`${API}/conductores/${conductorRastreado}/ubicacion?lat=${p.latitude}&lon=${p.longitude}`,
         { method: "PUT" }).catch(() => {});
     }
-    // 2) revisa carreras nuevas y SUENA — aunque la app este minimizada o cerrada
+    // 2) revisa carreras nuevas y SUENA — aunque la app este minimizada o cerrada.
+    // Solo suena por las que le corresponden AHORA (cercano, o ya paso la ventana
+    // de prioridad): el backend marca 'alertar'. Asi respeta la prioridad por
+    // cercania tambien con la app cerrada.
     fetch(`${API}/carreras/disponibles?conductor_id=${conductorRastreado}`)
       .then((r) => r.json())
       .then((d) => {
         if (!Array.isArray(d)) return;
-        const ids = d.map((c) => c.id);
+        const ids = d.filter((c) => c.alertar !== false).map((c) => c.id);
         if (idsVistosFondo === null) { idsVistosFondo = ids; return; }   // primera vez: solo memoriza
         const hayNueva = ids.some((id) => idsVistosFondo.indexOf(id) === -1);
         idsVistosFondo = ids;
@@ -2972,6 +2975,9 @@ function ConductorScreen({ navigation, route }) {
   const VENTANA = 10000;
   const recibidas = useRef({});
   const idsVistos = useRef(null);
+  // ids por las que YA sonamos/saltamos, para no repetir. Una carrera lejana no
+  // esta aca hasta que le toca (cercania o vencida la ventana): ahi si suena.
+  const idsAlertados = useRef(null);
   // recuadro tipo Uber cuando entra una solicitud: salta, vibra y cuenta 10s
   const [entrante, setEntrante] = useState(null);
   const barraEntrante = useRef(new Animated.Value(1)).current;   // ancho de la barra (10s)
@@ -3070,19 +3076,26 @@ function ConductorScreen({ navigation, route }) {
         const idsAhora = new Set(d.map(c => c.id));
         // primera vez que vemos cada solicitud -> arranca su ventana de 6s
         d.forEach(c => { if (!recibidas.current[c.id]) recibidas.current[c.id] = t; });
-        // detectar nuevas (no en la carga anterior) para el ping; en la primera
-        // carga solo memorizamos, no sonamos, para no pitar al abrir la app
-        // si ya va en una carrera, no lo interrumpimos con tono/popup por una
-        // solicitud que ahora no puede aceptar; igual la ve en la lista de abajo
+        idsVistos.current = idsAhora;
+        // solo suena/salta por las que le TOCAN ahora: el backend marca 'alertar'
+        // (cercano al cliente, o ya vencida la ventana de prioridad). Si va en una
+        // carrera no lo interrumpimos. Primera carga: solo memoriza, no pita.
         const puedeTomar = dispRef.current && !tieneActivaRef.current;
-        if (idsVistos.current === null) {
-          idsVistos.current = idsAhora;
-          // al abrir la app, si YA hay solicitudes pendientes y esta disponible, avisa y muestra la ultima
-          if (d.length > 0 && puedeTomar) { pingSolicitud(); mostrarEntrante(d[0]); }
+        const kmDe = (c) => (c.km_a_recogida != null ? c.km_a_recogida : 9e9);
+        const alertablesAhora = d.filter(c => c.alertar !== false).map(c => c.id);
+        if (idsAlertados.current === null) {
+          idsAlertados.current = new Set(alertablesAhora);
         } else {
-          const nuevas = d.filter(c => !idsVistos.current.has(c.id));
-          idsVistos.current = idsAhora;
-          if (nuevas.length && puedeTomar) { pingSolicitud(); mostrarEntrante(nuevas[0]); }
+          const porAlertar = puedeTomar
+            ? d.filter(c => c.alertar !== false && !idsAlertados.current.has(c.id))
+            : [];
+          if (porAlertar.length) {
+            // muestra primero la MAS cercana al cliente
+            porAlertar.sort((a, b) => kmDe(a) - kmDe(b));
+            pingSolicitud();
+            mostrarEntrante(porAlertar[0]);
+          }
+          idsAlertados.current = new Set(alertablesAhora);
         }
         animar(); setDisponibles(d);
       }).catch(() => {});
@@ -3342,11 +3355,20 @@ function ConductorScreen({ navigation, route }) {
       {(kmAlOrigen != null || kmViaje != null) && (
         <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
           {kmRecogida != null && (
-            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
-              <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>
-                📍 {propia ? "Recogida a" : "A"} ~{fmtKm(kmRecogida)} de ti
-              </Text>
-            </View>
+            // ≤1.5 km de una solicitud disponible: eres el prioritario, se resalta
+            !propia && kmRecogida <= 1.5 ? (
+              <View style={{ backgroundColor: "#FFE9D6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, borderWidth: 1, borderColor: "#F06000" }}>
+                <Text style={{ fontSize: 12, color: "#C24E00", fontWeight: "800" }}>
+                  🔥 Muy cerca · a ~{fmtKm(kmRecogida)} de ti
+                </Text>
+              </View>
+            ) : (
+              <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>
+                  📍 {propia ? "Recogida a" : "A"} ~{fmtKm(kmRecogida)} de ti
+                </Text>
+              </View>
+            )
           )}
           {kmViaje != null && (
             <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
@@ -3435,6 +3457,16 @@ function ConductorScreen({ navigation, route }) {
           ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon }) : null);
     return sugeridoConductor(c, kmO, kmV);
   })();
+
+  // Capa 1: las solicitudes se muestran ORDENADAS por cercania del conductor al
+  // punto de recogida (la mas cerca arriba). Usa el GPS vivo del conductor; si no
+  // lo tiene a mano, la distancia que calculo el backend. Sin datos, al final.
+  const kmACliente = (c) => {
+    if (miUbic && c.origen_lat != null) return kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon });
+    if (c.km_a_recogida != null) return c.km_a_recogida;
+    return 9e9;
+  };
+  const disponiblesOrden = [...disponibles].sort((a, b) => kmACliente(a) - kmACliente(b));
 
   return (
     <SafeAreaView style={styles.container}>
@@ -3560,7 +3592,7 @@ function ConductorScreen({ navigation, route }) {
                 cuando hay solicitud, traza la ruta hasta la recogida para dar
                 contexto y decidir/contraofertar rapido */}
             {mias.length === 0 && disponible && (() => {
-              const foco = disponibles.find(c => c.origen_lat != null) || null;
+              const foco = disponiblesOrden.find(c => c.origen_lat != null) || null;
               const punto = foco ? { lat: foco.origen_lat, lon: foco.origen_lon } : null;
               if (!miUbic) {
                 return (
@@ -3622,7 +3654,7 @@ function ConductorScreen({ navigation, route }) {
                   <Text style={{ color: "#888", marginTop: 8 }}>Esperando solicitudes...</Text>
                 </View>
               )
-            ) : disponibles.map(c => {
+            ) : disponiblesOrden.map(c => {
               // recien llegada (< 6s): tarjeta grande con cuenta regresiva y
               // contraoferta rapida. Pasados los 6s baja al listado normal.
               const restante = VENTANA - (ahora - (recibidas.current[c.id] || 0));

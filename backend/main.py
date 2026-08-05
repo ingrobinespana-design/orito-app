@@ -42,6 +42,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # global por IP: en el pueblo mucha gente comparte la misma IP del operador
 # (CGNAT) y un tope global tumbaria a usuarios legitimos.
 import time as _time
+import threading
 from collections import defaultdict, deque
 _conteos = defaultdict(deque)
 
@@ -1047,37 +1048,101 @@ def limpiar_tokens_muertos(muertos):
     finally:
         db.close()
 
+# ---- prioridad por cercania: al cliente lo atiende primero quien esta cerca ----
+# Una solicitud nueva primero le suena SOLO a los conductores a <=1.5 km del punto
+# de recogida (los que de verdad pueden llegar rapido, incluido el que va pasando).
+# Si en 30s nadie la toma, se le abre a TODOS los disponibles. La solicitud SIEMPRE
+# esta visible para todos en la lista; lo unico que se prioriza es a quien se le
+# avisa fuerte primero, asi nunca se oculta ni se queda sin quien la tome.
+RADIO_CERCANIA_KM = 1.5      # que cuenta como "cerca" del cliente
+VENTANA_CERCANIA_SEG = 30    # ventaja de arranque de los cercanos antes de abrir a todos
+UBIC_FRESCA_SEG = 180        # la ubicacion del conductor sirve si es de hace <3 min
+
+def _ubicacion_fresca(u, ahora):
+    return (u.ubic_lat is not None and u.ubic_lon is not None and u.ubic_fecha is not None
+            and (ahora - u.ubic_fecha).total_seconds() <= UBIC_FRESCA_SEG)
+
+def km_conductor_a_recogida(u, carrera, ahora):
+    """Km en linea recta del conductor al punto de recogida, o None si no sabemos
+    donde esta (sin GPS reciente) o la carrera no tiene coordenadas."""
+    if carrera.origen_lat is None or not _ubicacion_fresca(u, ahora):
+        return None
+    return tarifas.distancia_km(u.ubic_lat, u.ubic_lon, carrera.origen_lat, carrera.origen_lon)
+
+def le_toca_aviso(u, carrera, ahora):
+    """¿A este conductor ya le corresponde el aviso fuerte de esta carrera?
+    Primeros 30s: solo los cercanos (<=1.5 km con GPS reciente). Pasada la ventana:
+    todos. Asi el de al lado tiene ventaja, pero si no responde no se pierde."""
+    if not carrera.fecha or (ahora - carrera.fecha).total_seconds() >= VENTANA_CERCANIA_SEG:
+        return True
+    d = km_conductor_a_recogida(u, carrera, ahora)
+    return d is not None and d <= RADIO_CERCANIA_KM
+
+def _candidatos_carrera(carrera, db):
+    """Conductores conectados, al dia y con el vehiculo/municipio que aplica."""
+    return [
+        c for c in db.query(Usuario).filter(
+            Usuario.rol == "conductor",
+            Usuario.disponible == "si",
+            Usuario.push_token.isnot(None),
+            Usuario.activo != "no",
+        ).all()
+        if le_sirve_la_carrera(c, carrera) and suscripcion_al_dia(c, db)
+    ]
+
+def _mensajes_carrera(carrera, conductores, titulo):
+    aviso_zona = " (fuera del pueblo)" if carrera.zona == "rural" else ""
+    oferta = f" · ofrece ${carrera.tarifa_ofrecida:,}".replace(",", ".") if carrera.tarifa_ofrecida else ""
+    return [
+        push.mensaje(
+            c.push_token,
+            f"{titulo}{aviso_zona}",
+            f"De {carrera.origen} a {carrera.destino}{oferta}",
+            {"tipo": "carrera_nueva", "carrera_id": carrera.id},
+        )
+        for c in conductores
+    ]
+
 @nunca_falla
 def avisar_carrera_nueva(carrera_id: int):
-    """Le suena el celular a todos los conductores conectados."""
+    """Ola 1: le suena SOLO a los conductores cerca del cliente (<=1.5 km). Si hay
+    cercanos, programa abrir a todos en 30s por si nadie la toma."""
     db = SessionLocal()
+    hay_cercanos = False
+    mensajes = []
     try:
         carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
         if not carrera or carrera.estado != "buscando":
             return
-        conductores = [
-            c for c in db.query(Usuario).filter(
-                Usuario.rol == "conductor",
-                Usuario.disponible == "si",
-                Usuario.push_token.isnot(None),
-                Usuario.activo != "no",
-            ).all()
-            # solo los del mismo municipio, con el vehiculo que pidieron y al dia
-            if le_sirve_la_carrera(c, carrera) and suscripcion_al_dia(c, db)
-        ]
-        if not conductores:
+        ahora = datetime.now()
+        candidatos = _candidatos_carrera(carrera, db)
+        if not candidatos:
             return
-        aviso_zona = " (fuera del pueblo)" if carrera.zona == "rural" else ""
-        oferta = f" · ofrece ${carrera.tarifa_ofrecida:,}".replace(",", ".") if carrera.tarifa_ofrecida else ""
-        mensajes = [
-            push.mensaje(
-                c.push_token,
-                f"Nueva carrera{aviso_zona}",
-                f"De {carrera.origen} a {carrera.destino}{oferta}",
-                {"tipo": "carrera_nueva", "carrera_id": carrera.id},
-            )
-            for c in conductores
-        ]
+        cercanos = [c for c in candidatos
+                    if (km_conductor_a_recogida(c, carrera, ahora) or 1e9) <= RADIO_CERCANIA_KM]
+        hay_cercanos = len(cercanos) > 0
+        # si no hay ninguno cerca (o sin GPS reciente), no tiene sentido esperar:
+        # se le avisa a todos de una
+        objetivo = cercanos if hay_cercanos else candidatos
+        mensajes = _mensajes_carrera(carrera, objetivo, "Nueva carrera")
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+    # arrancamos solo con los cercanos: si en 30s sigue libre, se abre a TODOS
+    if hay_cercanos:
+        threading.Timer(VENTANA_CERCANIA_SEG, avisar_carrera_a_todos, args=[carrera_id]).start()
+
+@nunca_falla
+def avisar_carrera_a_todos(carrera_id: int):
+    """Ola 2: pasada la ventana, si NADIE la tomo, se le avisa a todos los
+    disponibles (tambien a los que no estaban cerca)."""
+    db = SessionLocal()
+    mensajes = []
+    try:
+        carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        if not carrera or carrera.estado != "buscando":
+            return   # ya la tomaron: no molestamos a nadie mas
+        mensajes = _mensajes_carrera(carrera, _candidatos_carrera(carrera, db), "Carrera libre")
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
@@ -1521,6 +1586,18 @@ def carreras_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
         if not conductor:
             raise HTTPException(status_code=404, detail="Conductor no encontrado")
         carreras = [c for c in carreras if le_sirve_la_carrera(conductor, c)]
+        # se anota, para ESTE conductor: a que distancia esta de cada recogida y si
+        # ya le toca el aviso fuerte (cercano, o ya paso la ventana). La app ordena
+        # por cercania y solo suena/salta por las que tienen 'alertar'.
+        ahora = datetime.now()
+        salida = []
+        for c in carreras:
+            d = carrera_dict(c)
+            km = km_conductor_a_recogida(conductor, c, ahora)
+            d["km_a_recogida"] = round(km, 2) if km is not None else None
+            d["alertar"] = le_toca_aviso(conductor, c, ahora)
+            salida.append(d)
+        return salida
     return [carrera_dict(c) for c in carreras]
 
 @app.put("/carreras/{carrera_id}/aceptar")
