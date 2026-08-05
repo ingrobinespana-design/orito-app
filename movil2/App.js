@@ -3908,6 +3908,8 @@ function AdminCarrerasScreen({ navigation }) {
   const [marcandoCentro, setMarcandoCentro] = useState(false);
   const [buscaUsuario, setBuscaUsuario] = useState("");
   const [usuariosHallados, setUsuariosHallados] = useState(null);
+  const [clientes, setClientes] = useState([]);   // lista de usuarios (rol cliente) para la pestaña Usuarios
+  const [filtroCli, setFiltroCli] = useState("");  // filtro rapido de la lista de usuarios (nombre/telefono)
   const [editCiudad, setEditCiudad] = useState(null);   // nombre de la ciudad cuyas tarifas se editan
   const [tarBase, setTarBase] = useState("");
   const [tarKm, setTarKm] = useState("");
@@ -3922,6 +3924,7 @@ function AdminCarrerasScreen({ navigation }) {
     adminFetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
     fetch(`${API}/municipios?todos=1`).then(r => r.json()).then(d => { if (Array.isArray(d)) setMunicipios(d); }).catch(() => {});
     adminFetch(`${API}/admin/demanda`).then(r => r.json()).then(d => { if (d && d.ciudades) setDemanda(d); }).catch(() => {});
+    adminFetch(`${API}/admin/usuarios?rol=cliente`).then(r => r.json()).then(d => { if (Array.isArray(d)) setClientes(d); }).catch(() => {});
   };
 
   const TODOS_VEHICULOS = ["carro", "moto", "motocarguero", "camion_pequeno", "camioneta", "camion", "furgon", "planchon", "grua"];
@@ -3958,7 +3961,7 @@ function AdminCarrerasScreen({ navigation }) {
     adminFetch(`${API}/admin/usuarios/${u.id}/reactivar`, { method: "POST" })
       .then(async r => {
         if (!r.ok) { avisar("No se pudo", `Error ${r.status}`); return; }
-        buscarUsuarios();
+        buscarUsuarios(); cargar();
         avisar("Reactivado", `${u.nombre} ya puede entrar de nuevo.`);
       })
       .catch(() => avisar("Error", "No hay conexión."));
@@ -4054,6 +4057,44 @@ function AdminCarrerasScreen({ navigation }) {
       .catch(() => avisar("Error", "No hay conexión."));
   };
 
+  // tarjeta de un usuario, con sus acciones. Se usa en la busqueda (pestaña
+  // Carreras) y en la lista de la pestaña Usuarios.
+  const tarjetaUsuario = (u) => (
+    <View key={u.id} style={{ backgroundColor: "#fff", borderRadius: 8, padding: 10, marginTop: 8, borderWidth: u.activo === "no" ? 1 : 0, borderColor: "#C0392B" }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Text style={{ fontWeight: "700", fontSize: 14 }}>
+          {u.nombre || "(sin nombre)"}{u.activo === "no" ? <Text style={{ color: "#C0392B", fontWeight: "800" }}>  · BLOQUEADO</Text> : null}
+        </Text>
+        <Text style={{ fontSize: 11, color: "#854F0B", fontWeight: "700" }}>{u.rol}</Text>
+      </View>
+      <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>📞 {u.telefono} · 📍 {u.municipio || "—"}{u.calificacion != null ? ` · ⭐ ${Number(u.calificacion).toFixed(1)}` : ""}</Text>
+      <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>
+        🚗 {u.carreras_cliente} pedidas · 🚕 {u.carreras_conductor} manejadas{u.activas ? ` · 🟠 ${u.activas} en curso` : ""}
+      </Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 8 }}>
+        {u.rol === "conductor" && (
+          <TouchableOpacity onPress={() => probarTonoConductor(u)}>
+            <Text style={{ color: "#F06000", fontWeight: "700", fontSize: 12 }}>🔔 Probar tono</Text>
+          </TouchableOpacity>
+        )}
+        {u.activas > 0 && (
+          <TouchableOpacity onPress={() => liberarUsuario(u.telefono)}>
+            <Text style={{ color: "#B85C00", fontWeight: "700", fontSize: 12 }}>🔓 Liberar carreras</Text>
+          </TouchableOpacity>
+        )}
+        {u.activo === "no" ? (
+          <TouchableOpacity onPress={() => reactivarUsuario(u)}>
+            <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>♻️ Reactivar</Text>
+          </TouchableOpacity>
+        ) : u.rol !== "admin" ? (
+          <TouchableOpacity onPress={() => eliminarUsuario(u)}>
+            <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 12 }}>🗑️ Eliminar</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  );
+
   const registrarPago = (c) => {
     elegir(`Pago de ${c.nombre}`, "Cuantos meses le registro?",
       [1, 3, 6].map(m => ({
@@ -4100,13 +4141,16 @@ function AdminCarrerasScreen({ navigation }) {
         <View style={styles.mini}><Text style={styles.miniNum}>{activos}</Text><Text style={styles.miniTxt}>Al dia</Text></View>
       </View>
 
-      <View style={[styles.tabs, { marginHorizontal: 16 }]}>
-        {["numeros", "conductores", "carreras", "ciudades", "cobro"].map(p => (
-          <TouchableOpacity key={p} style={[styles.tab, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
-            <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{p[0].toUpperCase() + p.slice(1)}</Text>
+      {/* barra de pestañas con scroll horizontal: ya son 6, no caben fijas */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+        style={{ marginHorizontal: 16, marginBottom: 20, flexGrow: 0 }}
+        contentContainerStyle={{ backgroundColor: "#F6F1E6", borderRadius: 8, padding: 4, gap: 2 }}>
+        {[["numeros", "Números"], ["conductores", "Conductores"], ["usuarios", "Usuarios"], ["carreras", "Carreras"], ["ciudades", "Ciudades"], ["cobro", "Cobro"]].map(([p, lbl]) => (
+          <TouchableOpacity key={p} style={[{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, alignItems: "center" }, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
+            <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{lbl}</Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4 }}>
         {pestana === "numeros" && gStats && (
@@ -4229,6 +4273,29 @@ function AdminCarrerasScreen({ navigation }) {
           </Text>
         )}
 
+        {pestana === "usuarios" && (() => {
+          const q = filtroCli.trim().toLowerCase();
+          const lista = q
+            ? clientes.filter(u => (u.nombre || "").toLowerCase().includes(q) || (u.telefono || "").includes(q.replace(/\D/g, "")))
+            : clientes;
+          return (
+            <>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <Text style={styles.seccionTitulo}>👥 Usuarios ({clientes.length})</Text>
+                <TouchableOpacity onPress={cargar}><Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>↻ Actualizar</Text></TouchableOpacity>
+              </View>
+              <Text style={[styles.ayuda, { marginTop: -4, marginBottom: 8 }]}>Clientes registrados (los más recientes primero). Toca para liberar, bloquear o eliminar.</Text>
+              <TextInput value={filtroCli} onChangeText={setFiltroCli}
+                placeholder="🔎 Filtrar por nombre o teléfono" style={styles.input} />
+              {lista.length === 0 ? (
+                <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>
+                  {clientes.length === 0 ? "Aún no hay usuarios registrados." : "Ningún usuario coincide con el filtro."}
+                </Text>
+              ) : lista.map((u) => tarjetaUsuario(u))}
+            </>
+          );
+        })()}
+
         {pestana === "carreras" && (
           <View style={[styles.card, { marginBottom: 12, backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D" }]}>
             <Text style={{ fontWeight: "800", color: "#8A5A00", fontSize: 14 }}>🔓 Liberar usuario atascado</Text>
@@ -4271,41 +4338,7 @@ function AdminCarrerasScreen({ navigation }) {
             </View>
             {usuariosHallados != null && (usuariosHallados.length === 0 ? (
               <Text style={{ fontSize: 12, color: "#888", marginTop: 10 }}>No se encontró ningún usuario.</Text>
-            ) : usuariosHallados.map((u) => (
-              <View key={u.id} style={{ backgroundColor: "#fff", borderRadius: 8, padding: 10, marginTop: 8, borderWidth: u.activo === "no" ? 1 : 0, borderColor: "#C0392B" }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontWeight: "700", fontSize: 14 }}>
-                    {u.nombre || "(sin nombre)"}{u.activo === "no" ? <Text style={{ color: "#C0392B", fontWeight: "800" }}>  · BLOQUEADO</Text> : null}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: "#854F0B", fontWeight: "700" }}>{u.rol}</Text>
-                </View>
-                <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>📞 {u.telefono} · 📍 {u.municipio || "—"}{u.calificacion != null ? ` · ⭐ ${Number(u.calificacion).toFixed(1)}` : ""}</Text>
-                <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>
-                  🚗 {u.carreras_cliente} pedidas · 🚕 {u.carreras_conductor} manejadas{u.activas ? ` · 🟠 ${u.activas} en curso` : ""}
-                </Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 8 }}>
-                  {u.rol === "conductor" && (
-                    <TouchableOpacity onPress={() => probarTonoConductor(u)}>
-                      <Text style={{ color: "#F06000", fontWeight: "700", fontSize: 12 }}>🔔 Probar tono</Text>
-                    </TouchableOpacity>
-                  )}
-                  {u.activas > 0 && (
-                    <TouchableOpacity onPress={() => liberarUsuario(u.telefono)}>
-                      <Text style={{ color: "#B85C00", fontWeight: "700", fontSize: 12 }}>🔓 Liberar carreras</Text>
-                    </TouchableOpacity>
-                  )}
-                  {u.activo === "no" ? (
-                    <TouchableOpacity onPress={() => reactivarUsuario(u)}>
-                      <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>♻️ Reactivar</Text>
-                    </TouchableOpacity>
-                  ) : u.rol !== "admin" ? (
-                    <TouchableOpacity onPress={() => eliminarUsuario(u)}>
-                      <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 12 }}>🗑️ Eliminar</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-              </View>
-            )))}
+            ) : usuariosHallados.map((u) => tarjetaUsuario(u)))}
           </View>
         )}
 

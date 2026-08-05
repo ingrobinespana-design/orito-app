@@ -637,15 +637,18 @@ def demanda_por_zona(db: Session = Depends(get_db), admin: Usuario = Depends(sol
             "departamentos": sorted(deptos.values(), key=lambda x: -x["carreras_total"])}
 
 @app.get("/admin/usuarios")
-def buscar_usuarios(buscar: str = "", db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
-    """Busca usuarios por telefono o nombre, para soporte: identificar rapido a
-    alguien y ver su actividad (carreras hechas y si tiene algo en curso)."""
+def buscar_usuarios(buscar: str = "", rol: str = "", db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Busca/lista usuarios, para soporte y para el registro. Con 'rol' filtra
+    (cliente/conductor); con 'buscar' filtra por telefono o nombre. Sin buscar,
+    devuelve los mas recientes de ese rol."""
     q = (buscar or "").strip()
     consulta = db.query(Usuario)
+    if rol in ("cliente", "conductor", "domiciliario"):
+        consulta = consulta.filter(Usuario.rol == rol)
     if q:
         like = f"%{q}%"
         consulta = consulta.filter(Usuario.telefono.ilike(like) | Usuario.nombre.ilike(like))
-    usuarios = consulta.order_by(Usuario.id.desc()).limit(25).all()
+    usuarios = consulta.order_by(Usuario.id.desc()).limit(200).all()
     activos = ["buscando", "aceptada", "en_sitio", "en_camino"]
     salida = []
     for u in usuarios:
