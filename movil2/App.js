@@ -490,20 +490,42 @@ function LoginScreen({ navigation }) {
                   <Text style={{ color: "#C0392B", fontSize: 13 }}>Sin conexion. Toca para reintentar</Text>
                 </TouchableOpacity>
               ) : (
-                <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                  {municipios.map(m => (
-                    <TouchableOpacity
-                      key={m.nombre}
-                      style={[styles.opcion, form.municipio === m.nombre && styles.opcionActiva]}
-                      onPress={() => {
-                        // al cambiar de pueblo, si el vehiculo elegido no existe alla, se limpia
-                        const permite = (m.vehiculos || []).includes(form.comoMe);
-                        setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : (form.categoria === "cliente" ? "cliente" : "") });
-                      }}
-                    >
-                      <Text style={[styles.opcionTexto, form.municipio === m.nombre && styles.opcionTextoActivo]}>{m.nombre}</Text>
-                    </TouchableOpacity>
-                  ))}
+                <View style={{ marginBottom: 12 }}>
+                  {/* ciudades por departamento, pastillas que fluyen a varias filas */}
+                  {Object.entries(
+                    municipios.reduce((acc, m) => {
+                      const d = m.departamento || "Otros";
+                      (acc[d] = acc[d] || []).push(m);
+                      return acc;
+                    }, {})
+                  )
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([depto, lista]) => (
+                      <View key={depto} style={{ marginBottom: 10 }}>
+                        <Text style={{ fontSize: 10.5, color: "#9a9a9a", fontWeight: "800", letterSpacing: 0.5, marginBottom: 5, textTransform: "uppercase" }}>{depto}</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                          {lista
+                            .slice()
+                            .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                            .map(m => {
+                              const activa = form.municipio === m.nombre;
+                              return (
+                                <TouchableOpacity
+                                  key={m.nombre}
+                                  style={[styles.chip, activa && styles.chipOn]}
+                                  onPress={() => {
+                                    // al cambiar de pueblo, si el vehiculo elegido no existe alla, se limpia
+                                    const permite = (m.vehiculos || []).includes(form.comoMe);
+                                    setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : (form.categoria === "cliente" ? "cliente" : "") });
+                                  }}
+                                >
+                                  <Text style={[styles.chipTxt, activa && styles.chipTxtOn]}>{m.nombre}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                        </View>
+                      </View>
+                    ))}
                 </View>
               )}
 
@@ -2658,14 +2680,38 @@ function PedirCarreraScreen({ navigation, route }) {
             </TouchableOpacity>
           )}
           {eligiendoMuni && (
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-              {municipios.map(m => (
-                <TouchableOpacity key={m.nombre}
-                  style={[styles.opcion, muni && muni.nombre === m.nombre && styles.opcionActiva]}
-                  onPress={() => { aplicarMuni(m); setEligiendoMuni(false); }}>
-                  <Text style={[styles.opcionTexto, muni && muni.nombre === m.nombre && styles.opcionTextoActivo]}>{m.nombre}</Text>
-                </TouchableOpacity>
-              ))}
+            <View style={{ marginTop: 10 }}>
+              {/* ciudades agrupadas por departamento, cada una como pastilla de
+                  ancho natural que fluye a varias filas: asi no se aprietan ni se
+                  parte el texto ("Flor enc ia"), y queda ordenado al crecer */}
+              {Object.entries(
+                municipios.reduce((acc, m) => {
+                  const d = m.departamento || "Otros";
+                  (acc[d] = acc[d] || []).push(m);
+                  return acc;
+                }, {})
+              )
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([depto, lista]) => (
+                  <View key={depto} style={{ marginBottom: 10 }}>
+                    <Text style={{ fontSize: 10.5, color: "#9a9a9a", fontWeight: "800", letterSpacing: 0.5, marginBottom: 5, textTransform: "uppercase" }}>{depto}</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {lista
+                        .slice()
+                        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                        .map(m => {
+                          const activa = muni && muni.nombre === m.nombre;
+                          return (
+                            <TouchableOpacity key={m.nombre}
+                              style={[styles.chip, activa && styles.chipOn]}
+                              onPress={() => { aplicarMuni(m); setEligiendoMuni(false); }}>
+                              <Text style={[styles.chipTxt, activa && styles.chipTxtOn]}>{m.nombre}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+                  </View>
+                ))}
             </View>
           )}
 
@@ -4619,13 +4665,31 @@ function ConfiguracionScreen({ navigation, route }) {
             {cambiandoMuni ? (
               <ActivityIndicator color="#187830" style={{ marginTop: 8 }} />
             ) : (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-                {municipios.map((m) => (
-                  <TouchableOpacity key={m.nombre} onPress={() => cambiarMunicipio(m.nombre)}
-                    style={[styles.chip, miMuni === m.nombre && styles.chipOn]}>
-                    <Text style={[styles.chipTxt, miMuni === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={{ marginTop: 8 }}>
+                {Object.entries(
+                  municipios.reduce((acc, m) => {
+                    const d = m.departamento || "Otros";
+                    (acc[d] = acc[d] || []).push(m);
+                    return acc;
+                  }, {})
+                )
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([depto, lista]) => (
+                    <View key={depto} style={{ marginBottom: 10 }}>
+                      <Text style={{ fontSize: 10.5, color: "#9a9a9a", fontWeight: "800", letterSpacing: 0.5, marginBottom: 5, textTransform: "uppercase" }}>{depto}</Text>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        {lista
+                          .slice()
+                          .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                          .map((m) => (
+                            <TouchableOpacity key={m.nombre} onPress={() => cambiarMunicipio(m.nombre)}
+                              style={[styles.chip, miMuni === m.nombre && styles.chipOn]}>
+                              <Text style={[styles.chipTxt, miMuni === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
+                            </TouchableOpacity>
+                          ))}
+                      </View>
+                    </View>
+                  ))}
               </View>
             )}
             <Text style={[styles.ayuda, { marginTop: 8, marginBottom: 0 }]}>
