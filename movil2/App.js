@@ -2229,6 +2229,20 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                     {e.conductor_telefono ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>📞 {e.conductor_telefono}{e.conductor_placa ? ` · ${e.conductor_placa}` : ""}</Text> : null}
                   </View>
                 )}
+                {/* tracking en vivo: el carro moviendose, una vez inició el recorrido */}
+                {e.estado === "en_camino" && e.conductor_lat != null && (
+                  <>
+                    <View style={{ height: 220, borderRadius: 12, overflow: "hidden", marginTop: 8 }}>
+                      <MapaSeguimiento key={"exp-" + e.id}
+                        conductor={{ lat: e.conductor_lat, lon: e.conductor_lon }}
+                        recogida={e.origen_lat != null ? { lat: e.origen_lat, lon: e.origen_lon } : null}
+                        destino={null} rutaA="destino" lleno />
+                    </View>
+                    {e.conductor_ubic_fecha && (Date.now() - new Date(e.conductor_ubic_fecha).getTime()) > 90000 && (
+                      <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 4 }}>Última ubicación {haceCuanto(e.conductor_ubic_fecha)}</Text>
+                    )}
+                  </>
+                )}
                 {e.estado === "buscando" && ofs.length > 0 && (
                   <View style={{ marginTop: 8 }}>
                     <Text style={{ fontSize: 12, color: "#666", fontWeight: "700", marginBottom: 4 }}>Precios que te proponen:</Text>
@@ -3390,14 +3404,17 @@ function ConductorScreen({ navigation, route }) {
   // entre una carrera aunque este minimizada/cerrada, y transmite la ubicacion en
   // carrera. Con la app abierta y carrera activa, ademas alimenta su mapa cada 8s.
   const tieneCarreraActiva = mias.length > 0;
-  const debeCorrerFondo = disponible || tieneCarreraActiva;
+  // un expreso EN CAMINO tambien exige reportar GPS: el cliente ve el carro moverse
+  const tieneExpresoEnCamino = misExpresos.some(e => e.estado === "en_camino");
+  const debeRastrear = tieneCarreraActiva || tieneExpresoEnCamino;
+  const debeCorrerFondo = disponible || debeRastrear;
   useEffect(() => {
     if (!debeCorrerFondo) { detenerRastreoFondo(); return; }
     iniciarRastreoFondo(usuario.id);
   }, [debeCorrerFondo]);
 
   useEffect(() => {
-    if (!tieneCarreraActiva) return;
+    if (!debeRastrear) return;
     let vivo = true;
     let sub = null;
     (async () => {
@@ -3417,7 +3434,7 @@ function ConductorScreen({ navigation, route }) {
       } catch (e) {}
     })();
     return () => { vivo = false; if (sub) { try { sub.remove(); } catch (e) {} } };
-  }, [tieneCarreraActiva]);
+  }, [debeRastrear]);
 
   const aceptar = (c) => {
     // se quita YA del listado (no espera al refresco) para que no la vuelva a

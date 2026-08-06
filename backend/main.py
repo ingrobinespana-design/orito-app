@@ -1790,6 +1790,9 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
         "conductor_placa": conductor.placa if conductor else None,
         "conductor_vehiculo": conductor.vehiculo if conductor else None,
         "conductor_calificacion": conductor.calificacion if conductor else None,
+        "conductor_lat": conductor.ubic_lat if conductor else None,
+        "conductor_lon": conductor.ubic_lon if conductor else None,
+        "conductor_ubic_fecha": conductor.ubic_fecha if conductor else None,
         "tarifa_cupo": e.tarifa_cupo, "fecha": e.fecha,
     }
 
