@@ -3535,6 +3535,19 @@ function ConductorScreen({ navigation, route }) {
     }).catch(() => avisar("Error", "No hay conexión."));
   };
 
+  // abre Google Maps hacia el destino del expreso: por coordenadas si las hay
+  // (puerta a puerta), o por texto (nombre del sitio + ciudad) si no
+  const irAlDestinoExpreso = (e) => {
+    if (e.destino_lat != null) navegarGoogleMaps(e.destino_lat, e.destino_lon);
+    else navegarGoogleMapsTexto([e.destino_detalle, e.destino_municipio].filter(Boolean).join(", "));
+  };
+  // arranca el recorrido (recogí) y de una abre la navegacion al destino
+  const iniciarRecorridoExpreso = (e) => {
+    userFetch(`${API}/expresos/${e.id}/estado?estado=en_camino`, { method: "PUT" })
+      .then(() => { cargarExpresos(); irAlDestinoExpreso(e); })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
+
   // envia una contraoferta al servidor (usada por el teclado y por los botones
   // rapidos de un toque)
   const enviarOferta = (id, monto, silencioso) => {
@@ -4079,24 +4092,22 @@ function ConductorScreen({ navigation, route }) {
                     <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
                     {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
                     <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre} · 📞 {e.cliente_telefono}</Text>
-                    {(e.origen_lat != null || e.destino_lat != null) && (
-                      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-                        {e.origen_lat != null && (
-                          <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#1A73E8", padding: 9 }]} onPress={() => navegarGoogleMaps(e.origen_lat, e.origen_lon)}>
-                            <Text style={[styles.buttonText, { fontSize: 12.5 }]}>🧭 Ir a recoger</Text>
-                          </TouchableOpacity>
-                        )}
-                        {e.destino_lat != null && (
-                          <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#1A73E8", padding: 9 }]} onPress={() => navegarGoogleMaps(e.destino_lat, e.destino_lon)}>
-                            <Text style={[styles.buttonText, { fontSize: 12.5 }]}>🧭 Ir al destino</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    )}
                     {e.estado === "en_camino" && (
                       <View style={{ backgroundColor: "#E7F0FF", borderRadius: 8, padding: 8, marginTop: 6 }}>
                         <Text style={{ fontSize: 12.5, color: "#1A73E8", fontWeight: "700" }}>🚗 En recorrido hacia {e.destino_municipio}</Text>
                       </View>
+                    )}
+                    {/* navegacion segun la fase: si aun no recoge -> a la recogida;
+                        si ya va en recorrido -> al destino (por coords o por texto) */}
+                    {e.estado === "aceptado" && e.origen_lat != null && (
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", padding: 10, marginTop: 8 }]} onPress={() => navegarGoogleMaps(e.origen_lat, e.origen_lon)}>
+                        <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Ir a recoger</Text>
+                      </TouchableOpacity>
+                    )}
+                    {e.estado === "en_camino" && (
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", padding: 10, marginTop: 8 }]} onPress={() => irAlDestinoExpreso(e)}>
+                        <Text style={[styles.buttonText, { fontSize: 13 }]}>🧭 Ir al destino</Text>
+                      </TouchableOpacity>
                     )}
                     <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                       <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => llamar(e.cliente_telefono)}>
@@ -4108,8 +4119,8 @@ function ConductorScreen({ navigation, route }) {
                     </View>
                     {/* la SECUENCIA arranca al recoger: aceptado -> (recogí) en_camino -> finalizado */}
                     {e.estado === "aceptado" ? (
-                      <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", marginTop: 8, padding: 11 }]}
-                        onPress={() => confirmar("Iniciar recorrido", `¿Ya recogiste al pasajero y arrancas hacia ${e.destino_municipio}?`, () => userFetch(`${API}/expresos/${e.id}/estado?estado=en_camino`, { method: "PUT" }).then(cargarExpresos).catch(() => {}), "Sí, arrancar")}>
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 8, padding: 11 }]}
+                        onPress={() => confirmar("Iniciar recorrido", `¿Ya recogiste al pasajero y arrancas hacia ${e.destino_municipio}? Se abrirá la navegación.`, () => iniciarRecorridoExpreso(e), "Sí, arrancar")}>
                         <Text style={styles.buttonText}>🚗 Ya recogí — Iniciar recorrido</Text>
                       </TouchableOpacity>
                     ) : (
