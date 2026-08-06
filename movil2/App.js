@@ -169,7 +169,7 @@ const ordenVehiculos = (tipos) =>
 const DIAS_ABR = ["dom", "lun", "mar", "mie", "jue", "vie", "sab"];
 function diasProximos() {
   const arr = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 15; i++) {
     const d = new Date(); d.setDate(d.getDate() + i); d.setHours(0, 0, 0, 0);
     const lbl = i === 0 ? "Hoy" : i === 1 ? "Manana" : `${DIAS_ABR[d.getDay()]} ${d.getDate()}`;
     arr.push({ key: `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`, d, lbl });
@@ -2072,10 +2072,11 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const publicar = () => {
     const c = parseInt(cupos, 10) || 0;
     const p = parseInt((precio || "").replace(/\D/g, ""), 10) || 0;
-    if (!destino) return avisar("Falta", "Elige la ciudad de destino.");
+    if (!destino.trim()) return avisar("Falta", "Escribe a dónde vas.");
     if (!pin) return avisar("Falta", "Marca el punto de recogida en el mapa.");
     if (c <= 0) return avisar("Falta", "¿Cuántos cupos?");
     if (p <= 0) return avisar("Falta", "¿Cuánto pagas por cupo?");
+    if (programar && (!dia || !hora)) return avisar("Falta la fecha", "Elige el día y la hora de salida, o cambia a 'Lo antes posible'.");
     const salidaISO = (programar && dia && hora) ? isoLocal(dia, hora.h, hora.m) : null;
     setCargando(true);
     const params = qs({
@@ -2112,29 +2113,35 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
     <>
       <View style={styles.card}>
         <Text style={styles.etiqueta}>🚌 VIAJE A OTRA CIUDAD (EXPRESO)</Text>
-        <Text style={styles.ayuda}>Sales de {miMuni}. Publicas cuántos cupos y cuánto pagas por cupo; un conductor lo toma o te propone precio.</Text>
-        <Text style={[styles.etiqueta, { marginTop: 10 }]}>¿A QUÉ CIUDAD VAS?</Text>
-        {otras.length === 0 ? (
-          <Text style={styles.ayuda}>Aún no hay otras ciudades activas para viajar.</Text>
-        ) : (
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {otras.map(m => (
-              <TouchableOpacity key={m.nombre} style={[styles.chip, destino === m.nombre && styles.chipOn]} onPress={() => setDestino(m.nombre)}>
-                <Text style={[styles.chipTxt, destino === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+        <Text style={styles.ayuda}>Sales de {miMuni}. Di a dónde vas, dónde te recogen, cupos y cuánto pagas por cupo; un conductor lo toma o te propone precio.</Text>
+        <Text style={[styles.etiqueta, { marginTop: 10 }]}>¿A DÓNDE VAS? (cualquier ciudad o lugar)</Text>
+        <TextInput value={destino} onChangeText={setDestino} placeholder="Ej: Mocoa, Pitalito, Cali, La Hormiga, Neiva..." style={styles.input} />
+        {otras.length > 0 && (
+          <>
+            <Text style={{ fontSize: 11, color: "#999", marginBottom: 5 }}>O toca una ciudad frecuente:</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {otras.map(m => (
+                <TouchableOpacity key={m.nombre} style={[styles.chip, destino === m.nombre && styles.chipOn]} onPress={() => setDestino(m.nombre)}>
+                  <Text style={[styles.chipTxt, destino === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
         )}
+        <TextInput value={destinoDet} onChangeText={setDestinoDet} placeholder="¿Dónde exactamente te dejan? (dirección/referencia)" style={[styles.input, { marginTop: 10 }]} />
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.etiqueta}>¿DÓNDE TE RECOGEN? (en {miMuni})</Text>
+        <Text style={styles.etiqueta}>📍 ¿DÓNDE TE RECOGEN? (en {miMuni})</Text>
         <TouchableOpacity style={[styles.botonMapa, pin && styles.botonMapaOk]} onPress={() => setMapaOpen(true)}>
-          <Text style={{ color: "#187830", fontWeight: "600" }}>{pin ? "✓ Punto marcado — cambiar en el mapa" : "📍 Marcar el punto en el mapa"}</Text>
+          <Text style={{ color: "#187830", fontWeight: "700" }}>{pin ? "✓ Punto de recogida marcado — cambiar" : "🗺️ Marcar el punto de recogida en el mapa"}</Text>
         </TouchableOpacity>
-        <TextInput value={origenTxt} onChangeText={setOrigenTxt} placeholder="Referencia (opcional): terminal, parque..." style={styles.input} />
-        <Text style={styles.etiqueta}>¿DÓNDE TE DEJAN? (en {destino || "la otra ciudad"})</Text>
-        <TextInput value={destinoDet} onChangeText={setDestinoDet} placeholder="Dirección o referencia del destino" style={styles.input} />
+        {pin ? (
+          <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600", marginTop: 2, marginBottom: 4 }}>✓ Punto marcado en el mapa</Text>
+        ) : (
+          <Text style={styles.ayuda}>Toca para abrir el mapa y marcar dónde te recogen.</Text>
+        )}
+        <TextInput value={origenTxt} onChangeText={setOrigenTxt} placeholder="Referencia (opcional): terminal, barrio, casa..." style={styles.input} />
       </View>
 
       <View style={styles.card}>
@@ -2183,6 +2190,13 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                 })}
               </View>
             </ScrollView>
+            {dia && hora ? (
+              <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10, marginTop: 12 }}>
+                <Text style={{ color: "#187830", fontWeight: "700", fontSize: 14 }}>⏰ Sale: {fmtRecogida(isoLocal(dia, hora.h, hora.m))}</Text>
+              </View>
+            ) : (
+              <Text style={[styles.ayuda, { marginTop: 10 }]}>Elige el día y la hora de salida.</Text>
+            )}
           </>
         )}
         <TextInput value={notas} onChangeText={setNotas} placeholder="Algo más (equipaje, # de contacto...)" style={[styles.input, { marginTop: 10 }]} />
@@ -2203,7 +2217,11 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                   <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
                   <Text style={{ fontSize: 11, color: "#888" }}>{estadoExpreso(e.estado)}</Text>
                 </View>
-                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${e.precio_por_cupo.toLocaleString()}/cupo · {e.salida ? fmtRecogida(e.salida) : "lo antes posible"}</Text>
+                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+                <Text style={{ fontSize: 12.5, fontWeight: "700", marginTop: 2, color: e.salida ? "#B85C00" : "#187830" }}>
+                  {e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}
+                </Text>
+                <Text style={{ fontSize: 12.5, color: "#333", marginTop: 2 }}>🟢 Recoge: {e.origen}{e.destino_detalle ? `   ·   🏁 Deja: ${e.destino_detalle}` : ""}</Text>
                 {e.estado === "aceptado" && (
                   <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 8, marginTop: 6 }}>
                     <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700" }}>✅ {e.conductor_nombre} · ${(e.tarifa_cupo || 0).toLocaleString()}/cupo</Text>
@@ -4016,8 +4034,11 @@ function ConductorScreen({ navigation, route }) {
                 {misExpresos.map(e => (
                   <View key={e.id} style={[styles.card, { marginBottom: 10, borderLeftWidth: 3, borderLeftColor: "#187830" }]}>
                     <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
-                    <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${(e.tarifa_cupo || e.precio_por_cupo).toLocaleString()}/cupo · {e.salida ? fmtRecogida(e.salida) : "lo antes posible"}</Text>
-                    <Text style={{ fontSize: 13, color: "#333", marginTop: 4 }}>🟢 Recoge: {e.origen}</Text>
+                    <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${(e.tarifa_cupo || e.precio_por_cupo).toLocaleString()}/cupo · total ${((e.tarifa_cupo || e.precio_por_cupo) * e.cupos).toLocaleString()}</Text>
+                    <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
+                    </View>
+                    <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
                     {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
                     <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre} · 📞 {e.cliente_telefono}</Text>
                     <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
@@ -4049,9 +4070,11 @@ function ConductorScreen({ navigation, route }) {
                   <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
                   <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
                 </View>
-                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) por cupo · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
-                <Text style={{ fontSize: 12.5, color: "#B85C00", fontWeight: "600", marginTop: 2 }}>🗓️ {e.salida ? fmtRecogida(e.salida) : "Lo antes posible"}</Text>
-                <Text style={{ fontSize: 13, color: "#333", marginTop: 4 }}>🟢 Recoge: {e.origen}</Text>
+                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
+                <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
+                </View>
+                <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
                 {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
                 {e.notas ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📝 {e.notas}</Text> : null}
                 <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
