@@ -159,7 +159,7 @@ const VEHICULOS = {
 const vehLabel = (t) => (VEHICULOS[t] ? VEHICULOS[t].label : (t || ""));
 const vehIcono = (t) => (VEHICULOS[t] ? VEHICULOS[t].icono : "🚗");
 const esCarga = (t) => VEHICULOS[t] && VEHICULOS[t].grupo === "carga";
-const estadoExpreso = (e) => ({ buscando: "buscando conductor", aceptado: "✅ asignado", finalizado: "finalizado", cancelado: "cancelado" }[e] || e);
+const estadoExpreso = (e) => ({ buscando: "buscando conductor", aceptado: "✅ asignado", en_camino: "🚗 en camino", finalizado: "finalizado", cancelado: "cancelado" }[e] || e);
 // orden de aparicion: primero personas, luego carga
 const ordenVehiculos = (tipos) =>
   Object.keys(VEHICULOS).filter((t) => tipos.includes(t));
@@ -2222,8 +2222,9 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                   {e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}
                 </Text>
                 <Text style={{ fontSize: 12.5, color: "#333", marginTop: 2 }}>🟢 Recoge: {e.origen}{e.destino_detalle ? `   ·   🏁 Deja: ${e.destino_detalle}` : ""}</Text>
-                {e.estado === "aceptado" && (
-                  <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 8, marginTop: 6 }}>
+                {(e.estado === "aceptado" || e.estado === "en_camino") && (
+                  <View style={{ backgroundColor: e.estado === "en_camino" ? "#E7F0FF" : "#EAF6EC", borderRadius: 8, padding: 8, marginTop: 6 }}>
+                    {e.estado === "en_camino" && <Text style={{ fontSize: 12.5, color: "#1A73E8", fontWeight: "800", marginBottom: 2 }}>🚗 En camino a {e.destino_municipio}</Text>}
                     <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700" }}>✅ {e.conductor_nombre} · ${(e.tarifa_cupo || 0).toLocaleString()}/cupo</Text>
                     {e.conductor_telefono ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>📞 {e.conductor_telefono}{e.conductor_placa ? ` · ${e.conductor_placa}` : ""}</Text> : null}
                   </View>
@@ -4041,6 +4042,11 @@ function ConductorScreen({ navigation, route }) {
                     <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
                     {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
                     <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre} · 📞 {e.cliente_telefono}</Text>
+                    {e.estado === "en_camino" && (
+                      <View style={{ backgroundColor: "#E7F0FF", borderRadius: 8, padding: 8, marginTop: 6 }}>
+                        <Text style={{ fontSize: 12.5, color: "#1A73E8", fontWeight: "700" }}>🚗 En recorrido hacia {e.destino_municipio}</Text>
+                      </View>
+                    )}
                     <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                       <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => llamar(e.cliente_telefono)}>
                         <Text style={[styles.buttonText, { fontSize: 13 }]}>📞 Llamar</Text>
@@ -4049,10 +4055,18 @@ function ConductorScreen({ navigation, route }) {
                         <Text style={[styles.buttonText, { fontSize: 13 }]}>💬 WhatsApp</Text>
                       </TouchableOpacity>
                     </View>
-                    <TouchableOpacity style={{ marginTop: 8, alignSelf: "flex-start" }}
-                      onPress={() => confirmar("Finalizar viaje", "¿Marcar este viaje como terminado?", () => userFetch(`${API}/expresos/${e.id}/estado?estado=finalizado`, { method: "PUT" }).then(cargarExpresos).catch(() => {}), "Sí")}>
-                      <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>🏁 Finalizar viaje</Text>
-                    </TouchableOpacity>
+                    {/* la SECUENCIA arranca al recoger: aceptado -> (recogí) en_camino -> finalizado */}
+                    {e.estado === "aceptado" ? (
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", marginTop: 8, padding: 11 }]}
+                        onPress={() => confirmar("Iniciar recorrido", `¿Ya recogiste al pasajero y arrancas hacia ${e.destino_municipio}?`, () => userFetch(`${API}/expresos/${e.id}/estado?estado=en_camino`, { method: "PUT" }).then(cargarExpresos).catch(() => {}), "Sí, arrancar")}>
+                        <Text style={styles.buttonText}>🚗 Ya recogí — Iniciar recorrido</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", marginTop: 8, padding: 11 }]}
+                        onPress={() => confirmar("Finalizar viaje", `¿Ya llegaste a ${e.destino_municipio}?`, () => userFetch(`${API}/expresos/${e.id}/estado?estado=finalizado`, { method: "PUT" }).then(cargarExpresos).catch(() => {}), "Sí, finalizar")}>
+                        <Text style={styles.buttonText}>🏁 Finalizar viaje</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ))}
               </>

@@ -1950,8 +1950,31 @@ def expresos_del_cliente(cliente_id: int, db: Session = Depends(get_db)):
 def expresos_del_conductor(conductor_id: int, db: Session = Depends(get_db)):
     expresos = db.query(Expreso).filter(
         Expreso.conductor_id == conductor_id,
-        Expreso.estado.in_(["aceptado"])).order_by(Expreso.fecha.desc()).all()
+        Expreso.estado.in_(["aceptado", "en_camino"])).order_by(Expreso.fecha.desc()).all()
     return [expreso_dict(e, db.query(Usuario).filter(Usuario.id == conductor_id).first()) for e in expresos]
+
+@nunca_falla
+def avisar_expreso_estado(expreso_id: int, estado: str):
+    """Le avisa al cliente cuando el viaje ARRANCA (recogida hecha) o finaliza."""
+    db = SessionLocal()
+    mensajes = []
+    try:
+        e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+        if not e:
+            return
+        cliente = db.query(Usuario).filter(Usuario.id == e.cliente_id).first()
+        if not cliente or not cliente.push_token:
+            return
+        if estado == "en_camino":
+            titulo, cuerpo = "🚗 Tu viaje empezó", f"Vas en camino a {e.destino_municipio}"
+        elif estado == "finalizado":
+            titulo, cuerpo = "🏁 Viaje finalizado", f"Llegaste a {e.destino_municipio}. ¡Buen viaje!"
+        else:
+            return
+        mensajes = [push.mensaje(cliente.push_token, titulo, cuerpo, {"tipo": "expreso_estado", "expreso_id": e.id})]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
 
 @app.put("/expresos/{expreso_id}/aceptar")
 def aceptar_expreso(expreso_id: int, conductor_id: int, tareas: BackgroundTasks,
@@ -2041,14 +2064,16 @@ def aceptar_oferta_expreso(expreso_id: int, oferta_id: int, tareas: BackgroundTa
     return expreso_dict(e, conductor)
 
 @app.put("/expresos/{expreso_id}/estado")
-def actualizar_estado_expreso(expreso_id: int, estado: str, db: Session = Depends(get_db),
-                              actual: Usuario = Depends(usuario_actual)):
-    if estado not in ("finalizado", "cancelado"):
+def actualizar_estado_expreso(expreso_id: int, estado: str, tareas: BackgroundTasks,
+                              db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    # en_camino = la SECUENCIA arranca al recoger al pasajero (no antes: el viaje
+    # puede estar agendado). Luego finalizado. Cancelado en cualquier momento.
+    if estado not in ("en_camino", "finalizado", "cancelado"):
         raise HTTPException(status_code=400, detail="Estado inválido para expreso")
     e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
     if not e:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
-    # lo puede cerrar/cancelar el cliente dueño o el conductor asignado
+    # lo maneja el cliente dueño o el conductor asignado
     if actual.id not in (e.cliente_id, e.conductor_id) and actual.rol != "admin":
         raise HTTPException(status_code=403, detail="No es tu viaje")
     e.estado = estado
@@ -2056,6 +2081,8 @@ def actualizar_estado_expreso(expreso_id: int, estado: str, db: Session = Depend
         db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
             {"estado": "descartada"}, synchronize_session=False)
     db.commit()
+    if estado in ("en_camino", "finalizado"):
+        tareas.add_task(avisar_expreso_estado, expreso_id, estado)
     return expreso_dict(e)
 
 @app.put("/carreras/{carrera_id}/estado")
