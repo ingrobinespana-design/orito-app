@@ -187,6 +187,22 @@ function horasDelDia() {
   }
   return arr;
 }
+// reloj COMPLETO: cualquier hora (0-23) y minutos cada 5. Para agendar a la hora
+// exacta que sea, sin quedar limitado a un rango predeterminado.
+function horasCompletas() {
+  const arr = [];
+  for (let h = 0; h < 24; h++) {
+    const ampm = h < 12 ? "am" : "pm";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    arr.push({ h, lbl: `${h12} ${ampm}` });
+  }
+  return arr;
+}
+function minutosLista() {
+  const arr = [];
+  for (let m = 0; m < 60; m += 5) arr.push({ m, lbl: `:${String(m).padStart(2, "0")}` });
+  return arr;
+}
 // string ISO LOCAL (sin zona: hora de Colombia tal cual), para que el backend
 // la guarde y la app la vuelva a leer igual
 function isoLocal(d, h, m) {
@@ -2047,7 +2063,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const [notas, setNotas] = useState("");
   const [programar, setProgramar] = useState(false);
   const [dia, setDia] = useState(null);
-  const [hora, setHora] = useState(null);
+  const [hSel, setHSel] = useState(null);   // hora (0-23) elegida
+  const [mSel, setMSel] = useState(null);   // minutos elegidos
   const [mapaOpen, setMapaOpen] = useState(false);
   const [pinDest, setPinDest] = useState(null);       // destino EXACTO en el mapa (puerta a puerta)
   const [mapaDestOpen, setMapaDestOpen] = useState(false);
@@ -2082,8 +2099,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
     if (!pin) return avisar("Falta", "Marca el punto de recogida en el mapa.");
     if (c <= 0) return avisar("Falta", "¿Cuántos cupos?");
     if (p <= 0) return avisar("Falta", "¿Cuánto pagas por cupo?");
-    if (programar && (!dia || !hora)) return avisar("Falta la fecha", "Elige el día y la hora de salida, o cambia a 'Lo antes posible'.");
-    const salidaISO = (programar && dia && hora) ? isoLocal(dia, hora.h, hora.m) : null;
+    if (programar && (!dia || hSel == null || mSel == null)) return avisar("Falta la fecha", "Elige el día, la hora y los minutos de salida, o cambia a 'Lo antes posible'.");
+    const salidaISO = (programar && dia && hSel != null && mSel != null) ? isoLocal(dia, hSel, mSel) : null;
     setCargando(true);
     const params = qs({
       cliente_id: usuario.id, destino_municipio: destino, origen: origenTxt || "Punto marcado",
@@ -2094,7 +2111,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
     userFetch(`${API}/expresos?${params}`, { method: "POST" }).then(async r => {
       const d = await r.json().catch(() => null);
       if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
-      setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHora(null);
+      setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHSel(null); setMSel(null);
       avisar("✅ Viaje publicado", "Los conductores de tu ciudad lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
       cargarMios();
     }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
@@ -2195,18 +2212,27 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
             <Text style={[styles.ayuda, { marginTop: 8 }]}>Hora</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-                {horasDelDia().map(x => {
-                  const act = hora && hora.h === x.h && hora.m === x.m;
-                  return (<TouchableOpacity key={x.lbl} onPress={() => setHora({ h: x.h, m: x.m })} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
+                {horasCompletas().map(x => {
+                  const act = hSel === x.h;
+                  return (<TouchableOpacity key={x.h} onPress={() => setHSel(x.h)} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
                 })}
               </View>
             </ScrollView>
-            {dia && hora ? (
+            <Text style={[styles.ayuda, { marginTop: 8 }]}>Minutos</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
+                {minutosLista().map(x => {
+                  const act = mSel === x.m;
+                  return (<TouchableOpacity key={x.m} onPress={() => setMSel(x.m)} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
+                })}
+              </View>
+            </ScrollView>
+            {dia && hSel != null && mSel != null ? (
               <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10, marginTop: 12 }}>
-                <Text style={{ color: "#187830", fontWeight: "700", fontSize: 14 }}>⏰ Sale: {fmtRecogida(isoLocal(dia, hora.h, hora.m))}</Text>
+                <Text style={{ color: "#187830", fontWeight: "700", fontSize: 14 }}>⏰ Sale: {fmtRecogida(isoLocal(dia, hSel, mSel))}</Text>
               </View>
             ) : (
-              <Text style={[styles.ayuda, { marginTop: 10 }]}>Elige el día y la hora de salida.</Text>
+              <Text style={[styles.ayuda, { marginTop: 10 }]}>Elige el día, la hora y los minutos de salida.</Text>
             )}
           </>
         )}
