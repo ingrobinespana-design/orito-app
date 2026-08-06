@@ -3936,6 +3936,7 @@ function AdminCarrerasScreen({ navigation }) {
   const [tarKm, setTarKm] = useState("");
   const [tarMin, setTarMin] = useState("");
   const [editDepto, setEditDepto] = useState("Putumayo");
+  const [editVeh, setEditVeh] = useState([]);          // vehiculos habilitados de la ciudad que se edita
   const [reCentrar, setReCentrar] = useState(null);   // ciudad a la que se le corrige el centro en el mapa
 
   const cargar = () => {
@@ -4039,19 +4040,21 @@ function AdminCarrerasScreen({ navigation }) {
     setTarKm(m.valor_km ? String(m.valor_km) : "");
     setTarMin(m.tarifa_minima ? String(m.tarifa_minima) : "");
     setEditDepto(m.departamento || "Putumayo");
+    setEditVeh(m.vehiculos || []);
   };
 
   const guardarTarifas = (m) => {
+    if (editVeh.length === 0) { avisar("Falta", "Marca al menos un servicio (vehículo) para la ciudad."); return; }
     const b = parseInt((tarBase || "").replace(/\D/g, ""), 10) || 0;
     const k = parseInt((tarKm || "").replace(/\D/g, ""), 10) || 0;
     const mn = parseInt((tarMin || "").replace(/\D/g, ""), 10) || 0;
     // con tarifas se activa el GPS para poder sugerir precio por km
-    const p = `tarifa_base=${b}&valor_km=${k}&tarifa_minima=${mn}&departamento=${encodeURIComponent(editDepto || "Putumayo")}${(b || k || mn) ? "&usa_gps=si" : ""}`;
+    const p = `tarifa_base=${b}&valor_km=${k}&tarifa_minima=${mn}&departamento=${encodeURIComponent(editDepto || "Putumayo")}&vehiculos=${encodeURIComponent(editVeh.join(","))}${(b || k || mn) ? "&usa_gps=si" : ""}`;
     adminFetch(`${API}/municipios/${encodeURIComponent(m.nombre)}?${p}`, { method: "PUT" })
       .then(async r => {
         if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
         setEditCiudad(null); cargar();
-        avisar("Tarifas guardadas", `${m.nombre}: base $${b.toLocaleString()} + $${k.toLocaleString()}/km (mínima $${mn.toLocaleString()}).`);
+        avisar("Ciudad guardada", `${m.nombre}: ${editVeh.length} servicio(s) · base $${b.toLocaleString()} + $${k.toLocaleString()}/km.`);
       })
       .catch(() => avisar("Error", "No hay conexión."));
   };
@@ -4490,6 +4493,19 @@ function AdminCarrerasScreen({ navigation }) {
                         </TouchableOpacity>
                       ))}
                     </View>
+                    <Text style={{ fontSize: 12, color: "#666", fontWeight: "600", marginBottom: 4 }}>Servicios que ofrece esta ciudad:</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                      {TODOS_VEHICULOS.map((v) => {
+                        const on = editVeh.includes(v);
+                        return (
+                          <TouchableOpacity key={v}
+                            style={[styles.chip, on && styles.chipOn]}
+                            onPress={() => setEditVeh(on ? editVeh.filter(x => x !== v) : [...editVeh, v])}>
+                            <Text style={[styles.chipTxt, on && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                     <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
                       Tarifa SUGERIDA (solo orienta al cliente; el precio se sigue negociando). Deja todo en 0 para precio libre.
                     </Text>
@@ -4528,7 +4544,7 @@ function AdminCarrerasScreen({ navigation }) {
                   </View>
                 ) : (
                   <TouchableOpacity style={{ marginTop: 8, alignSelf: "flex-start" }} onPress={() => abrirTarifas(m)}>
-                    <Text style={{ color: "#1A73E8", fontWeight: "600", fontSize: 13 }}>✏️ Editar (departamento y tarifas)</Text>
+                    <Text style={{ color: "#1A73E8", fontWeight: "600", fontSize: 13 }}>✏️ Editar (servicios, departamento y tarifas)</Text>
                   </TouchableOpacity>
                 )}
               </View>
