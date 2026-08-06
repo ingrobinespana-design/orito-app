@@ -3421,6 +3421,13 @@ function ConductorScreen({ navigation, route }) {
   // una carrera activa: mantiene viva la app (notificacion fija) para SONAR cuando
   // entre una carrera aunque este minimizada/cerrada, y transmite la ubicacion en
   // carrera. Con la app abierta y carrera activa, ademas alimenta su mapa cada 8s.
+  // expresos (viajes a otra ciudad) que salen de la ciudad del conductor. Se
+  // declaran ANTES de tieneExpresoEnCamino (abajo) para no caer en TDZ.
+  const [expresosDisp, setExpresosDisp] = useState([]);
+  const [misExpresos, setMisExpresos] = useState([]);
+  const [ofExpreso, setOfExpreso] = useState(null);   // expreso al que le va a contraofertar
+  const [montoExp, setMontoExp] = useState("");
+
   const tieneCarreraActiva = mias.length > 0;
   // un expreso EN CAMINO tambien exige reportar GPS: el cliente ve el carro moverse
   const tieneExpresoEnCamino = misExpresos.some(e => e.estado === "en_camino");
@@ -3496,11 +3503,6 @@ function ConductorScreen({ navigation, route }) {
   // --- negociacion del lado del conductor
   const [contraofertando, setContraofertando] = useState(null);
   const [montoOferta, setMontoOferta] = useState("");
-  // expresos (viajes a otra ciudad) que salen de la ciudad del conductor
-  const [expresosDisp, setExpresosDisp] = useState([]);
-  const [misExpresos, setMisExpresos] = useState([]);
-  const [ofExpreso, setOfExpreso] = useState(null);   // expreso al que le va a contraofertar
-  const [montoExp, setMontoExp] = useState("");
 
   const cargarExpresos = () => {
     fetch(`${API}/expresos/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
