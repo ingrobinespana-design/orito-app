@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, VEHICULOS_VALIDOS, VEHICULOS_CARGA
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, Expreso, OfertaExpreso, VEHICULOS_VALIDOS, VEHICULOS_CARGA
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -1768,6 +1768,295 @@ def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db:
     conductor = db.query(Usuario).filter(Usuario.id == oferta.conductor_id).first()
     tareas.add_task(avisar_oferta_aceptada, oferta.conductor_id, carrera_id)
     return carrera_dict(carrera, conductor)
+
+# ==================== EXPRESOS: viajes ciudad a ciudad (por cupos) ====================
+# El cliente publica un viaje intermunicipal (de su ciudad a otra), con N cupos a
+# $X por cupo, punto de recogida y de entrega, y opcionalmente agendado. Los
+# conductores de la ciudad de ORIGEN lo ven en "Otra ciudad", lo toman al precio
+# del cliente o contraofertan (por cupo). Es un modulo aparte del transporte local.
+
+def expreso_dict(e: Expreso, conductor: Usuario = None):
+    return {
+        "id": e.id, "cliente_id": e.cliente_id,
+        "cliente_nombre": e.cliente_nombre, "cliente_telefono": e.cliente_telefono,
+        "origen_municipio": e.origen_municipio, "destino_municipio": e.destino_municipio,
+        "origen": e.origen, "origen_lat": e.origen_lat, "origen_lon": e.origen_lon,
+        "destino_detalle": e.destino_detalle,
+        "cupos": e.cupos, "precio_por_cupo": e.precio_por_cupo,
+        "salida": e.salida, "notas": e.notas, "estado": e.estado,
+        "conductor_id": e.conductor_id,
+        "conductor_nombre": conductor.nombre if conductor else None,
+        "conductor_telefono": conductor.telefono if conductor else None,
+        "conductor_placa": conductor.placa if conductor else None,
+        "conductor_vehiculo": conductor.vehiculo if conductor else None,
+        "conductor_calificacion": conductor.calificacion if conductor else None,
+        "tarifa_cupo": e.tarifa_cupo, "fecha": e.fecha,
+    }
+
+def oferta_expreso_dict(o: OfertaExpreso, conductor: Usuario = None):
+    return {
+        "id": o.id, "expreso_id": o.expreso_id, "conductor_id": o.conductor_id,
+        "monto": o.monto, "estado": o.estado,
+        "conductor_nombre": conductor.nombre if conductor else None,
+        "conductor_telefono": conductor.telefono if conductor else None,
+        "conductor_placa": conductor.placa if conductor else None,
+        "conductor_calificacion": conductor.calificacion if conductor else None,
+    }
+
+def _conductores_expreso(e: Expreso, db: Session):
+    """Conductores de la ciudad de ORIGEN, conectados, con token y al dia."""
+    return [
+        c for c in db.query(Usuario).filter(
+            Usuario.rol == "conductor",
+            Usuario.municipio == e.origen_municipio,
+            Usuario.disponible == "si",
+            Usuario.push_token.isnot(None),
+            Usuario.activo != "no",
+        ).all()
+        if suscripcion_al_dia(c, db)
+    ]
+
+@nunca_falla
+def avisar_expreso_nuevo(expreso_id: int):
+    """Le suena a los conductores de la ciudad de origen: hay un viaje a otra ciudad."""
+    db = SessionLocal()
+    mensajes = []
+    try:
+        e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+        if not e or e.estado != "buscando":
+            return
+        cuando = "lo antes posible" if not e.salida else e.salida.strftime("%d/%m %I:%M %p")
+        cuerpo = f"{e.origen_municipio} → {e.destino_municipio} · {e.cupos} cupo(s) a ${e.precio_por_cupo:,}/cupo · {cuando}".replace(",", ".")
+        mensajes = [push.mensaje(c.push_token, "🚌 Viaje a otra ciudad", cuerpo,
+                                 {"tipo": "expreso_nuevo", "expreso_id": e.id}) for c in _conductores_expreso(e, db)]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
+@nunca_falla
+def avisar_expreso_contraoferta(expreso_id: int, conductor_id: int, monto: int):
+    db = SessionLocal()
+    mensajes = []
+    try:
+        e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+        if not e:
+            return
+        cliente = db.query(Usuario).filter(Usuario.id == e.cliente_id).first()
+        conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
+        if not cliente or not cliente.push_token or not conductor:
+            return
+        mensajes = [push.mensaje(cliente.push_token, "Te proponen un precio (otra ciudad)",
+                                 f"{conductor.nombre}: ${monto:,}/cupo".replace(",", "."),
+                                 {"tipo": "expreso_contraoferta", "expreso_id": e.id})]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
+@nunca_falla
+def avisar_expreso_asignado(expreso_id: int, a_conductor: bool):
+    """Avisa al conductor (si a_conductor) o al cliente que el expreso quedo asignado."""
+    db = SessionLocal()
+    mensajes = []
+    try:
+        e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+        if not e:
+            return
+        conductor = db.query(Usuario).filter(Usuario.id == e.conductor_id).first() if e.conductor_id else None
+        cliente = db.query(Usuario).filter(Usuario.id == e.cliente_id).first()
+        destino = conductor if a_conductor else cliente
+        if not destino or not destino.push_token:
+            return
+        if a_conductor:
+            titulo, cuerpo = "Te aceptaron el viaje", f"Recoge en {e.origen} · {e.origen_municipio} → {e.destino_municipio}"
+        else:
+            titulo = "Ya tienes transportador"
+            cuerpo = f"{conductor.nombre if conductor else ''} hará tu viaje a {e.destino_municipio}"
+        mensajes = [push.mensaje(destino.push_token, titulo, cuerpo,
+                                 {"tipo": "expreso_asignado", "expreso_id": e.id})]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
+@app.post("/expresos")
+def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
+                  cupos: int, precio_por_cupo: int, tareas: BackgroundTasks,
+                  origen_lat: float = None, origen_lon: float = None,
+                  destino_detalle: str = None, salida: str = None, notas: str = None,
+                  db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, cliente_id)
+    cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if (cliente.activo or "si") == "no":
+        raise HTTPException(status_code=403, detail="Tu cuenta está bloqueada. Comunícate con soporte.")
+    origen_mun = cliente.municipio or "Orito"
+    destino_municipio = (destino_municipio or "").strip()
+    if not destino_municipio:
+        raise HTTPException(status_code=400, detail="Elige la ciudad de destino")
+    if destino_municipio == origen_mun:
+        raise HTTPException(status_code=400, detail="El destino debe ser OTRA ciudad")
+    if cupos <= 0 or cupos > 20:
+        raise HTTPException(status_code=400, detail="Número de cupos inválido")
+    if precio_por_cupo <= 0:
+        raise HTTPException(status_code=400, detail="El valor por cupo debe ser mayor que cero")
+    salida_dt = None
+    if salida:
+        try:
+            salida_dt = datetime.fromisoformat(salida)
+        except (ValueError, TypeError):
+            salida_dt = None
+    e = Expreso(
+        cliente_id=cliente.id, cliente_nombre=cliente.nombre, cliente_telefono=cliente.telefono,
+        origen_municipio=origen_mun, destino_municipio=destino_municipio, origen=origen,
+        origen_lat=origen_lat, origen_lon=origen_lon, destino_detalle=destino_detalle,
+        cupos=cupos, precio_por_cupo=precio_por_cupo, salida=salida_dt, notas=notas)
+    db.add(e)
+    db.commit()
+    db.refresh(e)
+    tareas.add_task(avisar_expreso_nuevo, e.id)
+    return expreso_dict(e)
+
+@app.get("/expresos/disponibles")
+def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)):
+    """Lo que ve el conductor en 'Otra ciudad': viajes que SALEN de su ciudad. Sin
+    conductor_id devuelve todos los que estan buscando (para el panel)."""
+    q = db.query(Expreso).filter(Expreso.estado == "buscando").order_by(Expreso.fecha.desc())
+    if conductor_id:
+        conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
+        if not conductor:
+            raise HTTPException(status_code=404, detail="Conductor no encontrado")
+        q = q.filter(Expreso.origen_municipio == conductor.municipio)
+        expresos = q.all()
+        mis = {o.expreso_id: o.monto for o in db.query(OfertaExpreso).filter(
+            OfertaExpreso.conductor_id == conductor_id, OfertaExpreso.estado == "pendiente").all()}
+        salida = []
+        for e in expresos:
+            d = expreso_dict(e)
+            d["mi_oferta"] = mis.get(e.id)
+            salida.append(d)
+        return salida
+    return [expreso_dict(e) for e in q.all()]
+
+@app.get("/expresos/cliente/{cliente_id}")
+def expresos_del_cliente(cliente_id: int, db: Session = Depends(get_db)):
+    expresos = db.query(Expreso).filter(Expreso.cliente_id == cliente_id).order_by(Expreso.fecha.desc()).limit(20).all()
+    res = []
+    for e in expresos:
+        conductor = db.query(Usuario).filter(Usuario.id == e.conductor_id).first() if e.conductor_id else None
+        res.append(expreso_dict(e, conductor))
+    return res
+
+@app.get("/expresos/conductor/{conductor_id}")
+def expresos_del_conductor(conductor_id: int, db: Session = Depends(get_db)):
+    expresos = db.query(Expreso).filter(
+        Expreso.conductor_id == conductor_id,
+        Expreso.estado.in_(["aceptado"])).order_by(Expreso.fecha.desc()).all()
+    return [expreso_dict(e, db.query(Usuario).filter(Usuario.id == conductor_id).first()) for e in expresos]
+
+@app.put("/expresos/{expreso_id}/aceptar")
+def aceptar_expreso(expreso_id: int, conductor_id: int, tareas: BackgroundTasks,
+                    db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, conductor_id)
+    conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
+    if not conductor:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    if not suscripcion_al_dia(conductor, db):
+        raise HTTPException(status_code=402, detail="Tu suscripcion se vencio. Renuevala para tomar viajes.")
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if e and e.origen_municipio != conductor.municipio:
+        raise HTTPException(status_code=403, detail="Ese viaje sale de otra ciudad")
+    tomado = db.query(Expreso).filter(Expreso.id == expreso_id, Expreso.estado == "buscando").update(
+        {"conductor_id": conductor_id, "estado": "aceptado", "tarifa_cupo": e.precio_por_cupo if e else None},
+        synchronize_session=False)
+    db.commit()
+    if tomado == 0:
+        raise HTTPException(status_code=409, detail="Ese viaje ya fue tomado por otro conductor")
+    db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
+        {"estado": "descartada"}, synchronize_session=False)
+    db.commit()
+    tareas.add_task(avisar_expreso_asignado, expreso_id, False)   # avisa al cliente
+    return expreso_dict(db.query(Expreso).filter(Expreso.id == expreso_id).first(), conductor)
+
+@app.post("/expresos/{expreso_id}/ofertas")
+def contraofertar_expreso(expreso_id: int, conductor_id: int, monto: int, tareas: BackgroundTasks,
+                          db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, conductor_id)
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto por cupo debe ser mayor que cero")
+    conductor = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
+    if not conductor:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    if not suscripcion_al_dia(conductor, db):
+        raise HTTPException(status_code=402, detail="Tu suscripcion se vencio.")
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    if e.estado != "buscando":
+        raise HTTPException(status_code=409, detail="Ese viaje ya no esta disponible")
+    if e.origen_municipio != conductor.municipio:
+        raise HTTPException(status_code=403, detail="Ese viaje sale de otra ciudad")
+    oferta = db.query(OfertaExpreso).filter(
+        OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.conductor_id == conductor_id,
+        OfertaExpreso.estado == "pendiente").first()
+    if oferta:
+        oferta.monto = monto
+    else:
+        oferta = OfertaExpreso(expreso_id=expreso_id, conductor_id=conductor_id, monto=monto)
+        db.add(oferta)
+    db.commit()
+    db.refresh(oferta)
+    tareas.add_task(avisar_expreso_contraoferta, expreso_id, conductor_id, monto)
+    return oferta_expreso_dict(oferta, conductor)
+
+@app.get("/expresos/{expreso_id}/ofertas")
+def ofertas_de_expreso(expreso_id: int, db: Session = Depends(get_db)):
+    ofertas = db.query(OfertaExpreso).filter(
+        OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").order_by(OfertaExpreso.monto).all()
+    ids = {o.conductor_id for o in ofertas}
+    conductores = {u.id: u for u in db.query(Usuario).filter(Usuario.id.in_(ids)).all()} if ids else {}
+    return [oferta_expreso_dict(o, conductores.get(o.conductor_id)) for o in ofertas]
+
+@app.put("/expresos/{expreso_id}/aceptar-oferta")
+def aceptar_oferta_expreso(expreso_id: int, oferta_id: int, tareas: BackgroundTasks,
+                           db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    duena = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if duena:
+        exigir_dueño(actual, duena.cliente_id)
+    oferta = db.query(OfertaExpreso).filter(OfertaExpreso.id == oferta_id, OfertaExpreso.expreso_id == expreso_id).first()
+    if not oferta:
+        raise HTTPException(status_code=404, detail="Oferta no encontrada")
+    tomado = db.query(Expreso).filter(Expreso.id == expreso_id, Expreso.estado == "buscando").update(
+        {"conductor_id": oferta.conductor_id, "estado": "aceptado", "tarifa_cupo": oferta.monto},
+        synchronize_session=False)
+    db.commit()
+    if tomado == 0:
+        raise HTTPException(status_code=409, detail="Ese viaje ya fue tomado")
+    oferta.estado = "aceptada"
+    db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.id != oferta_id,
+                                   OfertaExpreso.estado == "pendiente").update({"estado": "descartada"}, synchronize_session=False)
+    db.commit()
+    tareas.add_task(avisar_expreso_asignado, expreso_id, True)   # avisa al conductor
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    conductor = db.query(Usuario).filter(Usuario.id == oferta.conductor_id).first()
+    return expreso_dict(e, conductor)
+
+@app.put("/expresos/{expreso_id}/estado")
+def actualizar_estado_expreso(expreso_id: int, estado: str, db: Session = Depends(get_db),
+                              actual: Usuario = Depends(usuario_actual)):
+    if estado not in ("finalizado", "cancelado"):
+        raise HTTPException(status_code=400, detail="Estado inválido para expreso")
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    # lo puede cerrar/cancelar el cliente dueño o el conductor asignado
+    if actual.id not in (e.cliente_id, e.conductor_id) and actual.rol != "admin":
+        raise HTTPException(status_code=403, detail="No es tu viaje")
+    e.estado = estado
+    if estado == "cancelado":
+        db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
+            {"estado": "descartada"}, synchronize_session=False)
+    db.commit()
+    return expreso_dict(e)
 
 @app.put("/carreras/{carrera_id}/estado")
 def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTasks,

@@ -159,6 +159,7 @@ const VEHICULOS = {
 const vehLabel = (t) => (VEHICULOS[t] ? VEHICULOS[t].label : (t || ""));
 const vehIcono = (t) => (VEHICULOS[t] ? VEHICULOS[t].icono : "🚗");
 const esCarga = (t) => VEHICULOS[t] && VEHICULOS[t].grupo === "carga";
+const estadoExpreso = (e) => ({ buscando: "buscando conductor", aceptado: "✅ asignado", finalizado: "finalizado", cancelado: "cancelado" }[e] || e);
 // orden de aparicion: primero personas, luego carga
 const ordenVehiculos = (tipos) =>
   Object.keys(VEHICULOS).filter((t) => tipos.includes(t));
@@ -2033,6 +2034,215 @@ function Estrellas({ valor, size = 13, color = "#B8860B" }) {
   return <Text style={{ fontSize: size, color, fontWeight: "700" }}>⭐ {Number(valor).toFixed(1)}</Text>;
 }
 
+// CLIENTE · viajes a OTRA ciudad (expresos por cupos). Se muestra dentro de Pedir
+// carrera cuando el cliente toca "A otra ciudad". Publica un viaje (destino, cupos,
+// $/cupo, punto de recogida, opcional agendado) y ve las contraofertas para elegir.
+function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
+  const [destino, setDestino] = useState("");
+  const [pin, setPin] = useState(null);
+  const [origenTxt, setOrigenTxt] = useState("");
+  const [destinoDet, setDestinoDet] = useState("");
+  const [cupos, setCupos] = useState("1");
+  const [precio, setPrecio] = useState("");
+  const [notas, setNotas] = useState("");
+  const [programar, setProgramar] = useState(false);
+  const [dia, setDia] = useState(null);
+  const [hora, setHora] = useState(null);
+  const [mapaOpen, setMapaOpen] = useState(false);
+  const [mios, setMios] = useState([]);
+  const [ofertas, setOfertas] = useState({});
+  const [cargando, setCargando] = useState(false);
+
+  const miMuni = usuario.municipio || (muniActual && muniActual.nombre) || "Orito";
+  const otras = (municipios || []).filter(m => m.nombre !== miMuni && m.activo !== "no");
+
+  const cargarMios = () => {
+    fetch(`${API}/expresos/cliente/${usuario.id}`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setMios(d); }).catch(() => {});
+  };
+  useEffect(() => { cargarMios(); const t = setInterval(cargarMios, 5000); return () => clearInterval(t); }, []);
+
+  useEffect(() => {
+    mios.filter(e => e.estado === "buscando").forEach(e => {
+      fetch(`${API}/expresos/${e.id}/ofertas`).then(r => r.json())
+        .then(d => { if (Array.isArray(d)) setOfertas(o => ({ ...o, [e.id]: d })); }).catch(() => {});
+    });
+  }, [mios]);
+
+  const publicar = () => {
+    const c = parseInt(cupos, 10) || 0;
+    const p = parseInt((precio || "").replace(/\D/g, ""), 10) || 0;
+    if (!destino) return avisar("Falta", "Elige la ciudad de destino.");
+    if (!pin) return avisar("Falta", "Marca el punto de recogida en el mapa.");
+    if (c <= 0) return avisar("Falta", "¿Cuántos cupos?");
+    if (p <= 0) return avisar("Falta", "¿Cuánto pagas por cupo?");
+    const salidaISO = (programar && dia && hora) ? isoLocal(dia, hora.h, hora.m) : null;
+    setCargando(true);
+    const params = qs({
+      cliente_id: usuario.id, destino_municipio: destino, origen: origenTxt || "Punto marcado",
+      cupos: c, precio_por_cupo: p, origen_lat: pin.lat, origen_lon: pin.lon,
+      destino_detalle: destinoDet, notas, ...(salidaISO ? { salida: salidaISO } : {}),
+    });
+    userFetch(`${API}/expresos?${params}`, { method: "POST" }).then(async r => {
+      const d = await r.json().catch(() => null);
+      if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+      setDestino(""); setPin(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHora(null);
+      avisar("✅ Viaje publicado", "Los conductores de tu ciudad lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
+      cargarMios();
+    }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
+  };
+
+  const aceptarOferta = (e, of) => {
+    confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}/cupo (total $${(of.monto * e.cupos).toLocaleString()})?`,
+      () => userFetch(`${API}/expresos/${e.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" }).then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+        cargarMios();
+      }).catch(() => avisar("Error", "No hay conexión.")), "Aceptar");
+  };
+
+  const cancelar = (e) => {
+    confirmar("Cancelar viaje", "¿Seguro que quieres cancelar este viaje?",
+      () => userFetch(`${API}/expresos/${e.id}/estado?estado=cancelado`, { method: "PUT" }).then(cargarMios).catch(() => {}), "Sí");
+  };
+
+  const totalCalc = (parseInt(cupos, 10) || 0) * (parseInt((precio || "0").replace(/\D/g, ""), 10) || 0);
+
+  return (
+    <>
+      <View style={styles.card}>
+        <Text style={styles.etiqueta}>🚌 VIAJE A OTRA CIUDAD (EXPRESO)</Text>
+        <Text style={styles.ayuda}>Sales de {miMuni}. Publicas cuántos cupos y cuánto pagas por cupo; un conductor lo toma o te propone precio.</Text>
+        <Text style={[styles.etiqueta, { marginTop: 10 }]}>¿A QUÉ CIUDAD VAS?</Text>
+        {otras.length === 0 ? (
+          <Text style={styles.ayuda}>Aún no hay otras ciudades activas para viajar.</Text>
+        ) : (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {otras.map(m => (
+              <TouchableOpacity key={m.nombre} style={[styles.chip, destino === m.nombre && styles.chipOn]} onPress={() => setDestino(m.nombre)}>
+                <Text style={[styles.chipTxt, destino === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.etiqueta}>¿DÓNDE TE RECOGEN? (en {miMuni})</Text>
+        <TouchableOpacity style={[styles.botonMapa, pin && styles.botonMapaOk]} onPress={() => setMapaOpen(true)}>
+          <Text style={{ color: "#187830", fontWeight: "600" }}>{pin ? "✓ Punto marcado — cambiar en el mapa" : "📍 Marcar el punto en el mapa"}</Text>
+        </TouchableOpacity>
+        <TextInput value={origenTxt} onChangeText={setOrigenTxt} placeholder="Referencia (opcional): terminal, parque..." style={styles.input} />
+        <Text style={styles.etiqueta}>¿DÓNDE TE DEJAN? (en {destino || "la otra ciudad"})</Text>
+        <TextInput value={destinoDet} onChangeText={setDestinoDet} placeholder="Dirección o referencia del destino" style={styles.input} />
+      </View>
+
+      <View style={styles.card}>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.etiqueta}>CUPOS</Text>
+            <TextInput value={cupos} onChangeText={t => setCupos(t.replace(/\D/g, ""))} keyboardType="number-pad" placeholder="1" style={[styles.input, { marginBottom: 0 }]} />
+          </View>
+          <View style={{ flex: 1.6 }}>
+            <Text style={styles.etiqueta}>PAGAS POR CUPO $</Text>
+            <TextInput value={precio} onChangeText={t => setPrecio(t.replace(/\D/g, ""))} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
+          </View>
+        </View>
+        {totalCalc > 0 ? (
+          <Text style={{ fontSize: 13.5, color: "#187830", fontWeight: "700", marginTop: 8 }}>Total: ${totalCalc.toLocaleString()} ({cupos} cupo{cupos === "1" ? "" : "s"})</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.etiqueta}>¿PARA CUÁNDO?</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <TouchableOpacity style={[styles.opcion, !programar && styles.opcionActiva]} onPress={() => setProgramar(false)}>
+            <Text style={[styles.opcionTexto, !programar && styles.opcionTextoActivo]}>Lo antes posible</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.opcion, programar && styles.opcionActiva]} onPress={() => setProgramar(true)}>
+            <Text style={[styles.opcionTexto, programar && styles.opcionTextoActivo]}>Programar</Text>
+          </TouchableOpacity>
+        </View>
+        {programar && (
+          <>
+            <Text style={[styles.ayuda, { marginTop: 12 }]}>Día</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
+                {diasProximos().map(x => {
+                  const act = dia && dia.toDateString() === x.d.toDateString();
+                  return (<TouchableOpacity key={x.key} onPress={() => setDia(x.d)} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
+                })}
+              </View>
+            </ScrollView>
+            <Text style={[styles.ayuda, { marginTop: 8 }]}>Hora</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
+                {horasDelDia().map(x => {
+                  const act = hora && hora.h === x.h && hora.m === x.m;
+                  return (<TouchableOpacity key={x.lbl} onPress={() => setHora({ h: x.h, m: x.m })} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
+                })}
+              </View>
+            </ScrollView>
+          </>
+        )}
+        <TextInput value={notas} onChangeText={setNotas} placeholder="Algo más (equipaje, # de contacto...)" style={[styles.input, { marginTop: 10 }]} />
+      </View>
+
+      <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 4 }]} onPress={publicar} disabled={cargando}>
+        {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Publicar viaje</Text>}
+      </TouchableOpacity>
+
+      {mios.length > 0 && (
+        <View style={{ marginTop: 18 }}>
+          <Text style={styles.seccionTitulo}>Tus viajes a otra ciudad</Text>
+          {mios.map(e => {
+            const ofs = ofertas[e.id] || [];
+            return (
+              <View key={e.id} style={[styles.card, { marginBottom: 10 }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
+                  <Text style={{ fontSize: 11, color: "#888" }}>{estadoExpreso(e.estado)}</Text>
+                </View>
+                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${e.precio_por_cupo.toLocaleString()}/cupo · {e.salida ? fmtRecogida(e.salida) : "lo antes posible"}</Text>
+                {e.estado === "aceptado" && (
+                  <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 8, marginTop: 6 }}>
+                    <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700" }}>✅ {e.conductor_nombre} · ${(e.tarifa_cupo || 0).toLocaleString()}/cupo</Text>
+                    {e.conductor_telefono ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>📞 {e.conductor_telefono}{e.conductor_placa ? ` · ${e.conductor_placa}` : ""}</Text> : null}
+                  </View>
+                )}
+                {e.estado === "buscando" && ofs.length > 0 && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={{ fontSize: 12, color: "#666", fontWeight: "700", marginBottom: 4 }}>Precios que te proponen:</Text>
+                    {ofs.map(of => (
+                      <View key={of.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 5 }}>
+                        <Text style={{ fontSize: 13, color: "#333" }}>{of.conductor_nombre} · ${of.monto.toLocaleString()}/cupo</Text>
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", paddingVertical: 6, paddingHorizontal: 12 }]} onPress={() => aceptarOferta(e, of)}>
+                          <Text style={[styles.buttonText, { fontSize: 12 }]}>Aceptar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {e.estado === "buscando" && (
+                  <TouchableOpacity style={{ marginTop: 8 }} onPress={() => cancelar(e)}>
+                    <Text style={{ color: "#C0392B", fontWeight: "600", fontSize: 12 }}>Cancelar viaje</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      <MapaSelector visible={mapaOpen} titulo="Marca dónde te recogen"
+        centro={pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
+        municipio={miMuni}
+        onConfirmar={(c) => { setPin({ lat: c.lat, lon: c.lon }); setMapaOpen(false); }}
+        onCerrar={() => setMapaOpen(false)} />
+    </>
+  );
+}
+
 function PedirCarreraScreen({ navigation, route }) {
   const { usuario } = route.params;
   const [carrera, setCarrera] = useState(null);
@@ -2046,6 +2256,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [estimado, setEstimado] = useState(null);   // {distancia_km, tarifa_sugerida}
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
+  const [modo, setModo] = useState("local");         // "local" (en la ciudad) | "expreso" (otra ciudad)
   const scrollForm = useRef(null);                   // para subir el campo de oferta sobre el teclado
   // sube CUALQUIER campo por encima del teclado al enfocarlo (no solo la oferta):
   // usa el metodo nativo del ScrollView, que mide el input y lo deja visible.
@@ -2657,6 +2868,18 @@ function PedirCarreraScreen({ navigation, route }) {
             <Text style={{ color: "#187830", fontSize: 12 }}>ver ›</Text>
           </TouchableOpacity>
         )}
+        {/* switch: pedir EN la ciudad, o un viaje a OTRA ciudad (expreso por cupos) */}
+        <View style={{ flexDirection: "row", backgroundColor: "#F6F1E6", borderRadius: 10, padding: 4, marginBottom: 14 }}>
+          {[["local", "🚕 En la ciudad"], ["expreso", "🚌 A otra ciudad"]].map(([mm, lbl]) => (
+            <TouchableOpacity key={mm} style={{ flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: "center", backgroundColor: modo === mm ? "#fff" : "transparent" }} onPress={() => setModo(mm)}>
+              <Text style={{ fontSize: 13, fontWeight: modo === mm ? "700" : "500", color: modo === mm ? "#187830" : "#999" }}>{lbl}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {modo === "expreso" ? (
+          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} />
+        ) : (<>
         {/* 1. UBICACION: primero, porque de aqui se detecta el pueblo */}
         <View style={styles.card}>
           <Text style={styles.etiqueta}>DONDE ESTAS</Text>
@@ -2933,6 +3156,7 @@ function PedirCarreraScreen({ navigation, route }) {
         <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
           {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Pedir carrera</Text>}
         </TouchableOpacity>
+        </>)}
       </ScrollView>
       </KeyboardAvoidingView>
 
@@ -3218,6 +3442,42 @@ function ConductorScreen({ navigation, route }) {
   // --- negociacion del lado del conductor
   const [contraofertando, setContraofertando] = useState(null);
   const [montoOferta, setMontoOferta] = useState("");
+  // expresos (viajes a otra ciudad) que salen de la ciudad del conductor
+  const [expresosDisp, setExpresosDisp] = useState([]);
+  const [misExpresos, setMisExpresos] = useState([]);
+  const [ofExpreso, setOfExpreso] = useState(null);   // expreso al que le va a contraofertar
+  const [montoExp, setMontoExp] = useState("");
+
+  const cargarExpresos = () => {
+    fetch(`${API}/expresos/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setExpresosDisp(d); }).catch(() => {});
+    fetch(`${API}/expresos/conductor/${usuario.id}`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setMisExpresos(d); }).catch(() => {});
+  };
+  useEffect(() => { cargarExpresos(); const t = setInterval(cargarExpresos, 6000); return () => clearInterval(t); }, []);
+
+  const aceptarExpreso = (e) => {
+    confirmar("Tomar este viaje", `${e.origen_municipio} → ${e.destino_municipio} · ${e.cupos} cupo(s) a $${e.precio_por_cupo.toLocaleString()}/cupo (total $${(e.precio_por_cupo * e.cupos).toLocaleString()}). ¿Lo tomas a ese precio?`,
+      () => userFetch(`${API}/expresos/${e.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" }).then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); cargarExpresos(); return; }
+        avisar("✅ Viaje tomado", "Ya es tuyo. Contacta al cliente para coordinar la salida.");
+        cargarExpresos();
+      }).catch(() => avisar("Error", "No hay conexión.")), "Sí, tomar");
+  };
+
+  const enviarOfExpreso = () => {
+    const m = parseInt((montoExp || "").replace(/\D/g, ""), 10) || 0;
+    const e = ofExpreso;
+    if (m <= 0 || !e) return;
+    setOfExpreso(null); setMontoExp("");
+    userFetch(`${API}/expresos/${e.id}/ofertas?conductor_id=${usuario.id}&monto=${m}`, { method: "POST" }).then(async r => {
+      const d = await r.json().catch(() => null);
+      if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); cargarExpresos(); return; }
+      avisar("Oferta enviada", "El cliente verá tu precio por cupo y decide.");
+      cargarExpresos();
+    }).catch(() => avisar("Error", "No hay conexión."));
+  };
 
   // envia una contraoferta al servidor (usada por el teclado y por los botones
   // rapidos de un toque)
@@ -3743,6 +4003,83 @@ function ConductorScreen({ navigation, route }) {
           </View>
         )}
 
+        {tab === "otraciudad" && (
+          <>
+            <View style={{ backgroundColor: "#EAF1FB", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <Text style={{ fontWeight: "800", color: "#1A56B8", fontSize: 14 }}>🚌 Viajes a otra ciudad (expresos)</Text>
+              <Text style={{ fontSize: 12, color: "#3a5a8a", marginTop: 2 }}>Viajes que salen de {usuario.municipio}. Tómalos al precio del cliente o propón tu precio por cupo.</Text>
+            </View>
+
+            {misExpresos.length > 0 && (
+              <>
+                <Text style={styles.seccionTitulo}>Tus viajes tomados</Text>
+                {misExpresos.map(e => (
+                  <View key={e.id} style={[styles.card, { marginBottom: 10, borderLeftWidth: 3, borderLeftColor: "#187830" }]}>
+                    <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
+                    <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${(e.tarifa_cupo || e.precio_por_cupo).toLocaleString()}/cupo · {e.salida ? fmtRecogida(e.salida) : "lo antes posible"}</Text>
+                    <Text style={{ fontSize: 13, color: "#333", marginTop: 4 }}>🟢 Recoge: {e.origen}</Text>
+                    {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
+                    <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre} · 📞 {e.cliente_telefono}</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => llamar(e.cliente_telefono)}>
+                        <Text style={[styles.buttonText, { fontSize: 13 }]}>📞 Llamar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#25D366", padding: 10 }]} onPress={() => whatsapp(e.cliente_telefono)}>
+                        <Text style={[styles.buttonText, { fontSize: 13 }]}>💬 WhatsApp</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity style={{ marginTop: 8, alignSelf: "flex-start" }}
+                      onPress={() => confirmar("Finalizar viaje", "¿Marcar este viaje como terminado?", () => userFetch(`${API}/expresos/${e.id}/estado?estado=finalizado`, { method: "PUT" }).then(cargarExpresos).catch(() => {}), "Sí")}>
+                      <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>🏁 Finalizar viaje</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </>
+            )}
+
+            <Text style={styles.seccionTitulo}>Disponibles</Text>
+            {expresosDisp.length === 0 ? (
+              <View style={{ alignItems: "center", padding: 24 }}>
+                <Text style={{ fontSize: 34 }}>🚌</Text>
+                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>No hay viajes a otra ciudad ahora.{"\n"}Cuando alguien publique uno desde {usuario.municipio}, aparece aquí.</Text>
+              </View>
+            ) : expresosDisp.map(e => (
+              <View key={e.id} style={[styles.card, { marginBottom: 10 }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
+                  <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
+                </View>
+                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) por cupo · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
+                <Text style={{ fontSize: 12.5, color: "#B85C00", fontWeight: "600", marginTop: 2 }}>🗓️ {e.salida ? fmtRecogida(e.salida) : "Lo antes posible"}</Text>
+                <Text style={{ fontSize: 13, color: "#333", marginTop: 4 }}>🟢 Recoge: {e.origen}</Text>
+                {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
+                {e.notas ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📝 {e.notas}</Text> : null}
+                <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
+                {e.mi_oferta ? (
+                  <View style={{ marginTop: 10 }}>
+                    <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, padding: 10 }}>
+                      <Text style={{ fontSize: 13, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${e.mi_oferta.toLocaleString()}/cupo</Text>
+                      <Text style={{ fontSize: 11.5, color: "#5a7a9a", marginTop: 2 }}>Esperando que el cliente responda.</Text>
+                    </View>
+                    <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 10, marginTop: 8 }]} onPress={() => { setMontoExp(String(e.mi_oferta)); setOfExpreso(e); }}>
+                      <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Cambiar mi oferta</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptarExpreso(e)}>
+                      <Text style={[styles.buttonText, { fontSize: 13 }]}>Tomar ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoExp(String(e.precio_por_cupo)); setOfExpreso(e); }}>
+                      <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Proponer otro</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            ))}
+          </>
+        )}
+
       </ScrollView>
 
       {/* barra de ESTADO (el tic-tac): Conectado -> Buscando -> Viaje disponible */}
@@ -3770,11 +4107,11 @@ function ConductorScreen({ navigation, route }) {
 
       {/* barra de pestañas (con espacio para la barra del sistema en Samsung y similares) */}
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        {[["solicitudes", "📋", "Solicitudes"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
+        {[["solicitudes", "📋", "Solicitudes"], ["otraciudad", "🚌", "Otra ciudad"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
           <TouchableOpacity key={k} style={styles.tabBarItem}
             onPress={() => k === "salir" ? (detenerRastreoFondo(), navigation.replace("Login")) : (animar(), setTab(k))}>
             <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
-            <Text style={{ fontSize: 11, marginTop: 2, color: tab === k ? "#187830" : "#999", fontWeight: tab === k ? "700" : "400" }}>{lbl}</Text>
+            <Text style={{ fontSize: 10, marginTop: 2, color: tab === k ? "#187830" : "#999", fontWeight: tab === k ? "700" : "400" }} numberOfLines={1}>{lbl}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -3906,6 +4243,35 @@ function ConductorScreen({ navigation, route }) {
                 <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={contraofertar}>
+                <Text style={styles.buttonText}>Enviar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* contraoferta de un EXPRESO (precio por cupo) */}
+      <Modal visible={!!ofExpreso} transparent animationType="fade" onRequestClose={() => setOfExpreso(null)}>
+        <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <View style={styles.ventanaModal}>
+            <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Tu precio por cupo</Text>
+            <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
+              {ofExpreso ? `${ofExpreso.origen_municipio} → ${ofExpreso.destino_municipio} · ${ofExpreso.cupos} cupo(s). El cliente ofrece $${ofExpreso.precio_por_cupo.toLocaleString()}/cupo.` : ""}
+            </Text>
+            <View style={styles.ofertaFila}>
+              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
+              <TextInput value={montoExp} onChangeText={(t) => setMontoExp(t.replace(/\D/g, ""))}
+                placeholder="0" keyboardType="number-pad" style={styles.ofertaInput} autoFocus />
+              <Text style={{ fontSize: 14, color: "#888" }}>/cupo</Text>
+            </View>
+            {ofExpreso && parseInt(montoExp || "0", 10) > 0 ? (
+              <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", marginTop: 6 }}>Total: ${(parseInt(montoExp, 10) * ofExpreso.cupos).toLocaleString()}</Text>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setOfExpreso(null)}>
+                <Text style={{ color: "#888", fontWeight: "600" }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830" }]} onPress={enviarOfExpreso}>
                 <Text style={styles.buttonText}>Enviar</Text>
               </TouchableOpacity>
             </View>

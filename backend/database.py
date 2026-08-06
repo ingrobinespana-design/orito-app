@@ -213,6 +213,41 @@ class Carrera(Base):
     estrellas_cliente = Column(Integer, nullable=True)     # el CONDUCTOR califica al cliente
     fecha = Column(DateTime, default=datetime.now)
 
+class Expreso(Base):
+    """Viaje INTERMUNICIPAL (ciudad a ciudad), tipo expreso por cupos. Lo publica el
+    cliente: de su ciudad a otra, con N cupos a $X por cupo, punto de recogida y de
+    entrega, y opcionalmente agendado. Los conductores de la ciudad de ORIGEN lo ven
+    y lo toman o contraofertan (por cupo). Aparte del transporte local."""
+    __tablename__ = "expresos"
+    id = Column(Integer, primary_key=True, index=True)
+    cliente_id = Column(Integer, ForeignKey("usuarios.id"))
+    cliente_nombre = Column(String)
+    cliente_telefono = Column(String)
+    origen_municipio = Column(String)     # ciudad de salida (la del cliente)
+    destino_municipio = Column(String)    # ciudad de destino
+    origen = Column(String)               # punto de recogida (texto)
+    origen_lat = Column(Float, nullable=True)
+    origen_lon = Column(Float, nullable=True)
+    destino_detalle = Column(String, nullable=True)   # a donde llega en la otra ciudad
+    cupos = Column(Integer, default=1)                 # numero de pasajeros / cupos
+    precio_por_cupo = Column(Integer)                  # lo que ofrece el cliente por cupo
+    salida = Column(DateTime, nullable=True)           # cuando sale; null = lo antes posible
+    notas = Column(Text, nullable=True)
+    conductor_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    tarifa_cupo = Column(Integer, nullable=True)       # $/cupo ACORDADO al asignarse
+    estado = Column(String, default="buscando")        # buscando/aceptado/finalizado/cancelado
+    fecha = Column(DateTime, default=datetime.now)
+
+class OfertaExpreso(Base):
+    """Contraoferta de un conductor a un expreso (monto POR CUPO)."""
+    __tablename__ = "ofertas_expreso"
+    id = Column(Integer, primary_key=True, index=True)
+    expreso_id = Column(Integer, ForeignKey("expresos.id"))
+    conductor_id = Column(Integer, ForeignKey("usuarios.id"))
+    monto = Column(Integer)   # por cupo
+    estado = Column(String, default="pendiente")   # pendiente / aceptada / descartada
+    fecha = Column(DateTime, default=datetime.now)
+
 class Municipio(Base):
     """Pueblos donde opera la app y que vehiculos se permiten en cada uno.
     En Orito todavia no hay mototaxi, asi que alla la opcion no debe aparecer;
