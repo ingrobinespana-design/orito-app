@@ -2049,12 +2049,18 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const [dia, setDia] = useState(null);
   const [hora, setHora] = useState(null);
   const [mapaOpen, setMapaOpen] = useState(false);
+  const [pinDest, setPinDest] = useState(null);       // destino EXACTO en el mapa (puerta a puerta)
+  const [mapaDestOpen, setMapaDestOpen] = useState(false);
   const [mios, setMios] = useState([]);
   const [ofertas, setOfertas] = useState({});
   const [cargando, setCargando] = useState(false);
 
   const miMuni = usuario.municipio || (muniActual && muniActual.nombre) || "Orito";
   const otras = (municipios || []).filter(m => m.nombre !== miMuni && m.activo !== "no");
+  // si el destino coincide con una ciudad conocida, el mapa del destino abre en su
+  // centro; si es texto libre, usa el buscador del mapa para ubicarlo
+  const destMuni = (municipios || []).find(m => m.nombre === destino);
+  const destCentro = destMuni && destMuni.centro_lat != null ? { lat: destMuni.centro_lat, lon: destMuni.centro_lon } : null;
 
   const cargarMios = () => {
     fetch(`${API}/expresos/cliente/${usuario.id}`).then(r => r.json())
@@ -2083,11 +2089,12 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
       cliente_id: usuario.id, destino_municipio: destino, origen: origenTxt || "Punto marcado",
       cupos: c, precio_por_cupo: p, origen_lat: pin.lat, origen_lon: pin.lon,
       destino_detalle: destinoDet, notas, ...(salidaISO ? { salida: salidaISO } : {}),
+      ...(pinDest ? { destino_lat: pinDest.lat, destino_lon: pinDest.lon } : {}),
     });
     userFetch(`${API}/expresos?${params}`, { method: "POST" }).then(async r => {
       const d = await r.json().catch(() => null);
       if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
-      setDestino(""); setPin(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHora(null);
+      setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHora(null);
       avisar("✅ Viaje publicado", "Los conductores de tu ciudad lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
       cargarMios();
     }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
@@ -2129,6 +2136,10 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
           </>
         )}
         <TextInput value={destinoDet} onChangeText={setDestinoDet} placeholder="¿Dónde exactamente te dejan? (dirección/referencia)" style={[styles.input, { marginTop: 10 }]} />
+        <TouchableOpacity style={[styles.botonMapa, { marginTop: 4 }, pinDest && styles.botonMapaOk]} onPress={() => setMapaDestOpen(true)}>
+          <Text style={{ color: "#187830", fontWeight: "700" }}>{pinDest ? "✓ Destino marcado — cambiar" : "🗺️ Marcar el destino EXACTO en el mapa (puerta a puerta)"}</Text>
+        </TouchableOpacity>
+        <Text style={styles.ayuda}>Puerta a puerta: usa el buscador del mapa para ubicar la dirección en {destino || "la otra ciudad"} y marca el punto.</Text>
       </View>
 
       <View style={styles.card}>
@@ -2236,7 +2247,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                       <MapaSeguimiento key={"exp-" + e.id}
                         conductor={{ lat: e.conductor_lat, lon: e.conductor_lon }}
                         recogida={e.origen_lat != null ? { lat: e.origen_lat, lon: e.origen_lon } : null}
-                        destino={null} rutaA="destino" lleno />
+                        destino={e.destino_lat != null ? { lat: e.destino_lat, lon: e.destino_lon } : null}
+                        rutaA="destino" lleno />
                     </View>
                     {e.conductor_ubic_fecha && (Date.now() - new Date(e.conductor_ubic_fecha).getTime()) > 90000 && (
                       <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 4 }}>Última ubicación {haceCuanto(e.conductor_ubic_fecha)}</Text>
@@ -2272,6 +2284,12 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
         municipio={miMuni}
         onConfirmar={(c) => { setPin({ lat: c.lat, lon: c.lon }); setMapaOpen(false); }}
         onCerrar={() => setMapaOpen(false)} />
+
+      <MapaSelector visible={mapaDestOpen} titulo={`Marca el destino${destino ? ` en ${destino}` : ""}`}
+        centro={pinDest || destCentro || gpsRapido || null}
+        municipio={destino || "Colombia"}
+        onConfirmar={(c) => { setPinDest({ lat: c.lat, lon: c.lon }); setMapaDestOpen(false); }}
+        onCerrar={() => setMapaDestOpen(false)} />
     </>
   );
 }
@@ -4059,6 +4077,20 @@ function ConductorScreen({ navigation, route }) {
                     <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
                     {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
                     <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre} · 📞 {e.cliente_telefono}</Text>
+                    {(e.origen_lat != null || e.destino_lat != null) && (
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                        {e.origen_lat != null && (
+                          <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#1A73E8", padding: 9 }]} onPress={() => navegarGoogleMaps(e.origen_lat, e.origen_lon)}>
+                            <Text style={[styles.buttonText, { fontSize: 12.5 }]}>🧭 Ir a recoger</Text>
+                          </TouchableOpacity>
+                        )}
+                        {e.destino_lat != null && (
+                          <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#1A73E8", padding: 9 }]} onPress={() => navegarGoogleMaps(e.destino_lat, e.destino_lon)}>
+                            <Text style={[styles.buttonText, { fontSize: 12.5 }]}>🧭 Ir al destino</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
                     {e.estado === "en_camino" && (
                       <View style={{ backgroundColor: "#E7F0FF", borderRadius: 8, padding: 8, marginTop: 6 }}>
                         <Text style={{ fontSize: 12.5, color: "#1A73E8", fontWeight: "700" }}>🚗 En recorrido hacia {e.destino_municipio}</Text>

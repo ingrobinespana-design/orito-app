@@ -1782,6 +1782,7 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
         "origen_municipio": e.origen_municipio, "destino_municipio": e.destino_municipio,
         "origen": e.origen, "origen_lat": e.origen_lat, "origen_lon": e.origen_lon,
         "destino_detalle": e.destino_detalle,
+        "destino_lat": e.destino_lat, "destino_lon": e.destino_lon,
         "cupos": e.cupos, "precio_por_cupo": e.precio_por_cupo,
         "salida": e.salida, "notas": e.notas, "estado": e.estado,
         "conductor_id": e.conductor_id,
@@ -1884,7 +1885,8 @@ def avisar_expreso_asignado(expreso_id: int, a_conductor: bool):
 def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
                   cupos: int, precio_por_cupo: int, tareas: BackgroundTasks,
                   origen_lat: float = None, origen_lon: float = None,
-                  destino_detalle: str = None, salida: str = None, notas: str = None,
+                  destino_detalle: str = None, destino_lat: float = None, destino_lon: float = None,
+                  salida: str = None, notas: str = None,
                   db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, cliente_id)
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
@@ -1912,6 +1914,7 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         cliente_id=cliente.id, cliente_nombre=cliente.nombre, cliente_telefono=cliente.telefono,
         origen_municipio=origen_mun, destino_municipio=destino_municipio, origen=origen,
         origen_lat=origen_lat, origen_lon=origen_lon, destino_detalle=destino_detalle,
+        destino_lat=destino_lat, destino_lon=destino_lon,
         cupos=cupos, precio_por_cupo=precio_por_cupo, salida=salida_dt, notas=notas)
     db.add(e)
     db.commit()

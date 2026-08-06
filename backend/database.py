@@ -229,6 +229,8 @@ class Expreso(Base):
     origen_lat = Column(Float, nullable=True)
     origen_lon = Column(Float, nullable=True)
     destino_detalle = Column(String, nullable=True)   # a donde llega en la otra ciudad
+    destino_lat = Column(Float, nullable=True)         # punto EXACTO de destino (puerta a puerta)
+    destino_lon = Column(Float, nullable=True)
     cupos = Column(Integer, default=1)                 # numero de pasajeros / cupos
     precio_por_cupo = Column(Integer)                  # lo que ofrece el cliente por cupo
     salida = Column(DateTime, nullable=True)           # cuando sale; null = lo antes posible
@@ -425,6 +427,12 @@ def crear_tablas():
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE municipios ADD COLUMN {columna}"))
+        except Exception:
+            pass
+    for columna in ("destino_lat FLOAT", "destino_lon FLOAT"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE expresos ADD COLUMN {columna}"))
         except Exception:
             pass
     # semilla para que el primer usuario no vea el campo vacio; de ahi en adelante
