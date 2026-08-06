@@ -208,9 +208,11 @@ class Carrera(Base):
     recogida = Column(DateTime, nullable=True)
     # momento en que el conductor llego al punto de recogida (fase en_sitio)
     llego_recogida = Column(DateTime, nullable=True)
-    # calificacion mutua al terminar (1 a 5 estrellas)
+    # calificacion mutua al terminar (1 a 5 estrellas) + comentario opcional
     estrellas_conductor = Column(Integer, nullable=True)   # el CLIENTE califica al conductor
     estrellas_cliente = Column(Integer, nullable=True)     # el CONDUCTOR califica al cliente
+    comentario_conductor = Column(Text, nullable=True)     # comentario del CLIENTE sobre el conductor
+    comentario_cliente = Column(Text, nullable=True)       # comentario del CONDUCTOR sobre el cliente
     fecha = Column(DateTime, default=datetime.now)
 
 class Expreso(Base):
@@ -414,7 +416,8 @@ def crear_tablas():
                     "vehiculo_pedido VARCHAR", "origen_lat FLOAT", "origen_lon FLOAT",
                     "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
                     "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER", "recogida TIMESTAMP",
-                    "llego_recogida TIMESTAMP", "estrellas_conductor INTEGER", "estrellas_cliente INTEGER"):
+                    "llego_recogida TIMESTAMP", "estrellas_conductor INTEGER", "estrellas_cliente INTEGER",
+                    "comentario_conductor VARCHAR", "comentario_cliente VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))

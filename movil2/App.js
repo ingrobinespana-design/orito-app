@@ -2018,28 +2018,31 @@ function navegarGoogleMapsTexto(texto) {
 // ventana de calificacion mutua (1 a 5 estrellas) al terminar la carrera
 function ModalEstrellas({ visible, titulo, subtitulo, onEnviar, onCerrar }) {
   const [sel, setSel] = useState(0);
-  useEffect(() => { if (visible) setSel(0); }, [visible]);
+  const [comentario, setComentario] = useState("");
+  useEffect(() => { if (visible) { setSel(0); setComentario(""); } }, [visible]);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCerrar}>
-      <View style={styles.fondoModal}>
+      <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <View style={styles.ventanaModal}>
           <Text style={{ fontSize: 18, fontWeight: "800", color: "#111", textAlign: "center" }}>{titulo}</Text>
           {subtitulo ? <Text style={{ fontSize: 14, color: "#666", textAlign: "center", marginTop: 4 }}>{subtitulo}</Text> : null}
-          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 18, marginBottom: 18 }}>
+          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 18, marginBottom: 14 }}>
             {[1, 2, 3, 4, 5].map(n => (
               <TouchableOpacity key={n} onPress={() => setSel(n)} style={{ paddingHorizontal: 5 }}>
                 <Text style={{ fontSize: 42, opacity: n <= sel ? 1 : 0.22 }}>⭐</Text>
               </TouchableOpacity>
             ))}
           </View>
-          <TouchableOpacity style={[styles.button, { backgroundColor: sel ? "#187830" : "#bbb", padding: 12 }]} disabled={!sel} onPress={() => onEnviar(sel)}>
+          <TextInput value={comentario} onChangeText={setComentario}
+            placeholder="Comentario (opcional): ¿cómo estuvo?" style={[styles.input, { minHeight: 46 }]} multiline />
+          <TouchableOpacity style={[styles.button, { backgroundColor: sel ? "#187830" : "#bbb", padding: 12 }]} disabled={!sel} onPress={() => onEnviar(sel, comentario.trim())}>
             <Text style={styles.buttonText}>Enviar calificación</Text>
           </TouchableOpacity>
           <TouchableOpacity style={{ padding: 10, marginTop: 2 }} onPress={onCerrar}>
             <Text style={{ textAlign: "center", color: "#888" }}>Ahora no</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -2627,10 +2630,10 @@ function PedirCarreraScreen({ navigation, route }) {
       visible={!!porCalificar}
       titulo="Califica a tu conductor"
       subtitulo={porCalificar ? `¿Cómo estuvo el viaje con ${porCalificar.conductor_nombre || "tu conductor"}?` : ""}
-      onEnviar={(estrellas) => {
+      onEnviar={(estrellas, comentario) => {
         const id = porCalificar && porCalificar.id;
         setPorCalificar(null);
-        if (id) userFetch(`${API}/carreras/${id}/calificar?estrellas=${estrellas}`, { method: "PUT" }).catch(() => {});
+        if (id) userFetch(`${API}/carreras/${id}/calificar?estrellas=${estrellas}${comentario ? `&comentario=${encodeURIComponent(comentario)}` : ""}`, { method: "PUT" }).catch(() => {});
       }}
       onCerrar={() => setPorCalificar(null)}
     />
@@ -3525,6 +3528,12 @@ function ConductorScreen({ navigation, route }) {
   const cambiarEstado = (c, estado) => {
     userFetch(`${API}/carreras/${c.id}/estado?estado=${estado}`, { method: "PUT" }).then(cargar).catch(() => {});
   };
+  // "ya lo recogí, iniciar viaje": pasa a en_camino y ABRE la navegacion al destino
+  const iniciarViajeLocal = (c) => {
+    cambiarEstado(c, "en_camino");
+    if (c.destino_lat != null) navegarGoogleMaps(c.destino_lat, c.destino_lon);
+    else if (c.destino) navegarGoogleMapsTexto(c.destino);
+  };
 
   // --- negociacion del lado del conductor
   const [contraofertando, setContraofertando] = useState(null);
@@ -3813,7 +3822,7 @@ function ConductorScreen({ navigation, route }) {
         </TouchableOpacity>
       )}
       {propia && c.estado === "en_sitio" && (
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => cambiarEstado(c, "en_camino")}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => iniciarViajeLocal(c)}>
           <Text style={styles.buttonText}>🚗 Ya lo recogí — Iniciar viaje</Text>
         </TouchableOpacity>
       )}
@@ -4274,10 +4283,10 @@ function ConductorScreen({ navigation, route }) {
         visible={!!calificarCliente}
         titulo="Califica al cliente"
         subtitulo={calificarCliente ? `¿Cómo fue el servicio con ${calificarCliente.cliente_nombre || "el cliente"}?` : ""}
-        onEnviar={(estrellas) => {
+        onEnviar={(estrellas, comentario) => {
           const id = calificarCliente && calificarCliente.id;
           setCalificarCliente(null);
-          if (id) userFetch(`${API}/carreras/${id}/calificar?estrellas=${estrellas}`, { method: "PUT" }).catch(() => {});
+          if (id) userFetch(`${API}/carreras/${id}/calificar?estrellas=${estrellas}${comentario ? `&comentario=${encodeURIComponent(comentario)}` : ""}`, { method: "PUT" }).catch(() => {});
         }}
         onCerrar={() => setCalificarCliente(null)}
       />

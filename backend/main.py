@@ -944,6 +944,8 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "llego_recogida": c.llego_recogida,
         "estrellas_conductor": c.estrellas_conductor,
         "estrellas_cliente": c.estrellas_cliente,
+        "comentario_conductor": c.comentario_conductor,
+        "comentario_cliente": c.comentario_cliente,
         "conductor_calificacion": conductor.calificacion if conductor else None,
         "fecha": c.fecha,
     }
@@ -2119,21 +2121,24 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTa
     return carrera_dict(carrera, conductor)
 
 @app.put("/carreras/{carrera_id}/calificar")
-def calificar_carrera(carrera_id: int, estrellas: int, db: Session = Depends(get_db),
-                      actual: Usuario = Depends(usuario_actual)):
-    """Calificacion mutua al terminar (1 a 5). El cliente califica al conductor y
-    el conductor al cliente; segun quien llama se guarda en el campo que toca y se
-    recalcula el promedio del usuario calificado."""
+def calificar_carrera(carrera_id: int, estrellas: int, comentario: str = None,
+                      db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    """Calificacion mutua al terminar (1 a 5) con comentario opcional. El cliente
+    califica al conductor y el conductor al cliente; segun quien llama se guarda en
+    el campo que toca y se recalcula el promedio del usuario calificado."""
     if estrellas < 1 or estrellas > 5:
         raise HTTPException(status_code=400, detail="Las estrellas van de 1 a 5")
     carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
     if not carrera:
         raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    coment = (comentario or "").strip()[:500] or None
     if actual.id == carrera.cliente_id:
         carrera.estrellas_conductor = estrellas        # el cliente califica al conductor
+        carrera.comentario_conductor = coment
         calificado_id, campo = carrera.conductor_id, "conductor"
     elif actual.id == carrera.conductor_id:
         carrera.estrellas_cliente = estrellas          # el conductor califica al cliente
+        carrera.comentario_cliente = coment
         calificado_id, campo = carrera.cliente_id, "cliente"
     else:
         raise HTTPException(status_code=403, detail="Esta carrera no es tuya")
