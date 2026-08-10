@@ -1619,6 +1619,31 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   const [busqueda, setBusqueda] = useState("");
   const [buscandoLugar, setBuscandoLugar] = useState(false);
   const [encontrado, setEncontrado] = useState(null);   // nombre del sitio hallado, para confirmar "es aqui"
+  const [sugerencias, setSugerencias] = useState([]);    // autocompletar Mapbox (tipo Uber)
+
+  // AUTOCOMPLETAR (tipo Uber): mientras escribes, el backend sugiere direcciones con
+  // Mapbox (mucho mejor que Nominatim para nomenclatura de ciudades). Se sesga hacia
+  // donde miras el mapa. Si no hay red, queda vacio y el usuario usa "Buscar"
+  // (Nominatim) o marca en el mapa — nunca se queda sin poder ubicar.
+  useEffect(() => {
+    const t = busqueda.trim();
+    if (t.length < 3) { setSugerencias([]); return; }
+    const timer = setTimeout(() => {
+      const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
+      fetch(`${API}/ubicacion/autocompletar?texto=${encodeURIComponent(t)}${cerca}`)
+        .then(r => r.json())
+        .then(d => { if (Array.isArray(d)) setSugerencias(d); }).catch(() => {});
+    }, 350);   // espera a que deje de escribir, para no llamar en cada tecla
+    return () => clearTimeout(timer);
+  }, [busqueda]);
+
+  const elegirSugerencia = (s) => {
+    setCoords({ lat: s.lat, lon: s.lon });
+    setBusqueda(s.nombre.split(",").slice(0, 2).join(", ").trim());
+    setSugerencias([]);
+    setEncontrado(s.nombre.split(",").slice(0, 3).join(",").trim());
+    webRef.current && webRef.current.injectJavaScript(`irA(${s.lat}, ${s.lon}); true;`);
+  };
 
   // buscador: escribe un sitio, se geocodifica y el pin salta ahi en el mapa.
   // No graba nada; solo mueve el pin para que confirmes/ajustes a mano.
@@ -1674,7 +1699,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
           <TextInput
             value={busqueda}
             onChangeText={setBusqueda}
-            placeholder="🔎 Buscar un sitio (ej. Parque Principal)"
+            placeholder="🔎 Escribe la dirección (ej. Carrera 39 #10, Cali)"
             style={[styles.input, { flex: 1, marginBottom: 0 }]}
             onSubmitEditing={buscarLugar}
             returnKeyType="search"
@@ -1683,6 +1708,17 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             {buscandoLugar ? <ActivityIndicator color="#fff" /> : <Text style={[styles.buttonText, { fontSize: 14 }]}>Buscar</Text>}
           </TouchableOpacity>
         </View>
+        {sugerencias.length > 0 ? (
+          <View style={{ marginHorizontal: 14, marginTop: 6, backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#eee", overflow: "hidden" }}>
+            {sugerencias.map((s, i) => (
+              <TouchableOpacity key={i} onPress={() => elegirSugerencia(s)}
+                style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: i < sugerencias.length - 1 ? 0.5 : 0, borderBottomColor: "#f0f0f0", flexDirection: "row", gap: 8, alignItems: "center" }}>
+                <Text style={{ fontSize: 15 }}>📍</Text>
+                <Text style={{ flex: 1, fontSize: 13, color: "#333" }} numberOfLines={2}>{s.nombre}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
         {encontrado ? (
           <View style={{ marginHorizontal: 14, marginTop: 8, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
             <Text style={{ fontSize: 16 }}>📍</Text>
@@ -1698,7 +1734,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             // baseUrl le da un origen https valido: sin esto Android usa "about:blank"
             // y varios servidores de mapas rechazan las peticiones de imagenes
             source={{ html: mapaHTML(inicial.lat, inicial.lon), baseUrl: "https://orito.app/" }}
-            onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); setEncontrado(null); } catch (_) {} }}
+            onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); setEncontrado(null); setSugerencias([]); } catch (_) {} }}
             javaScriptEnabled
             domStorageEnabled
             mixedContentMode="always"

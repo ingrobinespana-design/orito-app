@@ -1363,6 +1363,45 @@ def geocodificar_amplio(nombre: str, lat=None, lon=None, acotado=False):
     except Exception:
         return None
 
+# Buscador Mapbox mediado por el backend: el token del usuario esta RESTRINGIDO por
+# URL (permite orito.app), asi que las peticiones se mandan con ese Referer. Vive en
+# el servidor para poder cambiar de proveedor sin publicar app nueva (expansion).
+# El token 'pk.' es publico por diseno; se puede sobreescribir por env sin tocar codigo.
+MAPBOX_TOKEN = os.environ.get(
+    "MAPBOX_TOKEN",
+    "pk.eyJ1IjoiZGFyd2luZSIsImEiOiJjbXNkenQ2Ym4wMDN3MnhxMGoxZGlyN3R2In0.WwBcBvXWmpy-I55Ceud-Lg")
+MAPBOX_REFERER = os.environ.get("MAPBOX_REFERER", "https://orito.app/")
+
+@app.get("/ubicacion/autocompletar")
+def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: float = None):
+    """Autocompletar direcciones con Mapbox (tipo Uber): mucho mejor que Nominatim
+    para la nomenclatura de ciudades. Devuelve sugerencias [{nombre, lat, lon}]
+    sesgadas hacia donde mira el usuario. Falla en silencio (lista vacia)."""
+    t = (texto or "").strip()
+    if len(t) < 3:
+        return []
+    try:
+        import urllib.request as _ur, urllib.parse as _up, json as _json
+        params = {
+            "access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
+            "limit": "6", "autocomplete": "true",
+            "types": "address,poi,place,locality,neighborhood",
+        }
+        if cerca_lat is not None and cerca_lon is not None:
+            params["proximity"] = f"{cerca_lon},{cerca_lat}"
+        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{_up.quote(t)}.json?" + _up.urlencode(params)
+        req = _ur.Request(url, headers={"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"})
+        with _ur.urlopen(req, timeout=5) as r:
+            data = _json.loads(r.read().decode("utf-8"))
+        salida = []
+        for f in data.get("features", []):
+            c = f.get("center")
+            if c and len(c) == 2:
+                salida.append({"nombre": f.get("place_name"), "lat": c[1], "lon": c[0]})
+        return salida
+    except Exception:
+        return []
+
 @app.get("/ubicacion/buscar")
 def buscar_coordenadas(texto: str, municipio: str = "Orito",
                        cerca_lat: float = None, cerca_lon: float = None,
