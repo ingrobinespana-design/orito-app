@@ -3149,7 +3149,7 @@ function PedirCarreraScreen({ navigation, route }) {
               <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830", marginTop: 2 }} numberOfLines={2}>{form.origen || "📍 Punto marcado"}</Text>
             </View>
           ) : (
-            <Text style={styles.ayuda}>Usa el GPS o marca el punto en el mapa para fijar dónde estás.</Text>
+            <Text style={styles.ayuda}>No necesitas saber la dirección: toca "Usar mi ubicación" o marca el punto en el mapa.</Text>
           )}
           <TextInput
             value={form.origen_detalle}
@@ -3285,7 +3285,7 @@ function PedirCarreraScreen({ navigation, route }) {
               <Text style={{ fontSize: 15, fontWeight: "700", color: "#B85C00", marginTop: 2 }} numberOfLines={2}>{form.destino || "🏁 Punto marcado"}</Text>
             </View>
           ) : (
-            <Text style={styles.ayuda}>Marca en el mapa a dónde vas.</Text>
+            <Text style={styles.ayuda}>No sabes la dirección exacta? Busca un sitio conocido en el mapa (ej. "Terminal", "Éxito") o marca el punto con el dedo.</Text>
           )}
           <TextInput
             ref={refDestDet}
