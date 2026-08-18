@@ -2051,6 +2051,34 @@ function navegarGoogleMapsTexto(texto) {
     .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`).catch(() => {}));
 }
 
+// una carrera del historial (pasada). Sirve para el conductor y para el cliente:
+// segun quien mira, muestra a la contraparte y la calificacion que recibio.
+function TarjetaHistorial({ c, esConductor }) {
+  const fin = c.estado === "finalizada";
+  const badge = fin ? { t: "Finalizada", col: "#187830", bg: "#EAF6EC" } : { t: "Cancelada", col: "#C0392B", bg: "#FDECEA" };
+  const precio = c.tarifa || c.tarifa_ofrecida;
+  const contra = esConductor ? c.cliente_nombre : c.conductor_nombre;
+  const estrellas = esConductor ? c.estrellas_conductor : c.estrellas_cliente;   // la que recibio quien mira
+  return (
+    <View style={{ backgroundColor: "#fff", borderRadius: 10, padding: 12, marginBottom: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Text style={{ fontSize: 12, color: "#999" }}>{haceCuanto(c.fecha)}{esCarga(c.vehiculo_pedido) ? "  ·  🚚 acarreo" : ""}</Text>
+        <View style={{ backgroundColor: badge.bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+          <Text style={{ fontSize: 11, color: badge.col, fontWeight: "700" }}>{badge.t}</Text>
+        </View>
+      </View>
+      <Text numberOfLines={1} style={{ fontSize: 13.5, color: "#333", marginTop: 5 }}>🟢 {c.origen}</Text>
+      <Text numberOfLines={1} style={{ fontSize: 13.5, color: "#333", marginTop: 1 }}>🔴 {c.destino}</Text>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+        <Text style={{ fontSize: 12.5, color: "#666" }} numberOfLines={1}>
+          {contra ? `${esConductor ? "👤" : "🚕"} ${contra}` : "—"}{estrellas ? `  ·  ⭐ ${Number(estrellas).toFixed(0)}` : ""}
+        </Text>
+        {precio ? <Text style={{ fontSize: 16, fontWeight: "800", color: fin ? "#187830" : "#999" }}>${precio.toLocaleString()}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
 // ventana de calificacion mutua (1 a 5 estrellas) al terminar la carrera
 function ModalEstrellas({ visible, titulo, subtitulo, onEnviar, onCerrar }) {
   const [sel, setSel] = useState(0);
@@ -2402,6 +2430,15 @@ function PedirCarreraScreen({ navigation, route }) {
   const [activas, setActivas] = useState([]);
   const [verForm, setVerForm] = useState(false);
   const [porCalificar, setPorCalificar] = useState(null);   // carrera terminada, pendiente de calificar al conductor
+  const [verHistorial, setVerHistorial] = useState(false);  // modal con el historial del cliente
+  const [historialCli, setHistorialCli] = useState([]);
+
+  const abrirHistorial = () => {
+    setVerHistorial(true);
+    fetch(`${API}/carreras/cliente/${usuario.id}`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setHistorialCli(d.filter(c => ["finalizada", "cancelada"].includes(c.estado))); })
+      .catch(() => {});
+  };
   // agendar recogida (solo trasteos): "lo antes posible" (default) o dia+hora
   const [programar, setProgramar] = useState(false);
   const [progDia, setProgDia] = useState(null);
@@ -2965,11 +3002,29 @@ function PedirCarreraScreen({ navigation, route }) {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
         </TouchableOpacity>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.headerSub}>{muni ? `Transporte en ${muni.nombre}` : "Transporte"}</Text>
           <Text style={styles.headerTitle}>Pedir carrera</Text>
         </View>
+        <TouchableOpacity onPress={abrirHistorial} style={{ backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>📋 Historial</Text>
+        </TouchableOpacity>
       </View>
+
+      <Modal visible={verHistorial} animationType="slide" onRequestClose={() => setVerHistorial(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#F3F1EA" }}>
+          <View style={{ padding: 14, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#187830" }}>
+            <TouchableOpacity onPress={() => setVerHistorial(false)}><Text style={{ fontSize: 22, color: "#fff" }}>←</Text></TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: "700", color: "#fff" }}>Tus carreras</Text>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            {historialCli.length === 0 ? (
+              <Text style={{ color: "#888", textAlign: "center", padding: 30 }}>Aún no tienes carreras terminadas.{"\n"}Aquí quedará tu historial.</Text>
+            ) : historialCli.map(c => <TarjetaHistorial key={c.id} c={c} esConductor={false} />)}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 300 }} keyboardShouldPersistTaps="handled">
         {/* sus solicitudes siguen vivas mientras pide otra cosa */}
@@ -3295,6 +3350,7 @@ function ConductorScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const [disponibles, setDisponibles] = useState([]);
   const [mias, setMias] = useState([]);
+  const [historial, setHistorial] = useState([]);   // carreras pasadas (finalizadas/canceladas)
   const [disponible, setDisponible] = useState(usuario.disponible === "si");
   // el setInterval de cargar() captura el 'disponible' del primer render (stale
   // closure); este ref siempre tiene el valor actual para el ping
@@ -3448,6 +3504,7 @@ function ConductorScreen({ navigation, route }) {
         const activas = d.filter(c => ["aceptada", "en_sitio", "en_camino"].includes(c.estado));
         setMias(activas);
         tieneActivaRef.current = activas.length > 0;
+        setHistorial(d.filter(c => ["finalizada", "cancelada"].includes(c.estado)));
       })
       .catch(() => {});
     fetch(`${API}/conductores/${usuario.id}/estado-cuenta`).then(r => r.json())
@@ -4111,6 +4168,15 @@ function ConductorScreen({ navigation, route }) {
               ))}
             </View>
           </View>
+        )}
+        {/* ===== HISTORIAL del conductor (dentro de Desempeño) ===== */}
+        {tab === "desempeno" && (
+          <>
+            <Text style={styles.seccionTitulo}>📜 Historial de carreras</Text>
+            {historial.length === 0 ? (
+              <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>Aún no tienes carreras terminadas. Aquí quedará tu historial.</Text>
+            ) : historial.map(c => <TarjetaHistorial key={c.id} c={c} esConductor={true} />)}
+          </>
         )}
 
         {/* ===== PESTAÑA CARTERA: suscripcion ===== */}
