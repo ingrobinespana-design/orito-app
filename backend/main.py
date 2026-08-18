@@ -1420,7 +1420,10 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         params = {
             "access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
             "limit": "6", "autocomplete": "true",
-            "types": "address,poi,place,locality,neighborhood",
+            # SOLO direcciones y sitios (POI): asi 'banco'/'parque' trae bancos y
+            # parques, NO localidades con ese nombre en todo el pais. Nada de
+            # place/locality/neighborhood (que emparejan nombres de pueblos lejanos).
+            "types": "address,poi",
         }
         if cerca_lat is not None and cerca_lon is not None:
             params["proximity"] = f"{cerca_lon},{cerca_lat}"
