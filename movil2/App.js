@@ -2389,6 +2389,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
 
 function PedirCarreraScreen({ navigation, route }) {
   const { usuario } = route.params;
+  const insets = useSafeAreaInsets();   // para que los modales no queden bajo la barra de estado
   const [carrera, setCarrera] = useState(null);
   const [form, setForm] = useState({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
   const [vehiculo, setVehiculo] = useState(null);   // sin defecto: el cliente elige
@@ -3015,8 +3016,8 @@ function PedirCarreraScreen({ navigation, route }) {
       {/* menu tipo perfil (referencia Yango): historial, soporte, configuracion */}
       <Modal visible={verMenu} animationType="slide" onRequestClose={() => setVerMenu(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-          <View style={{ padding: 14 }}>
-            <TouchableOpacity onPress={() => setVerMenu(false)}><Text style={{ fontSize: 24 }}>←</Text></TouchableOpacity>
+          <View style={{ paddingTop: insets.top + 10, paddingBottom: 6, paddingHorizontal: 14 }}>
+            <TouchableOpacity onPress={() => setVerMenu(false)} style={{ padding: 4, alignSelf: "flex-start" }}><Text style={{ fontSize: 26 }}>←</Text></TouchableOpacity>
           </View>
           <View style={{ alignItems: "center", marginTop: 4 }}>
             <View style={{ width: 96, height: 96, borderRadius: 48, backgroundColor: "#E7F3E9", alignItems: "center", justifyContent: "center" }}>
@@ -3042,8 +3043,8 @@ function PedirCarreraScreen({ navigation, route }) {
 
       <Modal visible={verHistorial} animationType="slide" onRequestClose={() => setVerHistorial(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: "#F3F1EA" }}>
-          <View style={{ padding: 14, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#187830" }}>
-            <TouchableOpacity onPress={() => setVerHistorial(false)}><Text style={{ fontSize: 22, color: "#fff" }}>←</Text></TouchableOpacity>
+          <View style={{ paddingTop: insets.top + 12, paddingBottom: 14, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#187830" }}>
+            <TouchableOpacity onPress={() => setVerHistorial(false)} style={{ padding: 4 }}><Text style={{ fontSize: 24, color: "#fff" }}>←</Text></TouchableOpacity>
             <Text style={{ fontSize: 17, fontWeight: "700", color: "#fff" }}>Tus carreras</Text>
           </View>
           <ScrollView contentContainerStyle={{ padding: 16 }}>
