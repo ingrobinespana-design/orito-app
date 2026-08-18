@@ -108,6 +108,41 @@ def respaldo(clave: str = None, x_admin_token: str = Header(None), db: Session =
     return Response(content=cuerpo, media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
 
+@app.get("/respaldo-usuarios")
+def respaldo_usuarios(clave: str = None, x_admin_token: str = Header(None), db: Session = Depends(get_db)):
+    """La base del PERSONAL inscrito (clientes y conductores) en Excel (CSV), para
+    tenerla y respaldarla. Incluye ciudad y departamento. Mismo permiso que
+    /respaldo: RESPALDO_CLAVE (link en el navegador) o la sesion del admin."""
+    from fastapi.responses import Response
+    import csv, io
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada:
+        raise HTTPException(status_code=503, detail="Respaldo no configurado")
+    ok = bool(clave) and secrets.compare_digest(clave, esperada)
+    if not ok and x_admin_token:
+        u = db.query(Usuario).filter(Usuario.token == x_admin_token).first()
+        ok = bool(u and u.rol == "admin")
+    if not ok:
+        raise HTTPException(status_code=403, detail="Clave de respaldo invalida")
+    deptos = {m.nombre: (m.departamento or "") for m in db.query(Municipio).all()}
+    usuarios = db.query(Usuario).order_by(Usuario.rol, Usuario.municipio, Usuario.id).all()
+    buf = io.StringIO()
+    buf.write("﻿")   # BOM: para que Excel muestre bien las tildes
+    w = csv.writer(buf)
+    w.writerow(["ID", "Nombre", "Telefono", "Rol", "Ciudad", "Departamento",
+                "Tipo vehiculo", "Placa", "Vehiculo", "Calificacion",
+                "Disponible", "Estado", "Suscripcion hasta", "Nequi"])
+    for u in usuarios:
+        w.writerow([u.id, u.nombre, u.telefono, u.rol, u.municipio or "",
+                    deptos.get(u.municipio, ""), u.tipo_vehiculo or "", u.placa or "",
+                    u.vehiculo or "", u.calificacion if u.calificacion is not None else "",
+                    u.disponible, u.activo or "si",
+                    u.suscripcion_hasta.strftime("%Y-%m-%d") if u.suscripcion_hasta else "",
+                    u.pago_nequi or ""])
+    nombre = f"tukan-usuarios-{datetime.now():%Y%m%d}.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
 @app.put("/apk-url")
 def actualizar_apk_url(clave: str, valor: str, db: Session = Depends(get_db)):
     """Apunta el enlace publico (/apk) a un APK nuevo. Autorizado SOLO con la
