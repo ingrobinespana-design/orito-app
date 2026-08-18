@@ -1620,6 +1620,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   const [buscandoLugar, setBuscandoLugar] = useState(false);
   const [encontrado, setEncontrado] = useState(null);   // nombre del sitio hallado, para confirmar "es aqui"
   const [sugerencias, setSugerencias] = useState([]);    // autocompletar Mapbox (tipo Uber)
+  const [sinRes, setSinRes] = useState(false);           // busco pero no encontro en la zona
 
   // AUTOCOMPLETAR (tipo Uber): mientras escribes, el backend sugiere direcciones con
   // Mapbox (mucho mejor que Nominatim para nomenclatura de ciudades). Se sesga hacia
@@ -1627,12 +1628,12 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   // (Nominatim) o marca en el mapa — nunca se queda sin poder ubicar.
   useEffect(() => {
     const t = busqueda.trim();
-    if (t.length < 3) { setSugerencias([]); return; }
+    if (t.length < 3) { setSugerencias([]); setSinRes(false); return; }
     const timer = setTimeout(() => {
       const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
       fetch(`${API}/ubicacion/autocompletar?texto=${encodeURIComponent(t)}${cerca}`)
         .then(r => r.json())
-        .then(d => { if (Array.isArray(d)) setSugerencias(d); }).catch(() => {});
+        .then(d => { if (Array.isArray(d)) { setSugerencias(d); setSinRes(d.length === 0); } }).catch(() => {});
     }, 350);   // espera a que deje de escribir, para no llamar en cada tecla
     return () => clearTimeout(timer);
   }, [busqueda]);
@@ -1641,6 +1642,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
     setCoords({ lat: s.lat, lon: s.lon });
     setBusqueda(s.nombre.split(",").slice(0, 2).join(", ").trim());
     setSugerencias([]);
+    setSinRes(false);
     setEncontrado(s.nombre.split(",").slice(0, 3).join(",").trim());
     webRef.current && webRef.current.injectJavaScript(`irA(${s.lat}, ${s.lon}); true;`);
   };
@@ -1719,6 +1721,13 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             ))}
           </View>
         ) : null}
+        {sinRes && sugerencias.length === 0 ? (
+          <View style={{ marginHorizontal: 14, marginTop: 6, backgroundColor: "#FFF4E0", borderRadius: 10, padding: 10 }}>
+            <Text style={{ fontSize: 12.5, color: "#8A5A00", fontWeight: "600" }}>
+              No encontramos "{busqueda.trim()}" por aquí. Prueba con otro nombre (una calle o un sitio conocido cercano) o marca el punto en el mapa. 👇
+            </Text>
+          </View>
+        ) : null}
         {encontrado ? (
           <View style={{ marginHorizontal: 14, marginTop: 8, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
             <Text style={{ fontSize: 16 }}>📍</Text>
@@ -1734,7 +1743,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             // baseUrl le da un origen https valido: sin esto Android usa "about:blank"
             // y varios servidores de mapas rechazan las peticiones de imagenes
             source={{ html: mapaHTML(inicial.lat, inicial.lon), baseUrl: "https://orito.app/" }}
-            onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); setEncontrado(null); setSugerencias([]); } catch (_) {} }}
+            onMessage={(e) => { try { setCoords(JSON.parse(e.nativeEvent.data)); setEncontrado(null); setSugerencias([]); setSinRes(false); } catch (_) {} }}
             javaScriptEnabled
             domStorageEnabled
             mixedContentMode="always"

@@ -1424,6 +1424,11 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         }
         if cerca_lat is not None and cerca_lon is not None:
             params["proximity"] = f"{cerca_lon},{cerca_lat}"
+            # ACOTA a la ZONA: un recuadro (~16 km) alrededor de donde esta el
+            # usuario, para que NO busque en todo el pais (evita "Oritoguaz, Huila"
+            # cuando estas en Orito). Si escoges Orito y buscas "parque", cae en Orito.
+            d = 0.15
+            params["bbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
         url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{_up.quote(t)}.json?" + _up.urlencode(params)
         req = _ur.Request(url, headers={"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"})
         with _ur.urlopen(req, timeout=5) as r:
@@ -1431,8 +1436,14 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         salida = []
         for f in data.get("features", []):
             c = f.get("center")
-            if c and len(c) == 2:
-                salida.append({"nombre": f.get("place_name"), "lat": c[1], "lon": c[0]})
+            if not (c and len(c) == 2):
+                continue
+            # red de seguridad: si algo se cuela lejos de la zona (>25 km), fuera.
+            if cerca_lat is not None and cerca_lon is not None:
+                km = tarifas.distancia_km(cerca_lat, cerca_lon, c[1], c[0])
+                if km is not None and km > 25:
+                    continue
+            salida.append({"nombre": f.get("place_name"), "lat": c[1], "lon": c[0]})
         return salida
     except Exception:
         return []
