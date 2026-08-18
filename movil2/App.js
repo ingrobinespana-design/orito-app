@@ -2432,6 +2432,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [porCalificar, setPorCalificar] = useState(null);   // carrera terminada, pendiente de calificar al conductor
   const [verHistorial, setVerHistorial] = useState(false);  // modal con el historial del cliente
   const [historialCli, setHistorialCli] = useState([]);
+  const [verMenu, setVerMenu] = useState(false);            // menu tipo perfil (como Yango)
 
   const abrirHistorial = () => {
     setVerHistorial(true);
@@ -3006,10 +3007,38 @@ function PedirCarreraScreen({ navigation, route }) {
           <Text style={styles.headerSub}>{muni ? `Transporte en ${muni.nombre}` : "Transporte"}</Text>
           <Text style={styles.headerTitle}>Pedir carrera</Text>
         </View>
-        <TouchableOpacity onPress={abrirHistorial} style={{ backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
-          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>📋 Historial</Text>
+        <TouchableOpacity onPress={() => setVerMenu(true)} style={{ padding: 4 }}>
+          <Text style={{ color: "#fff", fontSize: 28 }}>☰</Text>
         </TouchableOpacity>
       </View>
+
+      {/* menu tipo perfil (referencia Yango): historial, soporte, configuracion */}
+      <Modal visible={verMenu} animationType="slide" onRequestClose={() => setVerMenu(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
+          <View style={{ padding: 14 }}>
+            <TouchableOpacity onPress={() => setVerMenu(false)}><Text style={{ fontSize: 24 }}>←</Text></TouchableOpacity>
+          </View>
+          <View style={{ alignItems: "center", marginTop: 4 }}>
+            <View style={{ width: 96, height: 96, borderRadius: 48, backgroundColor: "#E7F3E9", alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 44 }}>👤</Text>
+            </View>
+            <Text style={{ fontSize: 22, fontWeight: "800", marginTop: 10, color: "#222" }}>{usuario.nombre || "Tú"}</Text>
+            <Text style={{ fontSize: 14, color: "#888", marginTop: 2 }}>{usuario.telefono}</Text>
+          </View>
+          <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 26, paddingHorizontal: 16 }}>
+            {[["🕘", "Historial", () => { setVerMenu(false); setTimeout(abrirHistorial, 260); }],
+              ["💬", "Soporte", () => { setVerMenu(false); Linking.openURL("https://wa.me/573156009728").catch(() => {}); }],
+              ["⚙️", "Configuración", () => { setVerMenu(false); navigation.navigate("Configuracion", { usuario }); }]].map(([ic, lbl, fn]) => (
+              <TouchableOpacity key={lbl} style={{ alignItems: "center", width: 100 }} onPress={fn}>
+                <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: "#F1F1F1", alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ fontSize: 27 }}>{ic}</Text>
+                </View>
+                <Text style={{ fontSize: 12.5, color: "#333", marginTop: 7, textAlign: "center", fontWeight: "600" }}>{lbl}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </SafeAreaView>
+      </Modal>
 
       <Modal visible={verHistorial} animationType="slide" onRequestClose={() => setVerHistorial(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: "#F3F1EA" }}>
