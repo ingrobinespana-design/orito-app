@@ -1509,14 +1509,9 @@ function ElegirServicioScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
-        <View>
-          <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
-          <Text style={styles.headerTitle}>Que necesitas hoy?</Text>
-        </View>
-        <TouchableOpacity onPress={() => navigation.navigate("Configuracion", { usuario })} style={{ padding: 4 }}>
-          <Text style={{ fontSize: 24 }}>⚙️</Text>
-        </TouchableOpacity>
+      <View style={styles.header}>
+        <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
+        <Text style={styles.headerTitle}>Que necesitas hoy?</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <TouchableOpacity style={styles.servicioCard} onPress={() => navigation.navigate("Inicio", { usuario })}>
@@ -1526,8 +1521,8 @@ function ElegirServicioScreen({ navigation, route }) {
         </TouchableOpacity>
         <TouchableOpacity style={[styles.servicioCard, { backgroundColor: "#E7F3E9" }]} onPress={() => navigation.navigate("PedirCarrera", { usuario })}>
           <Text style={{ fontSize: 44 }}>🚕</Text>
-          <Text style={[styles.servicioTitulo, { color: "#187830" }]}>Pedir carrera</Text>
-          <Text style={styles.servicioSub}>Un transportador te recoge</Text>
+          <Text style={[styles.servicioTitulo, { color: "#187830" }]}>Pedir carrera o acarreo</Text>
+          <Text style={styles.servicioSub}>Un transportador te recoge, o mueve tu carga</Text>
         </TouchableOpacity>
       </ScrollView>
       <TouchableOpacity style={{ padding: 16, paddingBottom: 16 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
@@ -3037,7 +3032,6 @@ function PedirCarreraScreen({ navigation, route }) {
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 26, paddingHorizontal: 16 }}>
             {[["🕘", "Historial", () => { setVerMenu(false); setTimeout(abrirHistorial, 260); }],
-              ["💬", "Soporte", () => { setVerMenu(false); Linking.openURL("https://wa.me/573156009728").catch(() => {}); }],
               ["⚙️", "Configuración", () => { setVerMenu(false); navigation.navigate("Configuracion", { usuario }); }]].map(([ic, lbl, fn]) => (
               <TouchableOpacity key={lbl} style={{ alignItems: "center", width: 100 }} onPress={fn}>
                 <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: "#F1F1F1", alignItems: "center", justifyContent: "center" }}>
