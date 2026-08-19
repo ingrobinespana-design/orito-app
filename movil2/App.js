@@ -3032,6 +3032,7 @@ function PedirCarreraScreen({ navigation, route }) {
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 26, paddingHorizontal: 16 }}>
             {[["🕘", "Historial", () => { setVerMenu(false); setTimeout(abrirHistorial, 260); }],
+              ["💬", "Soporte", () => { setVerMenu(false); avisar("Soporte", "Muy pronto podrás escribirnos por aquí. Lo estamos activando."); }],
               ["⚙️", "Configuración", () => { setVerMenu(false); navigation.navigate("Configuracion", { usuario }); }]].map(([ic, lbl, fn]) => (
               <TouchableOpacity key={lbl} style={{ alignItems: "center", width: 100 }} onPress={fn}>
                 <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: "#F1F1F1", alignItems: "center", justifyContent: "center" }}>
