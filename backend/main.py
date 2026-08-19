@@ -1407,49 +1407,86 @@ MAPBOX_TOKEN = os.environ.get(
     "pk.eyJ1IjoiZGFyd2luZSIsImEiOiJjbXNkenQ2Ym4wMDN3MnhxMGoxZGlyN3R2In0.WwBcBvXWmpy-I55Ceud-Lg")
 MAPBOX_REFERER = os.environ.get("MAPBOX_REFERER", "https://orito.app/")
 
+def _mapbox_geo(t, cerca_lat, cerca_lon):
+    """Mapbox: FUERTE en nomenclatura (Carrera 15, Calle 18). Acotado a la zona."""
+    import urllib.request as _ur, urllib.parse as _up, json as _json
+    params = {"access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
+              "limit": "6", "autocomplete": "true", "types": "address,poi"}
+    if cerca_lat is not None and cerca_lon is not None:
+        params["proximity"] = f"{cerca_lon},{cerca_lat}"
+        d = 0.15   # recuadro ~16 km: acota a la ZONA (no a todo el pais)
+        params["bbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{_up.quote(t)}.json?" + _up.urlencode(params)
+    req = _ur.Request(url, headers={"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"})
+    with _ur.urlopen(req, timeout=5) as r:
+        data = _json.loads(r.read().decode("utf-8"))
+    out = []
+    for f in data.get("features", []):
+        c = f.get("center")
+        if c and len(c) == 2:
+            out.append({"nombre": f.get("place_name"), "lat": c[1], "lon": c[0]})
+    return out
+
+def _nominatim_geo(t, cerca_lat, cerca_lon):
+    """OpenStreetMap: FUERTE en sitios/negocios (Unicentro, terminal, parque,
+    hospital). Acotado a la zona (bounded). Gratis. Complementa a Mapbox."""
+    import urllib.request as _ur, urllib.parse as _up, json as _json
+    params = {"q": f"{t}, Colombia", "format": "jsonv2", "limit": "5",
+              "countrycodes": "co", "accept-language": "es"}
+    if cerca_lat is not None and cerca_lon is not None:
+        d = 0.2
+        params["viewbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
+        params["bounded"] = "1"
+    url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
+    req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
+    with _ur.urlopen(req, timeout=5) as r:
+        arr = _json.loads(r.read().decode("utf-8"))
+    out = []
+    for x in arr:
+        try:
+            lat, lon = float(x["lat"]), float(x["lon"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        nombre = ", ".join([p.strip() for p in (x.get("display_name") or "").split(",")[:3]])
+        out.append({"nombre": nombre, "lat": lat, "lon": lon})
+    return out
+
 @app.get("/ubicacion/autocompletar")
 def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: float = None):
-    """Autocompletar direcciones con Mapbox (tipo Uber): mucho mejor que Nominatim
-    para la nomenclatura de ciudades. Devuelve sugerencias [{nombre, lat, lon}]
-    sesgadas hacia donde mira el usuario. Falla en silencio (lista vacia)."""
+    """Autocompletar acotado a la ZONA, combinando lo mejor de dos mundos GRATIS:
+    Mapbox para NOMENCLATURA (Carrera/Calle) + OpenStreetMap para SITIOS/negocios
+    (Unicentro, parque, terminal). Devuelve [{nombre,lat,lon}]. Falla en silencio."""
     t = (texto or "").strip()
     if len(t) < 3:
         return []
-    try:
-        import urllib.request as _ur, urllib.parse as _up, json as _json
-        params = {
-            "access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
-            "limit": "6", "autocomplete": "true",
-            # SOLO direcciones y sitios (POI): asi 'banco'/'parque' trae bancos y
-            # parques, NO localidades con ese nombre en todo el pais. Nada de
-            # place/locality/neighborhood (que emparejan nombres de pueblos lejanos).
-            "types": "address,poi",
-        }
-        if cerca_lat is not None and cerca_lon is not None:
-            params["proximity"] = f"{cerca_lon},{cerca_lat}"
-            # ACOTA a la ZONA: un recuadro (~16 km) alrededor de donde esta el
-            # usuario, para que NO busque en todo el pais (evita "Oritoguaz, Huila"
-            # cuando estas en Orito). Si escoges Orito y buscas "parque", cae en Orito.
-            d = 0.15
-            params["bbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
-        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{_up.quote(t)}.json?" + _up.urlencode(params)
-        req = _ur.Request(url, headers={"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"})
-        with _ur.urlopen(req, timeout=5) as r:
-            data = _json.loads(r.read().decode("utf-8"))
-        salida = []
-        for f in data.get("features", []):
-            c = f.get("center")
-            if not (c and len(c) == 2):
+    resultados, vistos = [], set()
+
+    def agregar(items):
+        for r in items:
+            if not r.get("nombre"):
                 continue
-            # red de seguridad: si algo se cuela lejos de la zona (>25 km), fuera.
+            # solo la zona: descarta lo que quede a mas de 25 km
             if cerca_lat is not None and cerca_lon is not None:
-                km = tarifas.distancia_km(cerca_lat, cerca_lon, c[1], c[0])
+                km = tarifas.distancia_km(cerca_lat, cerca_lon, r["lat"], r["lon"])
                 if km is not None and km > 25:
                     continue
-            salida.append({"nombre": f.get("place_name"), "lat": c[1], "lon": c[0]})
-        return salida
+            k = (round(r["lat"], 5), round(r["lon"], 5))
+            if k in vistos:
+                continue
+            vistos.add(k)
+            resultados.append(r)
+
+    try:
+        agregar(_mapbox_geo(t, cerca_lat, cerca_lon))
     except Exception:
-        return []
+        pass
+    # si Mapbox trajo pocos (tipico al buscar un SITIO, no una direccion), OSM completa
+    if len(resultados) < 4:
+        try:
+            agregar(_nominatim_geo(t, cerca_lat, cerca_lon))
+        except Exception:
+            pass
+    return resultados[:6]
 
 @app.get("/ubicacion/buscar")
 def buscar_coordenadas(texto: str, municipio: str = "Orito",
