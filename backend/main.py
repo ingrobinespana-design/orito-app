@@ -1431,7 +1431,7 @@ def _nominatim_geo(t, cerca_lat, cerca_lon):
     """OpenStreetMap: FUERTE en sitios/negocios (Unicentro, terminal, parque,
     hospital). Acotado a la zona (bounded). Gratis. Complementa a Mapbox."""
     import urllib.request as _ur, urllib.parse as _up, json as _json
-    params = {"q": f"{t}, Colombia", "format": "jsonv2", "limit": "5",
+    params = {"q": t, "format": "jsonv2", "limit": "5",
               "countrycodes": "co", "accept-language": "es"}
     if cerca_lat is not None and cerca_lon is not None:
         d = 0.2
