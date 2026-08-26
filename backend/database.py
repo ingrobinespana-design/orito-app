@@ -52,6 +52,15 @@ class Usuario(Base):
     foto_conductor = Column(String, nullable=True)
     foto_vehiculo = Column(String, nullable=True)
     foto_tarjeta = Column(String, nullable=True)
+    # documentos para verificacion (los ve el admin, no el cliente)
+    foto_licencia = Column(String, nullable=True)   # licencia de conduccion
+    foto_cedula = Column(String, nullable=True)      # cedula
+    foto_soat = Column(String, nullable=True)        # SOAT
+    # datos extra del vehiculo, para que el cliente lo identifique al llegar
+    veh_color = Column(String, nullable=True)
+    veh_modelo = Column(String, nullable=True)       # modelo / año / marca en texto libre
+    # el admin lo pone en "si" cuando revisa los documentos y habilita al conductor
+    verificado = Column(String, default="no")
     # ultima ubicacion reportada del conductor (solo mientras tiene carrera
     # activa y la app abierta): para que el cliente lo vea venir en el mapa
     ubic_lat = Column(Float, nullable=True)
@@ -392,7 +401,10 @@ def crear_tablas():
                     "pago_breb VARCHAR", "foto_conductor VARCHAR", "foto_vehiculo VARCHAR",
                     "foto_tarjeta VARCHAR", "ubic_lat FLOAT", "ubic_lon FLOAT",
                     "ubic_fecha TIMESTAMP", "token VARCHAR", "calificacion FLOAT",
-                    "activo VARCHAR DEFAULT 'si'"):
+                    "activo VARCHAR DEFAULT 'si'",
+                    "foto_licencia VARCHAR", "foto_cedula VARCHAR", "foto_soat VARCHAR",
+                    "veh_color VARCHAR", "veh_modelo VARCHAR",
+                    "verificado VARCHAR DEFAULT 'no'"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))

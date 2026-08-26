@@ -202,7 +202,7 @@ def contacto_soporte(db: Session = Depends(get_db)):
     """Numero de WhatsApp de soporte, para que la app muestre el boton de ayuda.
     Publico y configurable desde el panel (whatsapp_soporte) — el dia que cambie
     el numero no hay que actualizar la app."""
-    return {"whatsapp": leer_config("whatsapp_soporte", db, "")}
+    return {"whatsapp": leer_config("whatsapp_soporte", db, "3133714915")}
 
 @app.get("/soporte/liberar")
 def liberar_usuario(clave: str = None, telefono: str = None,
@@ -956,6 +956,8 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "conductor_telefono": conductor.telefono if conductor else None,
         "conductor_placa": conductor.placa if conductor else None,
         "conductor_vehiculo": conductor.vehiculo if conductor else None,
+        "conductor_tipo_vehiculo": conductor.tipo_vehiculo if conductor else None,
+        "conductor_veh_color": conductor.veh_color if conductor else None,
         "conductor_pagos": medios_pago(conductor) if conductor else None,
         "conductor_foto": conductor.foto_conductor if conductor else None,
         "conductor_foto_vehiculo": conductor.foto_vehiculo if conductor else None,
@@ -2371,7 +2373,12 @@ def medios_pago(u: Usuario):
     }
 
 def fotos_de(u: Usuario):
-    return {"conductor": u.foto_conductor, "vehiculo": u.foto_vehiculo, "tarjeta": u.foto_tarjeta}
+    return {"conductor": u.foto_conductor, "vehiculo": u.foto_vehiculo,
+            "tarjeta": u.foto_tarjeta, "licencia": u.foto_licencia,
+            "cedula": u.foto_cedula, "soat": u.foto_soat}
+
+# tipos de foto/documento validos para el endpoint de subida
+TIPOS_FOTO = ("conductor", "vehiculo", "tarjeta", "licencia", "cedula", "soat")
 
 @app.get("/usuarios/{usuario_id}/perfil")
 def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
@@ -2380,16 +2387,20 @@ def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return {"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
             "municipio": u.municipio, "tipo_vehiculo": u.tipo_vehiculo, "placa": u.placa,
-            "vehiculo": u.vehiculo, "pagos": medios_pago(u), "fotos": fotos_de(u)}
+            "vehiculo": u.vehiculo, "veh_color": u.veh_color, "veh_modelo": u.veh_modelo,
+            "verificado": u.verificado or "no", "disponible": u.disponible,
+            "calificacion": u.calificacion, "suscripcion_hasta": u.suscripcion_hasta,
+            "dias_restantes": dias_restantes(u), "al_dia": suscripcion_al_dia(u, db),
+            "pagos": medios_pago(u), "fotos": fotos_de(u)}
 
 @app.post("/usuarios/{usuario_id}/foto")
 async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = File(...),
                                db: Session = Depends(get_db),
                                actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, usuario_id)
-    """Sube foto del conductor, del vehiculo o de la tarjeta de propiedad."""
-    if tipo not in ("conductor", "vehiculo", "tarjeta"):
-        raise HTTPException(status_code=400, detail="tipo debe ser conductor, vehiculo o tarjeta")
+    """Sube foto del conductor, del vehiculo, o un documento (tarjeta, licencia, cedula, soat)."""
+    if tipo not in TIPOS_FOTO:
+        raise HTTPException(status_code=400, detail=f"tipo invalido; use uno de {', '.join(TIPOS_FOTO)}")
     u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -2401,6 +2412,26 @@ async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = Fi
     setattr(u, f"foto_{tipo}", url)
     db.commit()
     return {"url": url}
+
+@app.put("/usuarios/{usuario_id}/vehiculo")
+def guardar_vehiculo(usuario_id: int, placa: str = None, vehiculo: str = None,
+                     veh_color: str = None, veh_modelo: str = None,
+                     db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    """El conductor completa/corrige los datos de su vehiculo (placa, color, modelo).
+    Al cambiarlos vuelve a quedar 'sin verificar' para que el admin revise de nuevo."""
+    exigir_dueño(actual, usuario_id)
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if placa is not None: u.placa = (placa.strip().upper() or None)
+    if vehiculo is not None: u.vehiculo = (vehiculo.strip() or None)
+    if veh_color is not None: u.veh_color = (veh_color.strip() or None)
+    if veh_modelo is not None: u.veh_modelo = (veh_modelo.strip() or None)
+    u.verificado = "no"   # cambio los datos: hay que re-verificar
+    db.commit()
+    db.refresh(u)
+    return {"ok": True, "placa": u.placa, "vehiculo": u.vehiculo,
+            "veh_color": u.veh_color, "veh_modelo": u.veh_modelo, "verificado": u.verificado}
 
 @app.put("/usuarios/{usuario_id}/pagos")
 def guardar_pagos(usuario_id: int, efectivo: str = None, nequi: str = None, daviplata: str = None,
@@ -2430,10 +2461,25 @@ def obtener_conductores(db: Session = Depends(get_db)):
     return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "placa": u.placa,
              "vehiculo": u.vehiculo, "disponible": u.disponible,
              "tipo_vehiculo": u.tipo_vehiculo, "municipio": u.municipio,
+             "veh_color": u.veh_color, "veh_modelo": u.veh_modelo,
+             "verificado": u.verificado or "no",
              "suscripcion_hasta": u.suscripcion_hasta,
              "dias_restantes": dias_restantes(u),
              "al_dia": suscripcion_al_dia(u, db),
              "fotos": fotos_de(u)} for u in conductores]
+
+@app.put("/conductores/{conductor_id}/verificar")
+def verificar_conductor(conductor_id: int, valor: str = "si",
+                        db: Session = Depends(get_db),
+                        admin: Usuario = Depends(solo_admin)):
+    """El admin habilita (verificado='si') o quita la habilitacion despues de
+    revisar los documentos del conductor."""
+    u = db.query(Usuario).filter(Usuario.id == conductor_id, Usuario.rol == "conductor").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    u.verificado = "si" if valor == "si" else "no"
+    db.commit()
+    return {"ok": True, "verificado": u.verificado}
 
 @app.put("/conductores/{conductor_id}/ubicacion")
 def reportar_ubicacion(conductor_id: int, lat: float, lon: float, tareas: BackgroundTasks,

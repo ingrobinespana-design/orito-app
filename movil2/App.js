@@ -203,6 +203,7 @@ function minutosLista() {
   for (let m = 0; m < 60; m += 5) arr.push({ m, lbl: `:${String(m).padStart(2, "0")}` });
   return arr;
 }
+const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 // string ISO LOCAL (sin zona: hora de Colombia tal cual), para que el backend
 // la guarde y la app la vuelva a leer igual
 function isoLocal(d, h, m) {
@@ -220,6 +221,16 @@ function fmtRecogida(iso) {
   const h = d.getHours(), m = d.getMinutes();
   const ampm = h < 12 ? "am" : "pm"; const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${dia} ${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+// fecha completa y clara para el detalle: "Jueves 24 de agosto, 4:00 p.m."
+const DIAS_LARGO = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+function fmtFechaLarga(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const h = d.getHours(), m = d.getMinutes();
+  const ampm = h < 12 ? "a.m." : "p.m."; const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${DIAS_LARGO[d.getDay()]} ${d.getDate()} de ${MESES_ES[d.getMonth()].toLowerCase()}, ${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
 // abrir el marcador del telefono o WhatsApp con un numero colombiano
@@ -2055,6 +2066,120 @@ function navegarGoogleMapsTexto(texto) {
     .catch(() => Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`).catch(() => {}));
 }
 
+// Calendario tipo hoja inferior: mes navegable (hasta donde quieras hacia adelante)
+// + hora + minutos. Todo en JS (sale por OTA, sin modulo nativo ni reinstalar).
+// onConfirmar(dia, h, m) -> dia es la fecha a medianoche; el padre arma el ISO.
+function CalendarioModal({ visible, inicial, onConfirmar, onCerrar }) {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const [mes, setMes] = useState(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+  const [sel, setSel] = useState(null);
+  const [hSel, setHSel] = useState(null);
+  const [mSel, setMSel] = useState(null);
+  useEffect(() => {
+    if (visible) {
+      const d = inicial && inicial.d ? inicial.d : null;
+      setMes(new Date((d || hoy).getFullYear(), (d || hoy).getMonth(), 1));
+      setSel(d);
+      setHSel(inicial && inicial.h != null ? inicial.h : null);
+      setMSel(inicial && inicial.m != null ? inicial.m : null);
+    }
+  }, [visible]);
+  const y = mes.getFullYear(), m = mes.getMonth();
+  const offset = new Date(y, m, 1).getDay();   // domingo primero (0=dom)
+  const diasMes = new Date(y, m + 1, 0).getDate();
+  const celdas = [];
+  for (let i = 0; i < offset; i++) celdas.push(0);
+  for (let d = 1; d <= diasMes; d++) celdas.push(d);
+  while (celdas.length % 7 !== 0) celdas.push(0);
+  const puedeAtras = (y > hoy.getFullYear()) || (y === hoy.getFullYear() && m > hoy.getMonth());
+  const esPasado = (d) => new Date(y, m, d) < hoy;
+  const esHoy = (d) => new Date(y, m, d).getTime() === hoy.getTime();
+  const selEs = (d) => sel && sel.getFullYear() === y && sel.getMonth() === m && sel.getDate() === d;
+  const listo = sel && hSel != null && mSel != null;
+  const DIAS_COR = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+  const MES_COR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  const cabAnio = sel ? sel.getFullYear() : mes.getFullYear();
+  const cabFecha = sel ? `${DIAS_COR[sel.getDay()]}, ${sel.getDate()} de ${MES_COR[sel.getMonth()]}` : "Elige el día";
+  return (
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onCerrar}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "center", padding: 22 }}>
+        <View style={{ backgroundColor: "#fff", borderRadius: 20, overflow: "hidden", maxHeight: "92%" }}>
+          {/* cabecera con la fecha seleccionada (estilo Material) */}
+          <View style={{ backgroundColor: "#187830", paddingHorizontal: 22, paddingTop: 18, paddingBottom: 16 }}>
+            <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 15, fontWeight: "700" }}>{cabAnio}</Text>
+            <Text style={{ color: "#fff", fontSize: 30, fontWeight: "800", marginTop: 2 }}>{cabFecha}</Text>
+            {listo && <Text style={{ color: "rgba(255,255,255,0.92)", fontSize: 15, fontWeight: "700", marginTop: 4 }}>⏰ {(hSel % 12 === 0 ? 12 : hSel % 12)}:{String(mSel).padStart(2, "0")} {hSel < 12 ? "a.m." : "p.m."}</Text>}
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, paddingBottom: 8 }}>
+            {/* navegacion de mes */}
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <TouchableOpacity onPress={() => puedeAtras && setMes(new Date(y, m - 1, 1))} disabled={!puedeAtras} style={{ padding: 8, width: 44, alignItems: "center" }}>
+                <Text style={{ fontSize: 26, color: puedeAtras ? "#187830" : "#ddd" }}>‹</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: "#222" }}>{MESES_ES[m]} de {y}</Text>
+              <TouchableOpacity onPress={() => setMes(new Date(y, m + 1, 1))} style={{ padding: 8, width: 44, alignItems: "center" }}>
+                <Text style={{ fontSize: 26, color: "#187830" }}>›</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: "row" }}>
+              {["D", "L", "M", "M", "J", "V", "S"].map((x, i) => (
+                <Text key={i} style={{ flex: 1, textAlign: "center", fontSize: 12, color: "#bbb", fontWeight: "700", paddingVertical: 4 }}>{x}</Text>
+              ))}
+            </View>
+            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+              {celdas.map((d, i) => (
+                <View key={i} style={{ width: "14.28%", aspectRatio: 1, padding: 2, alignItems: "center", justifyContent: "center" }}>
+                  {d ? (
+                    <TouchableOpacity disabled={esPasado(d)} onPress={() => setSel(new Date(y, m, d))} activeOpacity={0.7}
+                      style={{ width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center",
+                        backgroundColor: selEs(d) ? "#187830" : "transparent",
+                        borderWidth: !selEs(d) && esHoy(d) ? 1.5 : 0, borderColor: "#187830" }}>
+                      <Text style={{ fontSize: 15, fontWeight: selEs(d) ? "800" : "500", color: esPasado(d) ? "#d0d0d0" : selEs(d) ? "#fff" : esHoy(d) ? "#187830" : "#333" }}>{d}</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+
+            <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 12 }} />
+            <Text style={{ fontSize: 12, color: "#999", fontWeight: "800", letterSpacing: 0.5 }}>HORA</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 6 }}>
+                {horasCompletas().map(x => (
+                  <TouchableOpacity key={x.h} onPress={() => setHSel(x.h)} style={[styles.chip, hSel === x.h && styles.chipOn]}>
+                    <Text style={[styles.chipTxt, hSel === x.h && styles.chipTxtOn]}>{x.lbl}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+            <Text style={{ fontSize: 12, color: "#999", fontWeight: "800", letterSpacing: 0.5, marginTop: 4 }}>MINUTOS</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 6 }}>
+                {minutosLista().map(x => (
+                  <TouchableOpacity key={x.m} onPress={() => setMSel(x.m)} style={[styles.chip, mSel === x.m && styles.chipOn]}>
+                    <Text style={[styles.chipTxt, mSel === x.m && styles.chipTxtOn]}>{x.lbl}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </ScrollView>
+
+          {/* acciones */}
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#f0f0f0" }}>
+            <TouchableOpacity onPress={onCerrar} style={{ paddingVertical: 10, paddingHorizontal: 18 }}>
+              <Text style={{ color: "#888", fontWeight: "800", fontSize: 15 }}>CANCELAR</Text>
+            </TouchableOpacity>
+            <TouchableOpacity disabled={!listo} onPress={() => onConfirmar(sel, hSel, mSel)} style={{ paddingVertical: 10, paddingHorizontal: 18 }}>
+              <Text style={{ color: listo ? "#187830" : "#c5c5c5", fontWeight: "800", fontSize: 15 }}>CONFIRMAR</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // una carrera del historial (pasada). Sirve para el conductor y para el cliente:
 // segun quien mira, muestra a la contraparte y la calificacion que recibio.
 function TarjetaHistorial({ c, esConductor }) {
@@ -2136,6 +2261,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const [dia, setDia] = useState(null);
   const [hSel, setHSel] = useState(null);   // hora (0-23) elegida
   const [mSel, setMSel] = useState(null);   // minutos elegidos
+  const [calAbierto, setCalAbierto] = useState(false); // calendario para programar
   const [mapaOpen, setMapaOpen] = useState(false);
   const [pinDest, setPinDest] = useState(null);       // destino EXACTO en el mapa (puerta a puerta)
   const [mapaDestOpen, setMapaDestOpen] = useState(false);
@@ -2271,40 +2397,23 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
         </View>
         {programar && (
           <>
-            <Text style={[styles.ayuda, { marginTop: 12 }]}>Día</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-                {diasProximos().map(x => {
-                  const act = dia && dia.toDateString() === x.d.toDateString();
-                  return (<TouchableOpacity key={x.key} onPress={() => setDia(x.d)} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
-                })}
-              </View>
-            </ScrollView>
-            <Text style={[styles.ayuda, { marginTop: 8 }]}>Hora</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-                {horasCompletas().map(x => {
-                  const act = hSel === x.h;
-                  return (<TouchableOpacity key={x.h} onPress={() => setHSel(x.h)} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
-                })}
-              </View>
-            </ScrollView>
-            <Text style={[styles.ayuda, { marginTop: 8 }]}>Minutos</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-                {minutosLista().map(x => {
-                  const act = mSel === x.m;
-                  return (<TouchableOpacity key={x.m} onPress={() => setMSel(x.m)} style={[styles.chip, act && styles.chipOn]}><Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text></TouchableOpacity>);
-                })}
-              </View>
-            </ScrollView>
-            {dia && hSel != null && mSel != null ? (
-              <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10, marginTop: 12 }}>
-                <Text style={{ color: "#187830", fontWeight: "700", fontSize: 14 }}>⏰ Sale: {fmtRecogida(isoLocal(dia, hSel, mSel))}</Text>
-              </View>
-            ) : (
-              <Text style={[styles.ayuda, { marginTop: 10 }]}>Elige el día, la hora y los minutos de salida.</Text>
-            )}
+            <TouchableOpacity
+              onPress={() => setCalAbierto(true)}
+              style={{ marginTop: 12, borderWidth: 1.5, borderColor: (dia && hSel != null && mSel != null) ? "#187830" : "#F06000", borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, backgroundColor: (dia && hSel != null && mSel != null) ? "#EAF6EC" : "#FFF6EF", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={{ color: (dia && hSel != null && mSel != null) ? "#187830" : "#B44700", fontWeight: "800", fontSize: 15 }}>
+                {(dia && hSel != null && mSel != null) ? `📅 ${fmtRecogida(isoLocal(dia, hSel, mSel))}` : "📅 Elegir día y hora"}
+              </Text>
+              <Text style={{ color: (dia && hSel != null && mSel != null) ? "#187830" : "#B44700", fontWeight: "800", fontSize: 15 }}>
+                {(dia && hSel != null && mSel != null) ? "Cambiar ›" : "Abrir ›"}
+              </Text>
+            </TouchableOpacity>
+            <Text style={[styles.ayuda, { marginTop: 8 }]}>Abre el calendario y elige el día (puedes ir meses adelante) y la hora exacta de salida.</Text>
+            <CalendarioModal
+              visible={calAbierto}
+              inicial={dia && hSel != null && mSel != null ? { d: dia, h: hSel, m: mSel } : null}
+              onConfirmar={(d, h, mm) => { setDia(d); setHSel(h); setMSel(mm); setCalAbierto(false); }}
+              onCerrar={() => setCalAbierto(false)}
+            />
           </>
         )}
         <TextInput value={notas} onChangeText={setNotas} placeholder="Algo más (equipaje, # de contacto...)" style={[styles.input, { marginTop: 10 }]} />
@@ -2438,6 +2547,10 @@ function PedirCarreraScreen({ navigation, route }) {
   const [verHistorial, setVerHistorial] = useState(false);  // modal con el historial del cliente
   const [historialCli, setHistorialCli] = useState([]);
   const [verMenu, setVerMenu] = useState(false);            // menu tipo perfil (como Yango)
+  const [soporteWa, setSoporteWa] = useState("3133714915"); // whatsapp de soporte (configurable en backend)
+  useEffect(() => {
+    fetch(`${API}/soporte/contacto`).then(r => r.json()).then(d => { if (d && d.whatsapp) setSoporteWa(d.whatsapp); }).catch(() => {});
+  }, []);
 
   const abrirHistorial = () => {
     setVerHistorial(true);
@@ -2449,6 +2562,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [programar, setProgramar] = useState(false);
   const [progDia, setProgDia] = useState(null);
   const [progHora, setProgHora] = useState(null);   // {h, m}
+  const [calAbierto, setCalAbierto] = useState(false); // calendario para agendar acarreo
 
   const vehiculosAqui = (muni && muni.vehiculos) || [];
   // hora agendada final; solo aplica a carga y cuando el cliente eligio dia+hora
@@ -2921,7 +3035,14 @@ function PedirCarreraScreen({ navigation, route }) {
                     <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
                     <Estrellas valor={carrera.conductor_calificacion} size={14} />
                   </View>
-                  {carrera.conductor_vehiculo ? <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>🚕 {carrera.conductor_vehiculo}</Text> : null}
+                  {carrera.conductor_tipo_vehiculo ? (
+                    <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>
+                      {vehIcono(carrera.conductor_tipo_vehiculo)} {vehLabel(carrera.conductor_tipo_vehiculo)}
+                      {carrera.conductor_vehiculo ? ` · ${carrera.conductor_vehiculo}` : ""}{carrera.conductor_veh_color ? ` · ${carrera.conductor_veh_color}` : ""}
+                    </Text>
+                  ) : carrera.conductor_vehiculo ? (
+                    <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>🚕 {carrera.conductor_vehiculo}</Text>
+                  ) : null}
                 </View>
               </View>
               {carrera.conductor_foto_vehiculo ? (
@@ -3032,7 +3153,7 @@ function PedirCarreraScreen({ navigation, route }) {
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 26, paddingHorizontal: 16 }}>
             {[["🕘", "Historial", () => { setVerMenu(false); setTimeout(abrirHistorial, 260); }],
-              ["💬", "Soporte", () => { setVerMenu(false); avisar("Soporte", "Muy pronto podrás escribirnos por aquí. Lo estamos activando."); }],
+              ["💬", "Soporte", () => { setVerMenu(false); soporteWhatsApp(soporteWa, usuario); }],
               ["⚙️", "Configuración", () => { setVerMenu(false); navigation.navigate("Configuracion", { usuario }); }]].map(([ic, lbl, fn]) => (
               <TouchableOpacity key={lbl} style={{ alignItems: "center", width: 100 }} onPress={fn}>
                 <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: "#F1F1F1", alignItems: "center", justifyContent: "center" }}>
@@ -3235,41 +3356,23 @@ function PedirCarreraScreen({ navigation, route }) {
             </View>
             {programar && (
               <>
-                <Text style={[styles.ayuda, { marginTop: 12 }]}>Dia</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-                    {diasProximos().map((x) => {
-                      const act = progDia && progDia.toDateString() === x.d.toDateString();
-                      return (
-                        <TouchableOpacity key={x.key} onPress={() => setProgDia(x.d)}
-                          style={[styles.chip, act && styles.chipOn]}>
-                          <Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </ScrollView>
-                <Text style={[styles.ayuda, { marginTop: 8 }]}>Hora</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-                    {horasDelDia().map((x) => {
-                      const act = progHora && progHora.h === x.h && progHora.m === x.m;
-                      return (
-                        <TouchableOpacity key={x.lbl} onPress={() => setProgHora({ h: x.h, m: x.m })}
-                          style={[styles.chip, act && styles.chipOn]}>
-                          <Text style={[styles.chipTxt, act && styles.chipTxtOn]}>{x.lbl}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </ScrollView>
-                {recogidaISO ? (
-                  <View style={{ marginTop: 12, backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10 }}>
-                    <Text style={{ color: "#187830", fontWeight: "700", fontSize: 14 }}>⏰ Recogida: {fmtRecogida(recogidaISO)}</Text>
-                  </View>
-                ) : (
-                  <Text style={[styles.ayuda, { marginTop: 10 }]}>Elige el dia y la hora</Text>
-                )}
+                <TouchableOpacity
+                  onPress={() => setCalAbierto(true)}
+                  style={{ marginTop: 12, borderWidth: 1.5, borderColor: recogidaISO ? "#187830" : "#F06000", borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, backgroundColor: recogidaISO ? "#EAF6EC" : "#FFF6EF", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: recogidaISO ? "#187830" : "#B44700", fontWeight: "800", fontSize: 15 }}>
+                    {recogidaISO ? `📅 ${fmtRecogida(recogidaISO)}` : "📅 Elegir día y hora"}
+                  </Text>
+                  <Text style={{ color: recogidaISO ? "#187830" : "#B44700", fontWeight: "800", fontSize: 15 }}>
+                    {recogidaISO ? "Cambiar ›" : "Abrir ›"}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={[styles.ayuda, { marginTop: 8 }]}>Abre el calendario y elige el día (puedes ir meses adelante) y la hora exacta de recogida.</Text>
+                <CalendarioModal
+                  visible={calAbierto}
+                  inicial={progDia && progHora ? { d: progDia, h: progHora.h, m: progHora.m } : null}
+                  onConfirmar={(d, h, mm) => { setProgDia(d); setProgHora({ h, m: mm }); setCalAbierto(false); }}
+                  onCerrar={() => setCalAbierto(false)}
+                />
               </>
             )}
           </View>
@@ -3583,6 +3686,7 @@ function ConductorScreen({ navigation, route }) {
   const [misExpresos, setMisExpresos] = useState([]);
   const [ofExpreso, setOfExpreso] = useState(null);   // expreso al que le va a contraofertar
   const [montoExp, setMontoExp] = useState("");
+  const [verExp, setVerExp] = useState(null);   // expreso cuyo detalle+mapa esta viendo antes de decidir
 
   const tieneCarreraActiva = mias.length > 0;
   // un expreso EN CAMINO tambien exige reportar GPS: el cliente ve el carro moverse
@@ -4325,6 +4429,9 @@ function ConductorScreen({ navigation, route }) {
                 {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
                 {e.notas ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📝 {e.notas}</Text> : null}
                 <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
+                <TouchableOpacity onPress={() => setVerExp(e)} style={{ marginTop: 8, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }}>
+                  <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 13 }}>🔍 Ver detalles y mapa</Text>
+                </TouchableOpacity>
                 {e.mi_oferta ? (
                   <View style={{ marginTop: 10 }}>
                     <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, padding: 10 }}>
@@ -4548,6 +4655,96 @@ function ConductorScreen({ navigation, route }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* DETALLE del expreso: mapa de dónde a dónde + fecha clara, ANTES de decidir */}
+      <Modal visible={!!verExp} transparent animationType="slide" onRequestClose={() => setVerExp(null)}>
+        <View style={{ flex: 1, backgroundColor: "#F3F4F6" }}>
+          <View style={{ backgroundColor: "#187830", paddingTop: insets.top + 10, paddingBottom: 12, paddingHorizontal: 16, flexDirection: "row", alignItems: "center" }}>
+            <TouchableOpacity onPress={() => setVerExp(null)} style={{ paddingRight: 12, paddingVertical: 2 }}>
+              <Text style={{ color: "#fff", fontSize: 26, fontWeight: "700" }}>‹</Text>
+            </TouchableOpacity>
+            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Detalle del viaje</Text>
+          </View>
+          {verExp && (() => {
+            const oLat = verExp.origen_lat, oLon = verExp.origen_lon;
+            const dLat = verExp.destino_lat, dLon = verExp.destino_lon;
+            const hayMapa = oLat != null || dLat != null;
+            const total = verExp.precio_por_cupo * verExp.cupos;
+            return (
+              <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 24 }}>
+                <View style={[styles.card, { marginBottom: 12 }]}>
+                  <Text style={{ fontSize: 20, fontWeight: "800", color: "#111" }}>{verExp.origen_municipio} → {verExp.destino_municipio}</Text>
+                  <View style={{ backgroundColor: verExp.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 10, padding: 12, marginTop: 10 }}>
+                    <Text style={{ fontSize: 11.5, color: verExp.salida ? "#B85C00" : "#187830", fontWeight: "800", letterSpacing: 0.5 }}>{verExp.salida ? "🗓️ SALIDA PROGRAMADA" : "🟢 CUÁNDO"}</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "800", color: verExp.salida ? "#B85C00" : "#187830", marginTop: 3 }}>
+                      {verExp.salida ? fmtFechaLarga(verExp.salida) : "Lo antes posible"}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.card, { marginBottom: 12 }]}>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#666", marginBottom: 8 }}>📍 DE DÓNDE A DÓNDE</Text>
+                  {hayMapa ? (
+                    <MapaSeguimiento
+                      recogida={oLat != null ? { lat: oLat, lon: oLon } : null}
+                      destino={dLat != null ? { lat: dLat, lon: dLon } : null}
+                    />
+                  ) : (
+                    <View style={{ backgroundColor: "#FFF7E6", borderRadius: 10, padding: 12, marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: "#9A6B00" }}>El cliente no marcó puntos exactos en el mapa. Guíate por las direcciones escritas abajo.</Text>
+                    </View>
+                  )}
+                  <Text style={{ fontSize: 14, color: "#333", marginTop: 6 }}>🟢 <Text style={{ fontWeight: "700" }}>Recoge:</Text> {verExp.origen}</Text>
+                  <Text style={{ fontSize: 14, color: "#333", marginTop: 4 }}>🏁 <Text style={{ fontWeight: "700" }}>Deja:</Text> {verExp.destino_detalle || verExp.destino_municipio}</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                    {oLat != null && (
+                      <TouchableOpacity style={{ flex: 1, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }} onPress={() => navegarGoogleMaps(oLat, oLon)}>
+                        <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 12.5 }}>🧭 Ver recogida en Maps</Text>
+                      </TouchableOpacity>
+                    )}
+                    {dLat != null && (
+                      <TouchableOpacity style={{ flex: 1, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }} onPress={() => navegarGoogleMaps(dLat, dLon)}>
+                        <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 12.5 }}>🧭 Ver destino en Maps</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+
+                <View style={[styles.card, { marginBottom: 12 }]}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ fontSize: 14, color: "#555" }}>Precio del cliente</Text>
+                    <Text style={{ fontSize: 20, fontWeight: "800", color: "#187830" }}>${verExp.precio_por_cupo.toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>/cupo</Text></Text>
+                  </View>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+                    <Text style={{ fontSize: 14, color: "#555" }}>{verExp.cupos} cupo(s) · total</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: "#333" }}>${total.toLocaleString()}</Text>
+                  </View>
+                  {verExp.notas ? <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>📝 {verExp.notas}</Text> : null}
+                  <Text style={{ fontSize: 13, color: "#999", marginTop: 8 }}>👤 {verExp.cliente_nombre}</Text>
+                </View>
+
+                {verExp.mi_oferta ? (
+                  <View style={{ backgroundColor: "#EAF1FB", borderRadius: 10, padding: 12 }}>
+                    <Text style={{ fontSize: 14, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${verExp.mi_oferta.toLocaleString()}/cupo</Text>
+                    <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11, marginTop: 10 }]} onPress={() => { const e = verExp; setVerExp(null); setMontoExp(String(e.mi_oferta)); setOfExpreso(e); }}>
+                      <Text style={{ color: "#187830", fontWeight: "700" }}>Cambiar mi oferta</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 13 }]} onPress={() => { const e = verExp; setVerExp(null); aceptarExpreso(e); }}>
+                      <Text style={styles.buttonText}>Tomar ${verExp.precio_por_cupo.toLocaleString()}/cupo</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 13 }]} onPress={() => { const e = verExp; setVerExp(null); setMontoExp(String(e.precio_por_cupo)); setOfExpreso(e); }}>
+                      <Text style={{ color: "#187830", fontWeight: "700" }}>Proponer otro</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </ScrollView>
+            );
+          })()}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -4769,6 +4966,17 @@ function AdminCarrerasScreen({ navigation }) {
       "Si, quitar");
   };
 
+  const verificarConductor = (c) => {
+    const nuevo = c.verificado === "si" ? "no" : "si";
+    confirmar(
+      nuevo === "si" ? "Habilitar conductor" : "Quitar habilitación",
+      nuevo === "si"
+        ? `¿Revisaste los documentos de ${c.nombre} y están correctos?`
+        : `${c.nombre} quedará "en revisión" de nuevo.`,
+      () => adminFetch(`${API}/conductores/${c.id}/verificar?valor=${nuevo}`, { method: "PUT" }).then(cargar),
+      nuevo === "si" ? "Sí, habilitar" : "Sí, quitar");
+  };
+
   const cambiarCobro = () => {
     const nuevo = config.cobro_activo === "si" ? "no" : "si";
     confirmar(
@@ -4896,27 +5104,43 @@ function AdminCarrerasScreen({ navigation }) {
                 {c.municipio ? <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>📍 {c.municipio}{c.tipo_vehiculo ? `  ·  ${vehIcono(c.tipo_vehiculo)} ${vehLabel(c.tipo_vehiculo)}` : ""}</Text> : null}
                 {c.placa ? <Text style={{ fontSize: 12, color: "#888" }}>🚕 {c.vehiculo} - {c.placa}</Text> : null}
               </View>
-              <View style={[styles.estadoBadge, { backgroundColor: c.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
-                <Text style={{ fontSize: 11, fontWeight: "600", color: c.al_dia ? "#187830" : "#C0392B" }}>
-                  {c.al_dia ? (config.cobro_activo === "si" ? `${c.dias_restantes} dias` : "activo") : "vencido"}
-                </Text>
+              <View style={{ alignItems: "flex-end", gap: 4 }}>
+                <View style={[styles.estadoBadge, { backgroundColor: c.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: c.al_dia ? "#187830" : "#C0392B" }}>
+                    {c.al_dia ? (config.cobro_activo === "si" ? `${c.dias_restantes} dias` : "activo") : "vencido"}
+                  </Text>
+                </View>
+                <View style={[styles.estadoBadge, { backgroundColor: c.verificado === "si" ? "#E8F5E9" : "#FFF3E0" }]}>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: c.verificado === "si" ? "#187830" : "#B85C00" }}>
+                    {c.verificado === "si" ? "✅ verificado" : "⏳ revisar"}
+                  </Text>
+                </View>
               </View>
             </View>
-            {c.fotos && (c.fotos.conductor || c.fotos.vehiculo || c.fotos.tarjeta) ? (
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                {[["conductor", "👤"], ["vehiculo", "🚗"], ["tarjeta", "📄"]].map(([t, ic]) => (
-                  <View key={t} style={{ flex: 1, alignItems: "center" }}>
+            {(c.veh_color || c.veh_modelo) ? (
+              <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🎨 {[c.veh_color, c.veh_modelo].filter(Boolean).join(" · ")}</Text>
+            ) : null}
+            {c.fotos && Object.values(c.fotos).some(Boolean) ? (
+              <>
+              <Text style={{ fontSize: 10, color: "#999", marginTop: 10 }}>Toca un documento para verlo grande</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                {[["conductor", "foto"], ["vehiculo", "vehículo"], ["cedula", "cédula"], ["licencia", "licencia"], ["tarjeta", "tarjeta"], ["soat", "SOAT"]].map(([t, lbl]) => (
+                  <TouchableOpacity key={t} style={{ width: "31.5%", alignItems: "center" }} disabled={!c.fotos[t]} onPress={() => c.fotos[t] && Linking.openURL(c.fotos[t])}>
                     {c.fotos[t]
-                      ? <Image source={{ uri: c.fotos[t] }} style={{ width: "100%", height: 60, borderRadius: 8 }} />
-                      : <View style={{ width: "100%", height: 60, borderRadius: 8, backgroundColor: "#f2f2f2", alignItems: "center", justifyContent: "center" }}><Text>{ic}</Text></View>}
-                    <Text style={{ fontSize: 9, color: c.fotos[t] ? "#187830" : "#bbb", marginTop: 2 }}>{t === "tarjeta" ? "tarjeta" : t}</Text>
-                  </View>
+                      ? <Image source={{ uri: c.fotos[t] }} style={{ width: "100%", height: 56, borderRadius: 8 }} />
+                      : <View style={{ width: "100%", height: 56, borderRadius: 8, backgroundColor: "#f2f2f2", alignItems: "center", justifyContent: "center" }}><Text style={{ color: "#ccc", fontSize: 18 }}>—</Text></View>}
+                    <Text style={{ fontSize: 9, color: c.fotos[t] ? "#187830" : "#bbb", marginTop: 2 }}>{lbl}</Text>
+                  </TouchableOpacity>
                 ))}
               </View>
+              </>
             ) : (
-              <Text style={{ fontSize: 11, color: "#C0392B", marginTop: 8 }}>⚠️ Sin fotos de verificacion</Text>
+              <Text style={{ fontSize: 11, color: "#C0392B", marginTop: 8 }}>⚠️ Sin documentos subidos</Text>
             )}
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+            <TouchableOpacity style={[styles.button, { backgroundColor: c.verificado === "si" ? "#fff" : "#1A56B8", borderWidth: c.verificado === "si" ? 1 : 0, borderColor: "#ddd", padding: 10, marginTop: 10 }]} onPress={() => verificarConductor(c)}>
+              <Text style={{ color: c.verificado === "si" ? "#C0392B" : "#fff", fontWeight: "700", fontSize: 13 }}>{c.verificado === "si" ? "Quitar habilitación" : "✅ Habilitar (verificar)"}</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
               <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => registrarPago(c)}>
                 <Text style={[styles.buttonText, { fontSize: 13 }]}>Registrar pago</Text>
               </TouchableOpacity>
@@ -5282,12 +5506,15 @@ function ConfiguracionScreen({ navigation, route }) {
   const esConductor = usuario.rol === "conductor";
   const [pagos, setPagos] = useState({ efectivo: true, nequi: "", daviplata: "", bancolombia: "", breb: "" });
   const [activos, setActivos] = useState({ efectivo: true });   // cuales estan marcados
-  const [fotos, setFotos] = useState({ conductor: null, vehiculo: null, tarjeta: null });
-  const [subiendoFoto, setSubiendoFoto] = useState(null);       // "conductor" | "vehiculo" | "tarjeta"
+  const [fotos, setFotos] = useState({ conductor: null, vehiculo: null, tarjeta: null, licencia: null, cedula: null, soat: null });
+  const [subiendoFoto, setSubiendoFoto] = useState(null);       // tipo que se esta subiendo
+  const [perfil, setPerfil] = useState(null);                   // verificado, suscripcion, calificacion...
+  const [vehForm, setVehForm] = useState({ placa: "", vehiculo: "", veh_color: "", veh_modelo: "" });
+  const [guardandoVeh, setGuardandoVeh] = useState(false);
   const [notifOk, setNotifOk] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
-  const [soporteWa, setSoporteWa] = useState("");
+  const [soporteWa, setSoporteWa] = useState("3133714915");
   // zona de trabajo del conductor: puede mudarse o trabajar en el otro pueblo
   const [municipios, setMunicipios] = useState([]);
   const [miMuni, setMiMuni] = useState(usuario.municipio);
@@ -5354,11 +5581,32 @@ function ConfiguracionScreen({ navigation, route }) {
             bancolombia: !!d.pagos.bancolombia, breb: !!d.pagos.breb,
           });
         }
-        if (d && d.fotos) setFotos(d.fotos);
+        if (d && d.fotos) setFotos(f => ({ ...f, ...d.fotos }));
+        if (d && !d.detail) {
+          setPerfil(d);
+          setVehForm({
+            placa: d.placa || "", vehiculo: d.vehiculo || "",
+            veh_color: d.veh_color || "", veh_modelo: d.veh_modelo || "",
+          });
+        }
       })
       .catch(() => {})
       .finally(() => setCargando(false));
   }, []);
+
+  const guardarVehiculo = () => {
+    setGuardandoVeh(true);
+    userFetch(`${API}/usuarios/${usuario.id}/vehiculo?${qs(vehForm)}`, { method: "PUT" })
+      .then(r => r.json())
+      .then(d => {
+        setGuardandoVeh(false);
+        if (!d.ok) { avisar("Error", "No se pudo guardar."); return; }
+        usuario.placa = d.placa; usuario.vehiculo = d.vehiculo;   // refresca la pantalla previa
+        setPerfil(p => ({ ...(p || {}), ...d }));
+        avisar("Guardado", "Datos del vehículo actualizados. Quedan en revisión para habilitarte.");
+      })
+      .catch(() => { setGuardandoVeh(false); avisar("Sin conexión", "Intenta de nuevo."); });
+  };
 
   const subirFoto = async (tipo) => {
     const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -5421,6 +5669,39 @@ function ConfiguracionScreen({ navigation, route }) {
           </Text>
         </View>
 
+        {/* HABILITACIÓN del conductor: verificación de documentos + suscripción */}
+        {esConductor && (
+          <View style={[styles.card, { marginBottom: 14 }]}>
+            <Text style={styles.seccionTitulo}>🛡️ Habilitación</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+              <Text style={{ fontSize: 14, color: "#333" }}>Verificación de documentos</Text>
+              <View style={[styles.estadoBadge, { backgroundColor: perfil && perfil.verificado === "si" ? "#E8F5E9" : "#FFF3E0" }]}>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: perfil && perfil.verificado === "si" ? "#187830" : "#B85C00" }}>
+                  {perfil && perfil.verificado === "si" ? "✅ Verificado" : "⏳ En revisión"}
+                </Text>
+              </View>
+            </View>
+            {perfil && perfil.verificado !== "si" && (
+              <Text style={[styles.ayuda, { marginTop: 6 }]}>Sube tus documentos abajo. Nuestro equipo los revisa y te habilita.</Text>
+            )}
+            <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 10 }} />
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={{ fontSize: 14, color: "#333" }}>Suscripción</Text>
+              <View style={[styles.estadoBadge, { backgroundColor: perfil && perfil.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: perfil && perfil.al_dia ? "#187830" : "#C0392B" }}>
+                  {perfil ? (perfil.al_dia ? (perfil.dias_restantes != null ? `Al día · ${perfil.dias_restantes} días` : "Al día") : "Vencida") : "…"}
+                </Text>
+              </View>
+            </View>
+            {perfil && perfil.calificacion != null && (
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+                <Text style={{ fontSize: 14, color: "#333" }}>Calificación</Text>
+                <Estrellas valor={perfil.calificacion} size={15} />
+              </View>
+            )}
+          </View>
+        )}
+
         {/* notificaciones: recibir servicios aunque la app este cerrada */}
         <View style={[styles.card, { marginBottom: 14 }]}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -5444,13 +5725,15 @@ function ConfiguracionScreen({ navigation, route }) {
           </View>
         </View>
 
-        <View style={[styles.card, { marginBottom: 14 }]}>
-          <Text style={styles.seccionTitulo}>💬 Soporte y ayuda</Text>
-          <Text style={styles.ayuda}>¿Un problema, una duda o algo que reportar? Escríbenos por WhatsApp.</Text>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#25D366", marginTop: 10 }]} onPress={() => soporteWhatsApp(soporteWa, usuario)}>
-            <Text style={styles.buttonText}>💬 Escribir al soporte</Text>
-          </TouchableOpacity>
-        </View>
+        {esConductor && (
+          <View style={[styles.card, { marginBottom: 14 }]}>
+            <Text style={styles.seccionTitulo}>💬 Soporte y ayuda</Text>
+            <Text style={styles.ayuda}>¿Un problema, una duda o algo que reportar? Escríbenos por WhatsApp.</Text>
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#25D366", marginTop: 10 }]} onPress={() => soporteWhatsApp(soporteWa, usuario)}>
+              <Text style={styles.buttonText}>💬 Escribir al soporte</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {esConductor && municipios.length > 0 && (
           <View style={[styles.card, { marginBottom: 14 }]}>
@@ -5496,19 +5779,36 @@ function ConfiguracionScreen({ navigation, route }) {
 
         {cargando ? <ActivityIndicator color="#187830" /> : esConductor ? (
           <>
+          {/* DATOS DEL VEHÍCULO (el cliente los ve para identificarte) */}
           <View style={[styles.card, { marginBottom: 14 }]}>
-            <Text style={styles.seccionTitulo}>Tus fotos</Text>
-            <Text style={styles.ayuda}>Tu foto y la del vehiculo le dan confianza al cliente. La tarjeta de propiedad es para verificacion.</Text>
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
-              {[["conductor", "Tu foto", 1], ["vehiculo", "Vehiculo", 1.3], ["tarjeta", "Tarjeta prop.", 1.3]].map(([tipo, lbl]) => (
-                <TouchableOpacity key={tipo} style={{ flex: 1, alignItems: "center" }} onPress={() => subirFoto(tipo)} disabled={!!subiendoFoto}>
-                  <View style={styles.fotoBox}>
+            <Text style={styles.seccionTitulo}>🚗 Datos del vehículo</Text>
+            <Text style={styles.ayuda}>El cliente los ve para identificarte cuando llegas. Si los cambias, tu cuenta vuelve a revisión.</Text>
+            <Text style={{ fontSize: 12.5, color: "#888", marginTop: 6 }}>Tipo: {vehIcono(usuario.tipo_vehiculo)} {vehLabel(usuario.tipo_vehiculo)}</Text>
+            <TextInput value={vehForm.placa} onChangeText={t => setVehForm({ ...vehForm, placa: t.toUpperCase() })} placeholder="Placa (ej. ABC123)" autoCapitalize="characters" style={[styles.input, { marginTop: 8 }]} />
+            <TextInput value={vehForm.vehiculo} onChangeText={t => setVehForm({ ...vehForm, vehiculo: t })} placeholder="Marca y línea (ej. Chevrolet Spark)" style={[styles.input, { marginTop: 8 }]} />
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TextInput value={vehForm.veh_color} onChangeText={t => setVehForm({ ...vehForm, veh_color: t })} placeholder="Color" style={[styles.input, { flex: 1, marginTop: 8 }]} />
+              <TextInput value={vehForm.veh_modelo} onChangeText={t => setVehForm({ ...vehForm, veh_modelo: t })} placeholder="Modelo / año" style={[styles.input, { flex: 1, marginTop: 8 }]} />
+            </View>
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]} onPress={guardarVehiculo} disabled={guardandoVeh}>
+              {guardandoVeh ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Guardar datos del vehículo</Text>}
+            </TouchableOpacity>
+          </View>
+
+          {/* DOCUMENTOS Y FOTOS: fotos públicas + documentos de verificación */}
+          <View style={[styles.card, { marginBottom: 14 }]}>
+            <Text style={styles.seccionTitulo}>📎 Documentos y fotos</Text>
+            <Text style={styles.ayuda}>Tu foto y la del vehículo las ve el cliente. Los documentos (cédula, licencia, tarjeta, SOAT) son solo para verificación del equipo; el cliente NO los ve.</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+              {[["conductor", "Tu foto", "👤"], ["vehiculo", "Vehículo", "🚗"], ["cedula", "Cédula", "🪪"], ["licencia", "Licencia", "🚦"], ["tarjeta", "Tarjeta prop.", "📄"], ["soat", "SOAT", "🛡️"]].map(([tipo, lbl, ic]) => (
+                <TouchableOpacity key={tipo} style={{ width: "31.5%", alignItems: "center" }} onPress={() => subirFoto(tipo)} disabled={!!subiendoFoto}>
+                  <View style={{ width: "100%", height: 76, borderRadius: 10, backgroundColor: "#F2F4F3", borderWidth: fotos[tipo] ? 0 : 1, borderColor: "#e2e2e2", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
                     {subiendoFoto === tipo ? <ActivityIndicator color="#187830" />
-                      : fotos[tipo] ? <Image source={{ uri: fotos[tipo] }} style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                      : <Text style={{ fontSize: 26 }}>{tipo === "conductor" ? "👤" : tipo === "vehiculo" ? "🚗" : "📄"}</Text>}
+                      : fotos[tipo] ? <Image source={{ uri: fotos[tipo] }} style={{ width: "100%", height: "100%" }} />
+                      : <Text style={{ fontSize: 24 }}>{ic}</Text>}
                   </View>
                   <Text style={{ fontSize: 11, color: "#666", marginTop: 4 }}>{lbl}</Text>
-                  <Text style={{ fontSize: 10, color: "#187830" }}>{fotos[tipo] ? "cambiar" : "subir"}</Text>
+                  <Text style={{ fontSize: 10, color: "#187830", fontWeight: "600" }}>{fotos[tipo] ? "✓ cambiar" : "subir"}</Text>
                 </TouchableOpacity>
               ))}
             </View>
