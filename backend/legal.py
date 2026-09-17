@@ -58,7 +58,7 @@ def terminos_html():
   <h2>1. Qué es Tukán</h2>
   <p>{MARCA} es una plataforma tecnológica que <b>conecta</b> a personas que necesitan un servicio de
   transporte de pasajeros, domicilios o acarreos ("Clientes") con transportadores independientes
-  ("Transportadores") en el Bajo Putumayo. {MARCA} <b>no presta directamente el servicio de transporte</b>,
+  ("Transportadores") en Colombia. {MARCA} <b>no presta directamente el servicio de transporte</b>,
   no es dueña de los vehículos ni emplea a los Transportadores: solo facilita el contacto entre las partes.</p>
 
   <h2>2. Los Transportadores son independientes</h2>

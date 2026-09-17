@@ -302,8 +302,8 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tukán — Descarga la app</title>
-<meta property="og:title" content="Tukán 🦜 — Carreras y domicilios en Putumayo">
-<meta property="og:description" content="Pide tu carrera en Puerto Asís y Orito. Descarga la app gratis. 1 mes gratis para los primeros 1.000.">
+<meta property="og:title" content="Tukán 🦜 — Movilidad y acarreos">
+<meta property="og:description" content="Carreras, acarreos y mudanzas. Tú pones el precio y pagas directo al conductor. Descarga la app gratis.">
 <meta property="og:image" content="{base}/logo.png">
 <meta property="og:type" content="website">
 <style>
@@ -324,7 +324,7 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
 </style></head><body><div class="caja">
   <img class="logo" src="/logo.png" alt="Tukán">
   <h1>Tuk<span>án</span></h1>
-  <div class="sub">Carreras y domicilios amazónicos<br>Puerto Asís · Orito · Putumayo</div>
+  <div class="sub">Movilidad y acarreos<br>Carreras · Acarreos · Mudanzas · Viajes</div>
 
   <a class="boton" id="btn-descarga" href="/apk">⬇️ Descargar Tukán</a>
   <div class="mini" id="nota-android">App para Android · Descarga directa, no necesita Play Store</div>
@@ -347,7 +347,7 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
   <div class="paso"><b>3. Regístrate</b> — abre Tukán, pon tu nombre y teléfono. Si eres mototaxista
     o conductor, elige tu vehículo y ¡empieza a recibir carreras!</div>
 
-  <div class="promo">🎉 1 MES GRATIS para los primeros 1.000 registrados en Puerto Asís y Orito</div>
+  <div class="promo">🎉 GRATIS por lanzamiento — regístrate y empieza sin pagar</div>
 
   <div style="margin-top:18px;font-size:14px">¿Dudas o ayuda para instalar?<br>
   <a class="wa" href="https://wa.me/573156009728">💬 Escríbenos al WhatsApp 315 600 9728</a></div>
@@ -356,7 +356,7 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
     <a href="/terminos" style="color:#A9CBB4">Términos</a> ·
     <a href="/privacidad" style="color:#A9CBB4">Privacidad y Habeas Data</a>
   </div>
-  <div class="pie">Tukán · Delivery amazónico · Hecho en Putumayo 🦜</div>
+  <div class="pie">Tukán · Movilidad y acarreos · Colombia 🦜</div>
 </div></body></html>"""
 
 @app.get("/terminos", response_class=HTMLResponse)
