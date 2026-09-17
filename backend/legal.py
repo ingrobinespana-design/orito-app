@@ -14,7 +14,7 @@ CORREO = "integrarservices@gmail.com"
 WHATSAPP = "+57 315 600 9728"
 WHATSAPP_LINK = "https://wa.me/573156009728"
 LUGAR = "Orito, Putumayo, Colombia"
-ACTUALIZADO = "24 de julio de 2026"
+ACTUALIZADO = "17 de septiembre de 2026"
 
 
 def _pagina(titulo, cuerpo):
@@ -132,9 +132,10 @@ def privacidad_html():
       punto de recogida y destino, calcular distancias y —en el caso del Transportador con un servicio
       activo— mostrar en vivo dónde va, incluso con la app en segundo plano.</li>
     <li><b>Del servicio:</b> el origen, destino, precio acordado e historial de tus carreras o acarreos.</li>
-    <li><b>Del Transportador:</b> tipo y placa del vehículo, fotos de la persona, del vehículo y de la
-      tarjeta de propiedad (esta última solo para verificación, no se muestra a los Clientes), y los medios
-      de pago que declara aceptar.</li>
+    <li><b>Del Transportador:</b> tipo, placa, color y modelo del vehículo; su foto y la del vehículo (que
+      el Cliente ve para identificarlo); y documentos de verificación —tarjeta de propiedad, licencia de
+      conducción, cédula y SOAT— que <b>solo usa nuestro equipo para habilitarlo y NO se muestran a los
+      Clientes</b>; además los medios de pago que declara aceptar.</li>
   </ul>
 
   <h2>2. Para qué los usamos</h2>
