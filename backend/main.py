@@ -1452,7 +1452,7 @@ def _nominatim_geo(t, cerca_lat, cerca_lon):
         params["viewbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
     url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
     req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
-    with _ur.urlopen(req, timeout=5) as r:
+    with _ur.urlopen(req, timeout=3) as r:
         arr = _json.loads(r.read().decode("utf-8"))
     out = []
     for x in arr:
@@ -1490,18 +1490,17 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
             vistos.add(k)
             resultados.append(r)
 
-    # Si el texto trae NUMERO (ej. "carrera 50", "calle 18 #4") es una direccion:
-    # Mapbox es el fuerte. Si NO trae numero (ej. "unicentro", "terminal", "exito")
-    # es un sitio/negocio: OSM (POIs) va primero. La otra fuente completa si faltan.
-    tiene_numero = any(ch.isdigit() for ch in t)
-    fuentes = [_mapbox_geo, _nominatim_geo] if tiene_numero else [_nominatim_geo, _mapbox_geo]
+    # Mapbox v6 PRIMERO: es rapido y confiable (no cuelga el servidor). OSM solo
+    # como RESPALDO cuando Mapbox quedo corto (tipico al buscar un sitio/negocio),
+    # con timeout corto. Asi no saturamos a OSM (que es lento y limitado) ni
+    # bloqueamos los workers del backend.
     try:
-        agregar(fuentes[0](t, cerca_lat, cerca_lon))
+        agregar(_mapbox_geo(t, cerca_lat, cerca_lon))
     except Exception:
         pass
-    if len(resultados) < 6:   # completa con la otra fuente si quedo corto
+    if len(resultados) < 3:
         try:
-            agregar(fuentes[1](t, cerca_lat, cerca_lon))
+            agregar(_nominatim_geo(t, cerca_lat, cerca_lon))
         except Exception:
             pass
     return resultados[:6]
