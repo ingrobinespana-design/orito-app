@@ -1410,35 +1410,46 @@ MAPBOX_TOKEN = os.environ.get(
 MAPBOX_REFERER = os.environ.get("MAPBOX_REFERER", "https://orito.app/")
 
 def _mapbox_geo(t, cerca_lat, cerca_lon):
-    """Mapbox: FUERTE en nomenclatura (Carrera 15, Calle 18). Acotado a la zona."""
+    """Mapbox Geocoding v6: FUERTE en nomenclatura (Carrera 15, Calle 18), calles,
+    barrios y lugares. Se SESGA por cercania (proximity) pero NO se encierra en una
+    caja rigida: asi en ciudades grandes (Cali, Barranquilla) sugiere bien. El filtro
+    por distancia (generoso) se aplica despues, en autocompletar()."""
     import urllib.request as _ur, urllib.parse as _up, json as _json
-    params = {"access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
-              "limit": "6", "autocomplete": "true", "types": "address,poi"}
+    params = {"q": t, "access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
+              "limit": "8", "autocomplete": "true",
+              "types": "address,street,place,locality,neighborhood"}
     if cerca_lat is not None and cerca_lon is not None:
-        params["proximity"] = f"{cerca_lon},{cerca_lat}"
-        d = 0.15   # recuadro ~16 km: acota a la ZONA (no a todo el pais)
-        params["bbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
-    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{_up.quote(t)}.json?" + _up.urlencode(params)
+        params["proximity"] = f"{cerca_lon},{cerca_lat}"   # solo sesgo, sin recorte
+    url = "https://api.mapbox.com/search/geocode/v6/forward?" + _up.urlencode(params)
     req = _ur.Request(url, headers={"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"})
     with _ur.urlopen(req, timeout=5) as r:
         data = _json.loads(r.read().decode("utf-8"))
     out = []
     for f in data.get("features", []):
-        c = f.get("center")
+        props = f.get("properties", {}) or {}
+        geom = f.get("geometry", {}) or {}
+        c = geom.get("coordinates")
+        if not (c and len(c) == 2):
+            co = props.get("coordinates") or {}
+            if "longitude" in co and "latitude" in co:
+                c = [co["longitude"], co["latitude"]]
         if c and len(c) == 2:
-            out.append({"nombre": f.get("place_name"), "lat": c[1], "lon": c[0]})
+            nombre = props.get("full_address") or props.get("name") or props.get("name_preferred")
+            if nombre:
+                out.append({"nombre": nombre, "lat": c[1], "lon": c[0]})
     return out
 
 def _nominatim_geo(t, cerca_lat, cerca_lon):
     """OpenStreetMap: FUERTE en sitios/negocios (Unicentro, terminal, parque,
     hospital). Acotado a la zona (bounded). Gratis. Complementa a Mapbox."""
     import urllib.request as _ur, urllib.parse as _up, json as _json
-    params = {"q": t, "format": "jsonv2", "limit": "5",
+    params = {"q": t, "format": "jsonv2", "limit": "6",
               "countrycodes": "co", "accept-language": "es"}
     if cerca_lat is not None and cerca_lon is not None:
-        d = 0.2
+        # viewbox amplio (~65 km) solo como SESGO, sin bounded=1: en metros grandes
+        # (Cali, Barranquilla) un recuadro chico borraba sitios validos.
+        d = 0.6
         params["viewbox"] = f"{cerca_lon - d},{cerca_lat - d},{cerca_lon + d},{cerca_lat + d}"
-        params["bounded"] = "1"
     url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
     req = _ur.Request(url, headers={"User-Agent": "tukan-app/1.0 (ingrobinespana@gmail.com)"})
     with _ur.urlopen(req, timeout=5) as r:
@@ -1467,10 +1478,11 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         for r in items:
             if not r.get("nombre"):
                 continue
-            # solo la zona: descarta lo que quede a mas de 25 km
+            # guarda GENEROSA: descarta solo lo muy lejano (otra ciudad/departamento),
+            # pero deja todo el area metropolitana. Mapbox ya ordena lo cercano primero.
             if cerca_lat is not None and cerca_lon is not None:
                 km = tarifas.distancia_km(cerca_lat, cerca_lon, r["lat"], r["lon"])
-                if km is not None and km > 25:
+                if km is not None and km > 80:
                     continue
             k = (round(r["lat"], 5), round(r["lon"], 5))
             if k in vistos:
@@ -1478,14 +1490,18 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
             vistos.add(k)
             resultados.append(r)
 
+    # Si el texto trae NUMERO (ej. "carrera 50", "calle 18 #4") es una direccion:
+    # Mapbox es el fuerte. Si NO trae numero (ej. "unicentro", "terminal", "exito")
+    # es un sitio/negocio: OSM (POIs) va primero. La otra fuente completa si faltan.
+    tiene_numero = any(ch.isdigit() for ch in t)
+    fuentes = [_mapbox_geo, _nominatim_geo] if tiene_numero else [_nominatim_geo, _mapbox_geo]
     try:
-        agregar(_mapbox_geo(t, cerca_lat, cerca_lon))
+        agregar(fuentes[0](t, cerca_lat, cerca_lon))
     except Exception:
         pass
-    # si Mapbox trajo pocos (tipico al buscar un SITIO, no una direccion), OSM completa
-    if len(resultados) < 4:
+    if len(resultados) < 6:   # completa con la otra fuente si quedo corto
         try:
-            agregar(_nominatim_geo(t, cerca_lat, cerca_lon))
+            agregar(fuentes[1](t, cerca_lat, cerca_lon))
         except Exception:
             pass
     return resultados[:6]
