@@ -3,11 +3,19 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from dotenv import load_dotenv
-import os
+import os, re
 
 load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./orito.db")
+
+# Fija EXPLICITAMENTE el driver psycopg2 (el que esta en requirements). Las
+# versiones nuevas de SQLAlchemy cambian el driver por defecto de postgres a
+# psycopg (v3), que no esta instalado -> el contenedor no arrancaba. Esto
+# acepta postgres://, postgresql:// o postgresql+<driver>:// y lo normaliza.
+_m = re.match(r'^postgres(?:ql)?(?:\+\w+)?://', DATABASE_URL)
+if _m:
+    DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[_m.end():]
 
 engine = create_engine(DATABASE_URL)
 
