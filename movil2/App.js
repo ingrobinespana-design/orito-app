@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -11,6 +11,7 @@ import * as TaskManager from 'expo-task-manager';
 import { WebView } from 'react-native-webview';
 import * as Updates from 'expo-updates';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Produccion por defecto. Para probar contra un servidor local se arranca con
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
@@ -33,6 +34,15 @@ const guardarLlave = (u) => {
   llaveUsuario = (u && u.token) || null;
   llaveAdmin = (u && u.rol === "admin" && u.token) || null;
 };
+// SESION PERSISTENTE: el usuario queda adentro aunque cierre la app (como Uber).
+// Se guarda el usuario completo (con token) en el telefono; al abrir se restaura.
+const SESION_KEY = "tukan_sesion_v1";
+const guardarSesion = async (u) => { try { await AsyncStorage.setItem(SESION_KEY, JSON.stringify(u)); } catch (_) {} };
+const leerSesion = async () => { try { const s = await AsyncStorage.getItem(SESION_KEY); return s ? JSON.parse(s) : null; } catch (_) { return null; } };
+const borrarSesion = async () => { try { await AsyncStorage.removeItem(SESION_KEY); } catch (_) {} llaveUsuario = null; llaveAdmin = null; };
+// a qué pantalla va cada rol al entrar (login o restaurar sesión)
+const pantallaDe = (rol) => rol === "admin" ? "Admin" : rol === "domiciliario" ? "Domiciliario"
+  : rol === "restaurante" ? "Restaurante" : rol === "conductor" ? "Conductor" : "ElegirServicio";
 const adminFetch = (url, opciones = {}) =>
   fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-Admin-Token": llaveAdmin || "" } });
 // para acciones sobre lo propio: manda la identidad del usuario
@@ -434,6 +444,20 @@ function LoginScreen({ navigation }) {
   const [municipios, setMunicipios] = useState([]);
   const [cargandoMun, setCargandoMun] = useState(true);
   const [verPass, setVerPass] = useState(false);   // mostrar/ocultar la contraseña
+  const [restaurando, setRestaurando] = useState(true);   // revisa si hay sesión guardada al abrir
+  // SESION: si quedó una sesión guardada, entra directo (no pide login cada vez)
+  useEffect(() => {
+    (async () => {
+      const s = await leerSesion();
+      if (s && s.id && s.token) {
+        guardarLlave(s);
+        registrarNotificaciones(s.id);
+        navigation.replace(pantallaDe(s.rol), { usuario: s });
+      } else {
+        setRestaurando(false);
+      }
+    })();
+  }, []);
 
   const cargarMunicipios = () => {
     setCargandoMun(true);
@@ -474,13 +498,15 @@ function LoginScreen({ navigation }) {
       : `${API}/registro?nombre=${form.nombre}&telefono=${form.telefono}&password=${form.password}`
         + `&municipio=${encodeURIComponent(form.municipio)}`
         + (form.comoMe === "cliente" || !form.comoMe ? "" :
-           `&tipo_vehiculo=${form.comoMe}&placa=${encodeURIComponent(form.placa)}`);
+           `&tipo_vehiculo=${form.comoMe}&placa=${encodeURIComponent(form.placa)}`)
+        + (form.codigo && form.codigo.trim() ? `&codigo=${encodeURIComponent(form.codigo.trim().toUpperCase())}` : "");
     fetchReintento(url, { method: "POST" })
       .then((res) => res.json())
       .then((data) => {
         setCargando(false);
         if (data.detail) { setError(data.detail); return; }
         guardarLlave(data);   // habilita el panel si este usuario es el admin
+        guardarSesion(data);  // queda la sesión guardada: no pide entrar cada vez
         registrarNotificaciones(data.id);
         if (data.rol === "admin") navigation.replace("Admin", { usuario: data });
         else if (data.rol === "domiciliario") navigation.replace("Domiciliario", { usuario: data });
@@ -490,6 +516,16 @@ function LoginScreen({ navigation }) {
       })
       .catch(() => { setCargando(false); setError("No hay conexion. Verifica tu internet e intenta de nuevo."); });
   };
+
+  // mientras revisa si hay sesión guardada, no muestra el formulario (evita el flash)
+  if (restaurando) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#F6F1E6", alignItems: "center", justifyContent: "center" }}>
+        <Image source={require("./assets/icon.png")} style={{ width: 92, height: 92, borderRadius: 22 }} />
+        <ActivityIndicator color="#187830" style={{ marginTop: 18 }} />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -514,6 +550,7 @@ function LoginScreen({ navigation }) {
           {modo === "registro" && (
             <>
               <TextInput placeholder="Tu nombre" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} />
+              <TextInput placeholder="🎁 Código de invitación (opcional)" value={form.codigo || ""} onChangeText={(t) => setForm({ ...form, codigo: t.toUpperCase() })} autoCapitalize="characters" style={styles.input} />
               <Text style={styles.etiqueta}>TU MUNICIPIO</Text>
               {cargandoMun ? (
                 <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#187830" /></View>
@@ -1948,6 +1985,35 @@ function mapaSeguimientoHTML() {
       capaDest = L.polyline([[recLat,recLon],[destLat,destLon]], {color:'#C0392B', weight:3, opacity:0.5, dashArray:'1 8'}).addTo(map);
     });
   }
+  // VISTA PREVIA (antes de pedir): traza el recorrido recogida -> destino por las
+  // calles, lo pinta prominente (naranja Tukan) y encuadra los dos puntos. Reporta
+  // km/min reales para mostrarlos en la tarjeta. No necesita conductor.
+  function previa(){
+    if(recLat == null || destLat == null) return;
+    map.fitBounds(L.latLngBounds([[recLat,recLon],[destLat,destLon]]).pad(0.3));
+    var url = 'https://router.project-osrm.org/route/v1/driving/' + recLon + ',' + recLat + ';' + destLon + ',' + destLat + '?overview=full&geometries=geojson';
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if(!d.routes || !d.routes[0]) throw 0;
+      var r = d.routes[0];
+      var pts = r.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
+      if(capaDest){ map.removeLayer(capaDest); }
+      map.fitBounds(L.polyline(pts).getBounds().pad(0.22));
+      // animar el TRAZADO: la linea crece de la recogida al destino (~0.9s)
+      capaDest = L.polyline([pts[0]], {color:'#F06000', weight:6, opacity:0.95, lineCap:'round', lineJoin:'round'}).addTo(map);
+      var total = pts.length, t0 = performance.now(), DUR = 900;
+      function dibuja(now){
+        var prog = Math.min(1, (now - t0) / DUR);
+        var n = Math.max(2, Math.floor(prog * total));
+        capaDest.setLatLngs(pts.slice(0, n));
+        if(prog < 1){ requestAnimationFrame(dibuja); } else { capaDest.setLatLngs(pts); }
+      }
+      requestAnimationFrame(dibuja);
+      if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)})); }
+    }).catch(function(){
+      if(capaDest){ map.removeLayer(capaDest); }
+      capaDest = L.polyline([[recLat,recLon],[destLat,destLon]], {color:'#F06000', weight:4, opacity:0.85, dashArray:'4 8'}).addTo(map);
+    });
+  }
   // 📍 donde recoge al cliente
   function recogida(la, lo){
     recLat = la; recLon = lo;
@@ -1990,7 +2056,7 @@ function mapaSeguimientoHTML() {
 </script></body></html>`;
 }
 
-function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno }) {
+function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno, preview }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
   // el HTML es FIJO (sin coordenadas) y se genera una sola vez por montaje: si
@@ -2024,6 +2090,14 @@ function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, l
     if (!listo || !webRef.current || !rutaA) return;
     webRef.current.injectJavaScript(`rutaA(${JSON.stringify(rutaA)}); true;`);
   }, [listo, rutaA]);
+  // VISTA PREVIA: con recogida + destino (y sin conductor), traza el recorrido y
+  // encuadra los dos puntos. Se re-dispara si cambia cualquiera de los extremos.
+  useEffect(() => {
+    if (!preview || !listo || !webRef.current) return;
+    if (rec && rec.lat != null && destino && destino.lat != null) {
+      webRef.current.injectJavaScript(`previa(); true;`);
+    }
+  }, [preview, listo, rec && rec.lat, rec && rec.lon, destino && destino.lat, destino && destino.lon]);
   // chequeo VIVO en cada render: el mapa se muestra apenas exista alguna
   // coordenada, sin importar cuando llego
   const hayDatos = (rec && rec.lat != null) || (destino && destino.lat != null) || (conductor && conductor.lat != null);
@@ -2180,16 +2254,115 @@ function CalendarioModal({ visible, inicial, onConfirmar, onCerrar }) {
   );
 }
 
+// Recibo detallado de una carrera/acarreo (cliente o conductor), con opcion de
+// compartir por WhatsApp/el medio que elija. Se abre al tocar una del historial.
+function ReciboModal({ visible, c, esConductor, onCerrar }) {
+  if (!c) return null;
+  const fin = c.estado === "finalizada";
+  const precio = c.tarifa || c.tarifa_ofrecida;
+  const contra = esConductor ? c.cliente_nombre : c.conductor_nombre;
+  const estrellas = esConductor ? c.estrellas_conductor : c.estrellas_cliente;
+  const veh = c.vehiculo_pedido;
+  const compartir = async () => {
+    try {
+      const L = [
+        "🐦 RECIBO · Tukán",
+        c.fecha ? `🗓️ ${fmtFechaLarga(c.fecha)}` : null,
+        fin ? "✅ Finalizada" : "❌ Cancelada",
+        "",
+        `🟢 ${c.origen || "—"}`,
+        `🔴 ${c.destino || "—"}`,
+        c.distancia_km ? `📏 ~${c.distancia_km} km` : null,
+        veh ? `${vehIcono(veh)} ${vehLabel(veh)}${c.conductor_placa ? " · " + c.conductor_placa : ""}` : null,
+        contra ? `${esConductor ? "👤 Cliente" : "🚕 Conductor"}: ${contra}` : null,
+        estrellas ? `⭐ ${Number(estrellas).toFixed(0)}` : null,
+        precio ? `💵 TOTAL: $${precio.toLocaleString()}` : null,
+        "",
+        "Gracias por viajar con Tukán 🐦",
+      ].filter(x => x !== null);
+      await Share.share({ message: L.join("\n") });
+    } catch (_) {}
+  };
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCerrar}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+        <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 26 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Image source={require("./assets/icon.png")} style={{ width: 40, height: 40, borderRadius: 11 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 11, color: "#9A948A", fontWeight: "800", letterSpacing: 1 }}>RECIBO · TUKÁN</Text>
+              <Text style={{ fontSize: 15.5, fontWeight: "800", color: "#1C2B22" }}>{c.fecha ? fmtFechaLarga(c.fecha) : ""}</Text>
+            </View>
+            <View style={{ backgroundColor: fin ? "#EAF6EC" : "#FDECEA", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}>
+              <Text style={{ fontSize: 11, color: fin ? "#187830" : "#C0392B", fontWeight: "800" }}>{fin ? "Finalizada" : "Cancelada"}</Text>
+            </View>
+          </View>
+
+          <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 14 }} />
+
+          <View style={{ flexDirection: "row" }}>
+            <View style={{ width: 16, alignItems: "center", paddingVertical: 4 }}>
+              <View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: "#187830" }} />
+              <View style={{ width: 2, flex: 1, backgroundColor: "#E2DED3", marginVertical: 3 }} />
+              <View style={{ width: 11, height: 11, borderRadius: 3, backgroundColor: "#F06000" }} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800" }}>RECOGIDA</Text>
+              <Text style={{ fontSize: 14.5, color: "#1C2B22", marginBottom: 10 }} numberOfLines={2}>{c.origen || "—"}</Text>
+              <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800" }}>DESTINO</Text>
+              <Text style={{ fontSize: 14.5, color: "#1C2B22" }} numberOfLines={2}>{c.destino || "—"}</Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 16 }}>
+            {[
+              ["Distancia", c.distancia_km ? `~${c.distancia_km} km` : "—"],
+              ["Vehículo", veh ? `${vehIcono(veh)} ${vehLabel(veh)}` : "—"],
+              [esConductor ? "Cliente" : "Conductor", contra || "—"],
+              ["Placa", c.conductor_placa || "—"],
+            ].map(([k, v]) => (
+              <View key={k} style={{ width: "50%", marginBottom: 12 }}>
+                <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800" }}>{k.toUpperCase()}</Text>
+                <Text style={{ fontSize: 14.5, color: "#1C2B22", fontWeight: "600", marginTop: 1 }} numberOfLines={1}>{v}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#EAF6EC", borderRadius: 12, padding: 14, marginTop: 2 }}>
+            <View>
+              <Text style={{ fontSize: 11, color: "#7A927F", fontWeight: "800" }}>TOTAL</Text>
+              {estrellas ? <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>⭐ {Number(estrellas).toFixed(0)} de calificación</Text> : null}
+            </View>
+            <Text style={{ fontSize: 26, fontWeight: "900", color: "#187830" }}>{precio ? `$${precio.toLocaleString()}` : "—"}</Text>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={onCerrar}>
+              <Text style={{ color: "#888", fontWeight: "700" }}>Cerrar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, { flex: 1.3, backgroundColor: "#187830" }]} onPress={compartir}>
+              <Text style={styles.buttonText}>📤 Compartir recibo</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // una carrera del historial (pasada). Sirve para el conductor y para el cliente:
 // segun quien mira, muestra a la contraparte y la calificacion que recibio.
+// Se toca para abrir el RECIBO detallado.
 function TarjetaHistorial({ c, esConductor }) {
+  const [ver, setVer] = useState(false);
   const fin = c.estado === "finalizada";
   const badge = fin ? { t: "Finalizada", col: "#187830", bg: "#EAF6EC" } : { t: "Cancelada", col: "#C0392B", bg: "#FDECEA" };
   const precio = c.tarifa || c.tarifa_ofrecida;
   const contra = esConductor ? c.cliente_nombre : c.conductor_nombre;
   const estrellas = esConductor ? c.estrellas_conductor : c.estrellas_cliente;   // la que recibio quien mira
   return (
-    <View style={{ backgroundColor: "#fff", borderRadius: 10, padding: 12, marginBottom: 8 }}>
+    <>
+    <TouchableOpacity activeOpacity={0.7} onPress={() => setVer(true)} style={{ backgroundColor: "#fff", borderRadius: 12, padding: 13, marginBottom: 8 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontSize: 12, color: "#999" }}>{haceCuanto(c.fecha)}{esCarga(c.vehiculo_pedido) ? "  ·  🚚 acarreo" : ""}</Text>
         <View style={{ backgroundColor: badge.bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
@@ -2204,7 +2377,10 @@ function TarjetaHistorial({ c, esConductor }) {
         </Text>
         {precio ? <Text style={{ fontSize: 16, fontWeight: "800", color: fin ? "#187830" : "#999" }}>${precio.toLocaleString()}</Text> : null}
       </View>
-    </View>
+      <Text style={{ fontSize: 11, color: "#1A56B8", fontWeight: "700", marginTop: 7 }}>📄 Ver recibo ›</Text>
+    </TouchableOpacity>
+    <ReciboModal visible={ver} c={c} esConductor={esConductor} onCerrar={() => setVer(false)} />
+    </>
   );
 }
 
@@ -2531,6 +2707,76 @@ function PedirCarreraScreen({ navigation, route }) {
   const refCarga = useRef(null);
   const refDestDet = useRef(null);
   const refNotas = useRef(null);
+  const [rutaPrevia, setRutaPrevia] = useState(null);   // {km,min} del recorrido en la vista previa
+  // SEGURIDAD: comparte el viaje (conductor, placa, ruta + link de mapa) con un
+  // familiar por WhatsApp/el medio que elija. Da tranquilidad, como Uber/DiDi.
+  const compartirViaje = async () => {
+    try {
+      const c = carrera || {};
+      const lineas = [
+        "🐦 Voy en un viaje con Tukán.",
+        c.conductor_nombre ? `👤 Conductor: ${c.conductor_nombre}` : null,
+        c.conductor_placa ? `🚗 Placa: ${c.conductor_placa}${c.conductor_vehiculo ? " · " + c.conductor_vehiculo : ""}` : null,
+        c.conductor_telefono ? `📞 Tel: ${c.conductor_telefono}` : null,
+        c.origen ? `🟢 Desde: ${c.origen}` : null,
+        c.destino ? `🔴 Hacia: ${c.destino}` : null,
+        (c.destino_lat != null && c.destino_lon != null) ? `🗺️ Destino: https://maps.google.com/?q=${c.destino_lat},${c.destino_lon}` : null,
+        "Te comparto mi viaje por seguridad. 🙏",
+      ].filter(Boolean);
+      await Share.share({ message: lineas.join("\n") });
+    } catch (_) {}
+  };
+  // LUGARES GUARDADOS (Casa/Trabajo/favoritos) + destinos recientes, para pedir rapido
+  const [guardados, setGuardados] = useState([]);
+  const [recientes, setRecientes] = useState([]);
+  const cargarGuardados = () => {
+    fetch(`${API}/usuarios/${usuario.id}/lugares`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setGuardados(d); }).catch(() => {});
+  };
+  useEffect(() => {
+    cargarGuardados();
+    fetch(`${API}/carreras/cliente/${usuario.id}`).then(r => r.json()).then(d => {
+      if (!Array.isArray(d)) return;
+      const vistos = new Set(); const out = [];
+      for (const c of d) {
+        if (c.destino_lat == null || c.destino_lon == null) continue;
+        const k = `${Math.round(c.destino_lat * 1000)},${Math.round(c.destino_lon * 1000)}`;
+        if (vistos.has(k)) continue; vistos.add(k);
+        out.push({ direccion: (c.destino || "").replace(/^🏁 /, ""), lat: c.destino_lat, lon: c.destino_lon });
+        if (out.length >= 3) break;
+      }
+      setRecientes(out);
+    }).catch(() => {});
+  }, []);
+  const usarComoDestino = (l) => {
+    if (l.lat == null) return;
+    setDestinoCoords({ lat: l.lat, lon: l.lon });
+    setForm(f => ({ ...f, destino: l.direccion || l.etiqueta || "Destino guardado" }));
+  };
+  const guardarDestino = (etiqueta) => {
+    if (!destinoCoords) { avisar("Marca el destino", "Primero marca a dónde vas para poder guardarlo."); return; }
+    const dir = (form.destino || "").replace(/^🏁 /, "").trim() || etiqueta;
+    userFetch(`${API}/usuarios/${usuario.id}/lugares?${qs({ etiqueta, direccion: dir, lat: destinoCoords.lat, lon: destinoCoords.lon })}`, { method: "POST" })
+      .then(r => r.json()).then(() => { cargarGuardados(); avisar("Guardado ⭐", `Destino guardado como ${etiqueta}.`); }).catch(() => {});
+  };
+  const iconoLugar = (et) => { const e = (et || "").toLowerCase(); return e === "casa" ? "🏠" : e === "trabajo" ? "💼" : "⭐"; };
+  // REFERIDOS (invita y gana): tu codigo + a cuantos has invitado
+  const [verReferidos, setVerReferidos] = useState(false);
+  const [referidos, setReferidos] = useState(null);
+  const abrirReferidos = () => {
+    setVerReferidos(true);
+    fetch(`${API}/usuarios/${usuario.id}/referidos`).then(r => r.json())
+      .then(d => { if (d && d.codigo) setReferidos(d); }).catch(() => {});
+  };
+  const compartirCodigo = async () => {
+    if (!referidos) return;
+    try {
+      await Share.share({ message:
+        `🐦 ¡Únete a Tukán! Carreras y acarreos, tú pones el precio.\n` +
+        `Regístrate con mi código: ${referidos.codigo}\n` +
+        `Descárgala aquí 👉 https://orito-app-production.up.railway.app/app` });
+    } catch (_) {}
+  };
   const [contraofertas, setContraofertas] = useState([]);
   // cuenta regresiva de 6s por contraoferta nueva: cuando el cliente la vio por
   // primera vez. Mientras < 6s se resalta con la cuenta; luego sigue en la lista.
@@ -2651,7 +2897,9 @@ function PedirCarreraScreen({ navigation, route }) {
     // etiqueta para que el conductor tenga referencia y no quede vacio
     if (mapaAbierto === "origen") {
       setOrigenCoords(coords);
-      if (!form.origen.trim()) setForm(f => ({ ...f, origen: "📍 Punto marcado en el mapa" }));
+      // un punto NUEVO en el mapa manda: se resetea el texto (y nombrarPunto lo
+      // rellena con el nombre real), para que mapa y texto queden coherentes
+      setForm(f => ({ ...f, origen: "📍 Punto marcado en el mapa" }));
       nombrarPunto(coords, "origen");
       // aviso de cordura: marcaste un origen lejisimos de donde estas parado
       if (gpsRapido) {
@@ -2662,7 +2910,8 @@ function PedirCarreraScreen({ navigation, route }) {
       }
     } else if (mapaAbierto === "destino") {
       setDestinoCoords(coords);
-      if (!form.destino.trim()) setForm(f => ({ ...f, destino: "🏁 Punto marcado en el mapa" }));
+      // igual que el origen: el punto nuevo manda, texto y mapa coherentes
+      setForm(f => ({ ...f, destino: "🏁 Punto marcado en el mapa" }));
       nombrarPunto(coords, "destino");
     }
     setMapaAbierto(null);
@@ -3059,6 +3308,16 @@ function PedirCarreraScreen({ navigation, route }) {
                   <Text style={[styles.buttonText, { fontSize: 15 }]}>💬 WhatsApp</Text>
                 </TouchableOpacity>
               </View>
+              {/* SEGURIDAD: compartir el viaje con un familiar + SOS */}
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                <TouchableOpacity style={{ flex: 1, backgroundColor: "#EAF1FB", borderRadius: 14, paddingVertical: 13, alignItems: "center" }} onPress={compartirViaje}>
+                  <Text style={{ color: "#1A56B8", fontWeight: "800", fontSize: 14 }}>📤 Compartir viaje</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1, backgroundColor: "#FDECEA", borderRadius: 14, paddingVertical: 13, alignItems: "center", borderWidth: 1.5, borderColor: "#F3B4AC" }}
+                  onPress={() => confirmar("Emergencias", "¿Llamar al 123 (Policía / emergencias)?", () => llamar("123"), "Llamar 123")}>
+                  <Text style={{ color: "#C0392B", fontWeight: "800", fontSize: 14 }}>🆘 SOS 123</Text>
+                </TouchableOpacity>
+              </View>
 
               {carrera.conductor_pagos && (
                 <View style={{ marginTop: 12, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 12 }}>
@@ -3125,16 +3384,20 @@ function PedirCarreraScreen({ navigation, route }) {
   return (
     <SafeAreaView style={styles.container}>
       {modalCalif}
-      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", alignItems: "center", gap: 12 }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
+      <View style={{ backgroundColor: "#187830", paddingTop: insets.top + 10, paddingBottom: 16, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 11,
+        shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 10, elevation: 5 }}>
+        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: "#fff", fontSize: 24, marginTop: -3 }}>‹</Text>
         </TouchableOpacity>
+        <Image source={require("./assets/icon.png")} style={{ width: 40, height: 40, borderRadius: 12 }} />
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerSub}>{muni ? `Transporte en ${muni.nombre}` : "Transporte"}</Text>
-          <Text style={styles.headerTitle}>Pedir carrera</Text>
+          <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "600" }}>{muni ? `Transporte en ${muni.nombre}` : "Movilidad y acarreos"}</Text>
+          <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.3, marginTop: 1 }}>Pedir carrera</Text>
         </View>
-        <TouchableOpacity onPress={() => setVerMenu(true)} style={{ padding: 4 }}>
-          <Text style={{ color: "#fff", fontSize: 28 }}>☰</Text>
+        <TouchableOpacity onPress={() => setVerMenu(true)}
+          style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: "#fff", fontSize: 21 }}>☰</Text>
         </TouchableOpacity>
       </View>
 
@@ -3151,19 +3414,44 @@ function PedirCarreraScreen({ navigation, route }) {
             <Text style={{ fontSize: 22, fontWeight: "800", marginTop: 10, color: "#222" }}>{usuario.nombre || "Tú"}</Text>
             <Text style={{ fontSize: 14, color: "#888", marginTop: 2 }}>{usuario.telefono}</Text>
           </View>
-          <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 26, paddingHorizontal: 16 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-around", marginTop: 26, paddingHorizontal: 10 }}>
             {[["🕘", "Historial", () => { setVerMenu(false); setTimeout(abrirHistorial, 260); }],
+              ["🎁", "Invita", () => { setVerMenu(false); setTimeout(abrirReferidos, 260); }],
               ["💬", "Soporte", () => { setVerMenu(false); soporteWhatsApp(soporteWa, usuario); }],
-              ["⚙️", "Configuración", () => { setVerMenu(false); navigation.navigate("Configuracion", { usuario }); }]].map(([ic, lbl, fn]) => (
-              <TouchableOpacity key={lbl} style={{ alignItems: "center", width: 100 }} onPress={fn}>
-                <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: "#F1F1F1", alignItems: "center", justifyContent: "center" }}>
-                  <Text style={{ fontSize: 27 }}>{ic}</Text>
+              ["⚙️", "Ajustes", () => { setVerMenu(false); navigation.navigate("Configuracion", { usuario }); }]].map(([ic, lbl, fn]) => (
+              <TouchableOpacity key={lbl} style={{ alignItems: "center", width: 80 }} onPress={fn}>
+                <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: "#F1F1F1", alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ fontSize: 26 }}>{ic}</Text>
                 </View>
-                <Text style={{ fontSize: 12.5, color: "#333", marginTop: 7, textAlign: "center", fontWeight: "600" }}>{lbl}</Text>
+                <Text style={{ fontSize: 12, color: "#333", marginTop: 7, textAlign: "center", fontWeight: "600" }}>{lbl}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </SafeAreaView>
+      </Modal>
+
+      {/* INVITA Y GANA: código de referido + compartir + cuántos has invitado */}
+      <Modal visible={verReferidos} transparent animationType="slide" onRequestClose={() => setVerReferidos(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 22, paddingBottom: 28 }}>
+            <Text style={{ fontSize: 22, fontWeight: "900", color: "#1C2B22" }}>🎁 Invita y gana</Text>
+            <Text style={{ fontSize: 14, color: "#777", marginTop: 4 }}>Comparte tu código. Cuando alguien se registre con él, queda contado como tu invitado.</Text>
+            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 14, padding: 18, marginTop: 16, alignItems: "center" }}>
+              <Text style={{ fontSize: 11, color: "#7A927F", fontWeight: "800", letterSpacing: 1 }}>TU CÓDIGO</Text>
+              <Text style={{ fontSize: 30, fontWeight: "900", color: "#187830", letterSpacing: 2, marginTop: 4 }}>{referidos ? referidos.codigo : "…"}</Text>
+            </View>
+            <View style={{ alignItems: "center", marginTop: 16 }}>
+              <Text style={{ fontSize: 30, fontWeight: "900", color: "#F06000" }}>{referidos ? referidos.total : 0}</Text>
+              <Text style={{ fontSize: 12.5, color: "#888" }}>personas invitadas</Text>
+            </View>
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#25D366", marginTop: 18 }]} onPress={compartirCodigo}>
+              <Text style={styles.buttonText}>📤 Compartir mi código</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={{ padding: 12, marginTop: 2 }} onPress={() => setVerReferidos(false)}>
+              <Text style={{ textAlign: "center", color: "#888", fontWeight: "600" }}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       <Modal visible={verHistorial} animationType="slide" onRequestClose={() => setVerHistorial(false)}>
@@ -3195,48 +3483,121 @@ function PedirCarreraScreen({ navigation, route }) {
           </TouchableOpacity>
         )}
         {/* switch: pedir EN la ciudad, o un viaje a OTRA ciudad (expreso por cupos) */}
-        <View style={{ flexDirection: "row", backgroundColor: "#F6F1E6", borderRadius: 10, padding: 4, marginBottom: 14 }}>
-          {[["local", "🚕 En la ciudad"], ["expreso", "🚌 A otra ciudad"]].map(([mm, lbl]) => (
-            <TouchableOpacity key={mm} style={{ flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: "center", backgroundColor: modo === mm ? "#fff" : "transparent" }} onPress={() => setModo(mm)}>
-              <Text style={{ fontSize: 13, fontWeight: modo === mm ? "700" : "500", color: modo === mm ? "#187830" : "#999" }}>{lbl}</Text>
-            </TouchableOpacity>
-          ))}
+        <View style={{ flexDirection: "row", backgroundColor: "#ECE7DC", borderRadius: 14, padding: 5, marginBottom: 16 }}>
+          {[["local", "🚕 En la ciudad"], ["expreso", "🚌 A otra ciudad"]].map(([mm, lbl]) => {
+            const on = modo === mm;
+            return (
+              <TouchableOpacity key={mm} activeOpacity={0.85}
+                style={{ flex: 1, paddingVertical: 11, borderRadius: 11, alignItems: "center", backgroundColor: on ? "#fff" : "transparent",
+                  shadowColor: "#0C2C1B", shadowOpacity: on ? 0.12 : 0, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: on ? 2 : 0 }}
+                onPress={() => setModo(mm)}>
+                <Text style={{ fontSize: 13.5, fontWeight: on ? "800" : "600", color: on ? "#187830" : "#9A938A" }}>{lbl}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {modo === "expreso" ? (
           <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} />
         ) : (<>
-        {/* 1. UBICACION: primero, porque de aqui se detecta el pueblo */}
+        {/* ===== TU VIAJE: recogida + destino en una sola tarjeta con riel ===== */}
         <View style={styles.card}>
-          <Text style={styles.etiqueta}>DONDE ESTAS</Text>
-          <TouchableOpacity style={[styles.botonGps]} onPress={usarUbicacionActual} disabled={buscandoGps}>
-            {buscandoGps
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={{ color: "#fff", fontWeight: "700" }}>📍 Usar mi ubicacion actual</Text>}
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.botonMapa, origenCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("origen")}>
-            <Text style={{ color: origenCoords ? "#187830" : "#187830", fontWeight: "600" }}>
-              {origenCoords ? "✓ Ubicacion marcada — cambiar en el mapa" : "🗺️ O marcar en el mapa"}
-            </Text>
-          </TouchableOpacity>
+          <Text style={styles.etiqueta}>TU VIAJE</Text>
+
+          {/* accesos rápidos: Casa/Trabajo/favoritos + destinos recientes (pedir en 2 toques).
+              Los RECIENTES se filtran a los de la ciudad actual (≤40 km): así en Orito no
+              aparecen destinos de Cali de pruebas pasadas. */}
+          {(() => {
+            const ref = origenCoords
+              || (muni && muni.centro_lat != null ? { lat: muni.centro_lat, lon: muni.centro_lon } : null)
+              || gpsRapido || null;
+            const recs = ref ? recientes.filter(l => { const d = kmEntre(ref, l); return d != null && d <= 40; }) : [];
+            if (guardados.length === 0 && recs.length === 0) return null;
+            return (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} keyboardShouldPersistTaps="handled">
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {guardados.map(l => (
+                    <TouchableOpacity key={"g" + l.id} onPress={() => usarComoDestino(l)}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#EAF6EC", borderRadius: 20, paddingVertical: 9, paddingHorizontal: 14 }}>
+                      <Text style={{ fontSize: 15 }}>{iconoLugar(l.etiqueta)}</Text>
+                      <Text style={{ color: "#187830", fontWeight: "700", fontSize: 13 }}>{l.etiqueta}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {recs.map((l, i) => (
+                    <TouchableOpacity key={"r" + i} onPress={() => usarComoDestino(l)}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FBFAF6", borderWidth: 1, borderColor: "#EAE4D6", borderRadius: 20, paddingVertical: 9, paddingHorizontal: 14 }}>
+                      <Text style={{ fontSize: 14 }}>🕘</Text>
+                      <Text numberOfLines={1} style={{ color: "#555", fontWeight: "600", fontSize: 13, maxWidth: 150 }}>{l.direccion || "Reciente"}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            );
+          })()}
+
+          {/* riel de puntos (recogida 🟢 -> destino 🟥). Cada fila abre el mapa. */}
+          <View style={{ flexDirection: "row", backgroundColor: "#FBFAF6", borderRadius: 14, borderWidth: 1, borderColor: "#EFEADF", paddingLeft: 14, paddingRight: 12 }}>
+            <View style={{ width: 16, alignItems: "center", paddingVertical: 20 }}>
+              <View style={{ width: 13, height: 13, borderRadius: 7, backgroundColor: "#187830", borderWidth: 3, borderColor: "#C7E6CF" }} />
+              <View style={{ width: 2, flex: 1, backgroundColor: "#E2DED3", marginVertical: 4 }} />
+              <View style={{ width: 13, height: 13, borderRadius: 3, backgroundColor: "#F06000", borderWidth: 3, borderColor: "#FAD6B8" }} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <TouchableOpacity onPress={() => setMapaAbierto("origen")} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#EFEADF" }}>
+                <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>RECOGIDA</Text>
+                <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: origenCoords ? "#1C2B22" : "#B9B3A6" }}>
+                  {origenCoords ? (form.origen || "Punto marcado en el mapa") : "Marca dónde estás"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setMapaAbierto("destino")} activeOpacity={0.6} style={{ paddingVertical: 15 }}>
+                <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>DESTINO</Text>
+                <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: destinoCoords ? "#1C2B22" : "#B9B3A6" }}>
+                  {destinoCoords ? (form.destino || "Punto marcado en el mapa") : "¿A dónde vas?"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* guardar el destino actual como Casa / Trabajo (para la próxima) */}
+          {destinoCoords && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 }}>
+              <Text style={{ fontSize: 12, color: "#999", fontWeight: "600" }}>Guardar destino:</Text>
+              <TouchableOpacity onPress={() => guardarDestino("Casa")} style={{ backgroundColor: "#F1F8F1", borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 }}>
+                <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>🏠 Casa</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => guardarDestino("Trabajo")} style={{ backgroundColor: "#F1F8F1", borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 }}>
+                <Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>💼 Trabajo</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* acciones rápidas de recogida: GPS o mapa */}
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+            <TouchableOpacity onPress={usarUbicacionActual} disabled={buscandoGps} activeOpacity={0.85}
+              style={{ flex: 1.25, backgroundColor: "#187830", borderRadius: 12, paddingVertical: 13, alignItems: "center", justifyContent: "center",
+                shadowColor: "#187830", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.22, shadowRadius: 9, elevation: 3 }}>
+              {buscandoGps ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13.5 }}>📍 Mi ubicación</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setMapaAbierto("origen")} activeOpacity={0.85}
+              style={{ flex: 1, backgroundColor: "#F1F8F1", borderWidth: 1.5, borderColor: "#BFE0C8", borderRadius: 12, paddingVertical: 13, alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ color: "#187830", fontWeight: "700", fontSize: 13.5 }}>🗺️ En el mapa</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* municipio detectado o a elegir manual */}
           {muni ? (
-            <TouchableOpacity style={styles.muniBanner} onPress={() => setEligiendoMuni(true)}>
-              <Text style={{ fontSize: 13, color: "#187830", fontWeight: "600" }}>📌 Estas en {muni.nombre}</Text>
-              <Text style={{ fontSize: 12, color: "#888" }}>cambiar</Text>
+            <TouchableOpacity style={[styles.muniBanner, { marginTop: 12, marginBottom: 0 }]} onPress={() => setEligiendoMuni(true)}>
+              <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }}>📌 Estás en {muni.nombre}</Text>
+              <Text style={{ fontSize: 12, color: "#888" }}>cambiar ›</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={[styles.muniBanner, { backgroundColor: "#FFF4E0" }]} onPress={() => setEligiendoMuni(true)}>
-              <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "600" }}>¿En que municipio estas?</Text>
-              <Text style={{ fontSize: 12, color: "#8A5A00" }}>elegir</Text>
+            <TouchableOpacity style={[styles.muniBanner, { backgroundColor: "#FFF4E0", marginTop: 12, marginBottom: 0 }]} onPress={() => setEligiendoMuni(true)}>
+              <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>¿En qué municipio estás?</Text>
+              <Text style={{ fontSize: 12, color: "#8A5A00" }}>elegir ›</Text>
             </TouchableOpacity>
           )}
           {eligiendoMuni && (
             <View style={{ marginTop: 10 }}>
-              {/* ciudades agrupadas por departamento, cada una como pastilla de
-                  ancho natural que fluye a varias filas: asi no se aprietan ni se
-                  parte el texto ("Flor enc ia"), y queda ordenado al crecer */}
               {Object.entries(
                 municipios.reduce((acc, m) => {
                   const d = m.departamento || "Otros";
@@ -3268,22 +3629,61 @@ function PedirCarreraScreen({ navigation, route }) {
             </View>
           )}
 
-          {origenCoords ? (
-            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, padding: 10, marginTop: 4 }}>
-              <Text style={{ fontSize: 11, color: "#7A927F", fontWeight: "700" }}>SITIO DE RECOGIDA</Text>
-              <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830", marginTop: 2 }} numberOfLines={2}>{form.origen || "📍 Punto marcado"}</Text>
-            </View>
-          ) : (
-            <Text style={styles.ayuda}>No necesitas saber la dirección: toca "Usar mi ubicación" o marca el punto en el mapa.</Text>
-          )}
+          {/* detalles opcionales (recogida, destino y nota) */}
           <TextInput
             value={form.origen_detalle}
             onChangeText={(t) => setForm({ ...form, origen_detalle: t })}
-            placeholder="Detalle para encontrarte (opcional): porton azul, 2 pisos..."
-            style={styles.input}
+            placeholder="Detalle de recogida (opcional): portón azul, 2 pisos..."
+            style={[styles.input, { marginTop: 12, marginBottom: 8 }]}
             multiline
           />
+          <TextInput
+            ref={refDestDet}
+            onFocus={() => subirCampo(refDestDet)}
+            value={form.destino_detalle}
+            onChangeText={(t) => setForm({ ...form, destino_detalle: t })}
+            placeholder="Detalle del destino (opcional)"
+            style={[styles.input, { marginBottom: esCarga(vehiculo) ? 0 : 8 }]}
+            multiline
+          />
+          {!esCarga(vehiculo) && (
+            <TextInput
+              ref={refNotas}
+              onFocus={() => subirCampo(refNotas)}
+              value={form.notas}
+              onChangeText={(t) => setForm({ ...form, notas: t })}
+              placeholder="Algo más que deba saber? (opcional)"
+              style={[styles.input, { marginBottom: 0 }]}
+            />
+          )}
         </View>
+
+        {/* ===== VISTA PREVIA DEL RECORRIDO: aparece al tener recogida + destino ===== */}
+        {origenCoords && destinoCoords && (
+          <View style={styles.card}>
+            <Text style={styles.etiqueta}>RECORRIDO</Text>
+            <View style={{ height: 340, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
+              <MapaSeguimiento recogida={origenCoords} destino={destinoCoords} preview lleno onInfo={setRutaPrevia} />
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#FFF6EF", borderRadius: 12, padding: 12 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={{ fontSize: 22 }}>🛣️</Text>
+                <View>
+                  <Text style={{ fontSize: 10.5, color: "#B08A5A", fontWeight: "800", letterSpacing: 0.5 }}>DISTANCIA DEL VIAJE</Text>
+                  <Text style={{ fontSize: 17, fontWeight: "800", color: "#B85C00", marginTop: 1 }}>
+                    {rutaPrevia ? `~${rutaPrevia.km.toFixed(1)} km` : (estimado && estimado.distancia_km ? `~${estimado.distancia_km} km` : "Calculando…")}
+                  </Text>
+                </View>
+              </View>
+              {rutaPrevia && rutaPrevia.min ? (
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={{ fontSize: 10.5, color: "#B08A5A", fontWeight: "800", letterSpacing: 0.5 }}>APROX.</Text>
+                  <Text style={{ fontSize: 15, fontWeight: "800", color: "#B85C00", marginTop: 1 }}>~{rutaPrevia.min} min</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        )}
 
         {/* 2. VEHICULO: personas (carrera) y carga (trasteo/acarreo), segun el pueblo */}
         {muni && vehiculosAqui.length > 0 && (
@@ -3377,44 +3777,6 @@ function PedirCarreraScreen({ navigation, route }) {
             )}
           </View>
         )}
-
-        {/* 3. DESTINO */}
-        <View style={styles.card}>
-          <Text style={styles.etiqueta}>PARA DONDE VAS</Text>
-          <TouchableOpacity style={[styles.botonMapa, destinoCoords && styles.botonMapaOk]} onPress={() => setMapaAbierto("destino")}>
-            <Text style={{ color: "#187830", fontWeight: "600" }}>
-              {destinoCoords ? "✓ Destino marcado — cambiar en el mapa" : "🏁 Marcar a donde vas en el mapa"}
-            </Text>
-          </TouchableOpacity>
-          {destinoCoords ? (
-            <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, padding: 10, marginTop: 4 }}>
-              <Text style={{ fontSize: 11, color: "#B08A5A", fontWeight: "700" }}>DESTINO</Text>
-              <Text style={{ fontSize: 15, fontWeight: "700", color: "#B85C00", marginTop: 2 }} numberOfLines={2}>{form.destino || "🏁 Punto marcado"}</Text>
-            </View>
-          ) : (
-            <Text style={styles.ayuda}>No sabes la dirección exacta? Busca un sitio conocido en el mapa (ej. "Terminal", "Éxito") o marca el punto con el dedo.</Text>
-          )}
-          <TextInput
-            ref={refDestDet}
-            onFocus={() => subirCampo(refDestDet)}
-            value={form.destino_detalle}
-            onChangeText={(t) => setForm({ ...form, destino_detalle: t })}
-            placeholder="Detalle del destino (opcional)"
-            style={styles.input}
-            multiline
-          />
-          {/* en carga la descripcion va arriba; aqui solo para carreras de personas */}
-          {!esCarga(vehiculo) && (
-            <TextInput
-              ref={refNotas}
-              onFocus={() => subirCampo(refNotas)}
-              value={form.notas}
-              onChangeText={(t) => setForm({ ...form, notas: t })}
-              placeholder="Algo mas que deba saber? (opcional)"
-              style={styles.input}
-            />
-          )}
-        </View>
 
         {/* 4. OFERTA */}
         <View style={styles.card}>
@@ -5667,6 +6029,10 @@ function ConfiguracionScreen({ navigation, route }) {
           <Text style={{ fontSize: 11, color: "#bbb", marginTop: 6 }}>
             Version: {Updates.updateId ? `${Updates.updateId.slice(0, 8)} · ${Updates.createdAt ? new Date(Updates.createdAt).toLocaleString() : ""}` : "base (sin actualizaciones aun)"}
           </Text>
+          <TouchableOpacity onPress={() => confirmar("Cerrar sesión", "¿Seguro que quieres salir de tu cuenta?", async () => { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }, "Cerrar sesión")}
+            style={{ marginTop: 14, alignSelf: "flex-start", backgroundColor: "#FDECEA", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 16 }}>
+            <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>🚪 Cerrar sesión</Text>
+          </TouchableOpacity>
         </View>
 
         {/* HABILITACIÓN del conductor: verificación de documentos + suscripción */}
@@ -5885,7 +6251,7 @@ export default function App() {
       <View style={{ flex: 1, backgroundColor: "#F6F1E6", alignItems: "center", justifyContent: "center" }}>
         <Image source={require("./assets/icon.png")} style={{ width: 180, height: 180, borderRadius: 36 }} />
         <Text style={{ color: "#187830", fontSize: 32, fontWeight: "bold", marginTop: 16 }}>Tukán</Text>
-        <Text style={{ color: "#888", marginTop: 4, fontSize: 13 }}>Domicilios y carreras amazónicas</Text>
+        <Text style={{ color: "#888", marginTop: 4, fontSize: 13 }}>Movilidad y acarreos</Text>
         <ActivityIndicator color="#187830" style={{ marginTop: 20 }} />
         <Text style={{ color: "#aaa", marginTop: 10, fontSize: 12 }}>Buscando actualizaciones...</Text>
       </View>
@@ -5921,26 +6287,26 @@ const styles = StyleSheet.create({
   header: { backgroundColor: "#187830", padding: 20, paddingTop: 50 },
   headerSub: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
   headerTitle: { color: "#fff", fontSize: 24, fontWeight: "bold", marginTop: 4 },
-  card: { backgroundColor: "#fff", borderRadius: 16, padding: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 },
+  card: { backgroundColor: "#fff", borderRadius: 18, padding: 18, shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.07, shadowRadius: 16, elevation: 3 },
   tabs: { flexDirection: "row", backgroundColor: "#F6F1E6", borderRadius: 8, padding: 4, marginBottom: 20 },
   tab: { flex: 1, padding: 8, borderRadius: 6, alignItems: "center" },
   tabActive: { backgroundColor: "#fff" },
   tabText: { color: "#888", fontSize: 14 },
   tabTextActive: { color: "#333", fontWeight: "500" },
-  input: { borderWidth: 0.5, borderColor: "#ddd", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 14, backgroundColor: "#fff" },
+  input: { borderWidth: 1, borderColor: "#EAE4D6", borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 12, fontSize: 15, backgroundColor: "#FBFAF6", color: "#222" },
   error: { color: "red", fontSize: 12, marginBottom: 12 },
-  button: { backgroundColor: "#F06000", borderRadius: 10, padding: 14, alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 3 },
-  buttonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
+  button: { backgroundColor: "#F06000", borderRadius: 14, padding: 15, alignItems: "center", justifyContent: "center", shadowColor: "#F06000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.26, shadowRadius: 12, elevation: 4 },
+  buttonText: { color: "#fff", fontWeight: "800", fontSize: 16, letterSpacing: 0.2 },
   searchInput: { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12, color: "#fff" },
   // --- carreras
   servicioCard: { backgroundColor: "#FDEEDC", borderRadius: 16, padding: 24, alignItems: "center", marginBottom: 16 },
   servicioTitulo: { fontSize: 20, fontWeight: "bold", color: "#F06000", marginTop: 10 },
   servicioSub: { fontSize: 13, color: "#888", marginTop: 4, textAlign: "center" },
-  etiqueta: { fontSize: 11, color: "#888", fontWeight: "600", letterSpacing: 0.5, marginBottom: 4 },
+  etiqueta: { fontSize: 11.5, color: "#9A9488", fontWeight: "800", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" },
   ayuda: { fontSize: 11, color: "#888", marginTop: -6, marginBottom: 6 },
   sugerencias: { backgroundColor: "#fff", borderWidth: 0.5, borderColor: "#ddd", borderRadius: 8, marginTop: -8, marginBottom: 12, overflow: "hidden" },
   sugerenciaItem: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5, borderBottomColor: "#eee" },
-  seccionTitulo: { fontSize: 15, fontWeight: "600", color: "#333", marginBottom: 10, marginTop: 6 },
+  seccionTitulo: { fontSize: 17, fontWeight: "800", color: "#1C2B22", marginBottom: 12, marginTop: 6, letterSpacing: -0.3 },
   disponibleBar: { marginHorizontal: 16, marginTop: 16, borderRadius: 12, padding: 14, alignItems: "center" },
   barraEstado: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 18, backgroundColor: "#fff", borderTopWidth: 2 },
   placaBadge: { backgroundColor: "#333", borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6, alignSelf: "flex-start", marginTop: 8 },
@@ -5972,25 +6338,25 @@ const styles = StyleSheet.create({
   chipOtro: { borderWidth: 1.5, borderColor: "#ccc", borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center" },
   fotoBox: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: "#F1F8F1", borderWidth: 1, borderColor: "#187830", borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   statCelda: { width: "50%", paddingVertical: 8 },
-  botonGps: { backgroundColor: "#187830", borderRadius: 8, padding: 13, alignItems: "center", marginBottom: 8 },
+  botonGps: { backgroundColor: "#187830", borderRadius: 14, padding: 15, alignItems: "center", marginBottom: 8, shadowColor: "#187830", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.22, shadowRadius: 10, elevation: 3 },
   muniBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#E7F3E9", borderRadius: 8, padding: 10, marginBottom: 12 },
-  botonMapa: { borderWidth: 1, borderColor: "#187830", borderRadius: 8, padding: 12, alignItems: "center", marginBottom: 8, backgroundColor: "#F1F8F1" },
+  botonMapa: { borderWidth: 1.5, borderColor: "#BFE0C8", borderRadius: 14, padding: 14, alignItems: "center", marginBottom: 8, backgroundColor: "#F1F8F1" },
   botonMapaOk: { borderColor: "#187830", backgroundColor: "#EAF6EC" },
   estimado: { backgroundColor: "#F1F8F1", borderRadius: 10, padding: 14, marginTop: 6, alignItems: "center" },
   ofertaFila: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#187830", borderRadius: 10, paddingHorizontal: 12, backgroundColor: "#F1F8F1" },
   ofertaInput: { flex: 1, fontSize: 22, fontWeight: "bold", color: "#187830", padding: 12 },
   ofertaCliente: { backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginTop: 10, alignItems: "center" },
-  opcion: { flex: 1, paddingVertical: 10, paddingHorizontal: 6, borderRadius: 8, borderWidth: 1, borderColor: "#ddd", alignItems: "center", backgroundColor: "#fff" },
+  opcion: { flex: 1, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 12, borderWidth: 1, borderColor: "#EAE4D6", alignItems: "center", backgroundColor: "#FBFAF6" },
   opcionActiva: { backgroundColor: "#E7F3E9", borderColor: "#187830" },
   opcionTexto: { fontSize: 13, color: "#888" },
   opcionTextoActivo: { color: "#187830", fontWeight: "600" },
   // chips de ancho automatico para el scroll horizontal de dia/hora
-  chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: "#ddd", backgroundColor: "#fff" },
+  chip: { paddingVertical: 9, paddingHorizontal: 15, borderRadius: 22, borderWidth: 1, borderColor: "#EAE4D6", backgroundColor: "#FBFAF6" },
   chipOn: { backgroundColor: "#187830", borderColor: "#187830" },
   chipTxt: { fontSize: 13, color: "#555" },
   chipTxtOn: { color: "#fff", fontWeight: "700" },
   // tarjetas de categoria del registro (cliente / carreras / acarreos)
-  catBoton: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12, backgroundColor: "#fff" },
+  catBoton: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#EAE4D6", borderRadius: 14, padding: 14, backgroundColor: "#fff" },
   catBotonOn: { borderColor: "#187830", backgroundColor: "#EAF6EC", borderWidth: 2 },
   catEmoji: { fontSize: 26 },
   catTitulo: { fontSize: 15, fontWeight: "700", color: "#333" },
