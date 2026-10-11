@@ -367,10 +367,15 @@ def pagina_terminos():
 def pagina_privacidad():
     return legal.privacidad_html()
 
+def generar_codigo_referido(u):
+    """Codigo corto y legible para invitar: 4 letras del nombre + id (unico)."""
+    base = "".join(ch for ch in (u.nombre or "") if ch.isalpha())[:4].upper() or "TKN"
+    return f"{base}{u.id}"
+
 @app.post("/registro")
 def registrar_usuario(request: Request, nombre: str, telefono: str, password: str, municipio: str = "Orito",
                       tipo_vehiculo: str = None, placa: str = None, vehiculo: str = None,
-                      db: Session = Depends(get_db)):
+                      codigo: str = None, db: Session = Depends(get_db)):
     """Si viene tipo_vehiculo (moto o carro) se registra como conductor.
     Sin eso queda de cliente. No hay valor por defecto: quien maneja lo declara."""
     # freno anti-spam: nadie crea decenas de cuentas desde la misma IP. Generoso
@@ -397,11 +402,18 @@ def registrar_usuario(request: Request, nombre: str, telefono: str, password: st
     db.add(usuario)
     db.commit()
     db.refresh(usuario)
+    # referidos: codigo propio + registrar quien lo invito (si vino un codigo valido)
+    usuario.codigo_referido = generar_codigo_referido(usuario)
+    if codigo:
+        ref = db.query(Usuario).filter(Usuario.codigo_referido == codigo.strip().upper()).first()
+        if ref and ref.id != usuario.id:
+            usuario.referido_por = ref.codigo_referido
+    db.commit()
     return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono,
             "rol": usuario.rol, "restaurante_id": usuario.restaurante_id,
             "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
             "placa": usuario.placa, "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
-            "token": usuario.token}
+            "codigo_referido": usuario.codigo_referido, "token": usuario.token}
 
 def vehiculos_de(municipio: str, db: Session):
     """Que vehiculos se permiten en ese pueblo. Lista vacia = municipio desconocido."""
@@ -2439,6 +2451,18 @@ def borrar_lugar_guardado(lugar_id: int, db: Session = Depends(get_db), actual: 
         exigir_dueño(actual, l.usuario_id)
         db.delete(l); db.commit()
     return {"ok": True}
+
+@app.get("/usuarios/{usuario_id}/referidos")
+def mis_referidos(usuario_id: int, db: Session = Depends(get_db)):
+    """Codigo propio para invitar + a cuantos ha invitado (y sus nombres)."""
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not u.codigo_referido:   # usuarios viejos: se les genera al primer vistazo
+        u.codigo_referido = generar_codigo_referido(u); db.commit()
+    invitados = db.query(Usuario).filter(Usuario.referido_por == u.codigo_referido).order_by(Usuario.id.desc()).all()
+    return {"codigo": u.codigo_referido, "total": len(invitados),
+            "nombres": [x.nombre for x in invitados[:20]]}
 
 @app.post("/usuarios/{usuario_id}/foto")
 async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = File(...),
