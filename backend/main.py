@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, Expreso, OfertaExpreso, VEHICULOS_VALIDOS, VEHICULOS_CARGA
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, Expreso, OfertaExpreso, LugarGuardado, VEHICULOS_VALIDOS, VEHICULOS_CARGA
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -2407,6 +2407,38 @@ def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
             "calificacion": u.calificacion, "suscripcion_hasta": u.suscripcion_hasta,
             "dias_restantes": dias_restantes(u), "al_dia": suscripcion_al_dia(u, db),
             "pagos": medios_pago(u), "fotos": fotos_de(u)}
+
+@app.get("/usuarios/{usuario_id}/lugares")
+def listar_lugares_guardados(usuario_id: int, db: Session = Depends(get_db)):
+    """Lugares guardados del usuario (Casa, Trabajo, favoritos) para pedir rapido."""
+    ls = db.query(LugarGuardado).filter(LugarGuardado.usuario_id == usuario_id).order_by(LugarGuardado.fecha.desc()).all()
+    return [{"id": l.id, "etiqueta": l.etiqueta, "direccion": l.direccion, "lat": l.lat, "lon": l.lon} for l in ls]
+
+@app.post("/usuarios/{usuario_id}/lugares")
+def guardar_lugar(usuario_id: int, etiqueta: str, direccion: str = "", lat: float = None, lon: float = None,
+                  db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    """Guarda (o actualiza) un lugar. Casa y Trabajo son unicos por usuario."""
+    exigir_dueño(actual, usuario_id)
+    et = (etiqueta or "").strip() or "Favorito"
+    existente = None
+    if et.lower() in ("casa", "trabajo"):
+        existente = db.query(LugarGuardado).filter(
+            LugarGuardado.usuario_id == usuario_id, LugarGuardado.etiqueta.ilike(et)).first()
+    if existente:
+        existente.direccion, existente.lat, existente.lon = direccion, lat, lon
+        db.commit(); db.refresh(existente); l = existente
+    else:
+        l = LugarGuardado(usuario_id=usuario_id, etiqueta=et, direccion=direccion, lat=lat, lon=lon)
+        db.add(l); db.commit(); db.refresh(l)
+    return {"id": l.id, "etiqueta": l.etiqueta, "direccion": l.direccion, "lat": l.lat, "lon": l.lon}
+
+@app.delete("/lugares-guardados/{lugar_id}")
+def borrar_lugar_guardado(lugar_id: int, db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    l = db.query(LugarGuardado).filter(LugarGuardado.id == lugar_id).first()
+    if l:
+        exigir_dueño(actual, l.usuario_id)
+        db.delete(l); db.commit()
+    return {"ok": True}
 
 @app.post("/usuarios/{usuario_id}/foto")
 async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = File(...),

@@ -80,6 +80,16 @@ class Usuario(Base):
     # "no" = cuenta bloqueada/retirada: no puede entrar ni trabajar (soporte)
     activo = Column(String, default="si")
 
+class LugarGuardado(Base):
+    __tablename__ = "lugares_guardados"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, index=True)   # dueño del lugar guardado
+    etiqueta = Column(String)                   # "Casa", "Trabajo" o nombre libre
+    direccion = Column(String)
+    lat = Column(Float)
+    lon = Column(Float)
+    fecha = Column(DateTime, default=datetime.now)
+
 class Restaurante(Base):
     __tablename__ = "restaurantes"
     id = Column(Integer, primary_key=True, index=True)
