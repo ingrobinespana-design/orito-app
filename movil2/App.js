@@ -2740,21 +2740,37 @@ function PedirCarreraScreen({ navigation, route }) {
       const c = carrera || {};
       // limpia emojis/pines al inicio del texto ("📍 Escuela" -> "Escuela")
       const limpio = (s) => (s || "").replace(/^[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]+/, "").trim();
-      // Opcion B: un SOLO link a la pagina publica /viaje. En la vista previa de
-      // WhatsApp sale el logo de Tukan (og:image) y al abrirlo hay mapa + datos del
-      // conductor, como el link que comparte Uber. Los datos viajan en la URL.
-      const p = qs({
-        con: c.conductor_nombre,
-        pla: c.conductor_placa,
-        tel: c.conductor_telefono,
-        veh: c.conductor_vehiculo,
-        o: c.origen ? limpio(c.origen) : undefined,
-        d: c.destino ? limpio(c.destino) : undefined,
-        dlat: c.destino_lat, dlon: c.destino_lon,
-        olat: c.origen_lat, olon: c.origen_lon,
-      });
-      const url = `${API}/viaje?${p}`;
-      await Share.share({ message: `Te comparto mi viaje por seguridad 🛡️\n${url}` });
+      // Al final va un link a la pagina publica /viaje. WhatsApp muestra el LOGO
+      // de Tukan en la vista previa (og:image) y al abrirlo hay mapa + datos del
+      // conductor, como Uber. Si hay token, el link es EN VIVO (el vehiculo se
+      // mueve y cambia el estado); si no, cae al modo estatico (compat).
+      let url;
+      if (c.id && c.token_viaje) {
+        url = `${API}/viaje?${qs({ c: c.id, t: c.token_viaje })}`;
+      } else {
+        const p = qs({
+          con: c.conductor_nombre,
+          pla: c.conductor_placa,
+          tel: c.conductor_telefono,
+          veh: c.conductor_vehiculo,
+          o: c.origen ? limpio(c.origen) : undefined,
+          d: c.destino ? limpio(c.destino) : undefined,
+          dlat: c.destino_lat, dlon: c.destino_lon,
+          olat: c.origen_lat, olon: c.origen_lon,
+        });
+        url = `${API}/viaje?${p}`;
+      }
+      const lineas = [
+        "🚕 *TUKÁN* · Voy en un viaje",
+        c.conductor_nombre ? `👤 Conductor: ${c.conductor_nombre}` : null,
+        c.conductor_placa ? `🚗 Placa: ${c.conductor_placa}${c.conductor_vehiculo ? " · " + c.conductor_vehiculo : ""}` : null,
+        c.conductor_telefono ? `📞 Tel: ${c.conductor_telefono}` : null,
+        c.origen ? `🟢 Desde: ${limpio(c.origen)}` : null,
+        c.destino ? `🔴 Hacia: ${limpio(c.destino)}` : null,
+        "🛡️ Te comparto mi viaje por seguridad. Míralo en vivo aquí:",
+        url,
+      ].filter(Boolean);
+      await Share.share({ message: lineas.join("\n") });
     } catch (_) {}
   };
   // LUGARES GUARDADOS (Casa/Trabajo/favoritos) + destinos recientes, para pedir rapido

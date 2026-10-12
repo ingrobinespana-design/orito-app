@@ -14,6 +14,8 @@ import cloudinary
 import cloudinary.uploader
 import os
 import secrets
+import hmac
+import hashlib
 
 load_dotenv()
 
@@ -370,14 +372,38 @@ def pagina_privacidad():
 @app.get("/viaje", response_class=HTMLResponse)
 def viaje_compartido(con: str = "", pla: str = "", tel: str = "", veh: str = "",
                      o: str = "", d: str = "", dlat: float = None, dlon: float = None,
-                     olat: float = None, olon: float = None):
+                     olat: float = None, olon: float = None,
+                     c: int = None, t: str = "", db: Session = Depends(get_db)):
     """Pagina publica de 'viaje compartido' (como el link que comparte Uber): la
     vista previa muestra el logo de Tukan y al abrirla hay un mapa con el recorrido
-    y los datos del conductor. Los datos vienen por la URL (no toca la base de datos,
-    asi no se puede 'adivinar' el viaje de otro)."""
+    y los datos del conductor.
+
+    Dos modos:
+      - EN VIVO: con ?c=<id>&t=<token> valido, la pagina lee la carrera y se
+        actualiza sola cada pocos segundos (mueve el vehiculo, muestra el estado).
+      - Estatico (compat): si vienen los datos sueltos por la URL, solo dibuja la
+        ruta planeada. Los links viejos siguen funcionando.
+    El token (HMAC con clave del servidor) evita que se pueda 'adivinar' otro viaje."""
     import html as _h
     e = lambda s: _h.escape(s or "")
     og = "https://tukan-landing.vercel.app/assets/og-image.png"
+    # --- modo EN VIVO: los datos se toman de la base (y se validan con el token)
+    live = False
+    tipo = ""
+    if c is not None and t and hmac.compare_digest(t, _token_viaje(c)):
+        car = db.query(Carrera).filter(Carrera.id == c).first()
+        if car:
+            live = True
+            cond = db.query(Usuario).filter(Usuario.id == car.conductor_id).first() if car.conductor_id else None
+            con = (cond.nombre if cond else "") or ""
+            pla = (cond.placa if cond else "") or ""
+            tel = (cond.telefono if cond else "") or ""
+            veh = (cond.vehiculo if cond else "") or ""
+            tipo = (cond.tipo_vehiculo if cond else "") or ""
+            o = car.origen or ""
+            d = car.destino or ""
+            olat, olon = car.origen_lat, car.origen_lon
+            dlat, dlon = car.destino_lat, car.destino_lon
     desc = (f"De {o} hacia {d}" if (o or d) else "Sigue mi viaje en vivo") + " · Tukán"
     dest_js = f"[{dlat},{dlon}]" if (dlat is not None and dlon is not None) else "null"
     ori_js = f"[{olat},{olon}]" if (olat is not None and olon is not None) else "null"
@@ -399,6 +425,8 @@ def viaje_compartido(con: str = "", pla: str = "", tel: str = "", veh: str = "",
         botones += f'<a class="btn wa" href="https://wa.me/{_wa}">💬 WhatsApp al conductor</a>'
     if dlat is not None and dlon is not None:
         botones += f'<a class="btn gm" href="https://www.google.com/maps/dir/?api=1&destination={dlat},{dlon}">🧭 Abrir en Google Maps</a>'
+    estado_bar = '<div class="estado" id="estado"><span class="dotlive"></span>Conectando con el viaje…</div>' if live else ""
+    estado_url = f"/viaje/{c}/estado?t={t}" if live else ""
     tpl = """<!doctype html><html lang="es"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tukán · Viaje compartido</title>
@@ -416,9 +444,12 @@ body{font-family:-apple-system,Roboto,'Segoe UI',sans-serif;background:#F6F1E6;c
 .top{background:#187830;color:#fff;padding:16px 18px;display:flex;align-items:center;gap:10px}
 .top img{width:40px;height:40px;border-radius:11px;background:#F6F1E6}
 .top b{font-size:19px;font-weight:800}.top small{display:block;color:rgba(255,255,255,.8);font-size:12px}
-#map{height:300px;width:100%}
+#map{height:320px;width:100%}
 .wrap{max-width:560px;margin:0 auto}
 .card{background:#fff;margin:-18px 14px 16px;border-radius:16px;padding:16px;box-shadow:0 8px 22px rgba(0,0,0,.08);position:relative}
+.estado{display:flex;align-items:center;gap:9px;background:#EAF6EE;color:#136b2e;font-weight:800;font-size:14.5px;border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.dotlive{width:10px;height:10px;border-radius:50%;background:#1E8A3E;flex:none;box-shadow:0 0 0 0 rgba(30,138,62,.6);animation:latir 1.4s infinite}
+@keyframes latir{0%{box-shadow:0 0 0 0 rgba(30,138,62,.55)}70%{box-shadow:0 0 0 10px rgba(30,138,62,0)}100%{box-shadow:0 0 0 0 rgba(30,138,62,0)}}
 .ruta{margin-bottom:12px}
 .pt{display:flex;gap:12px;align-items:flex-start}
 .dot{width:12px;height:12px;border-radius:50%;margin-top:4px;flex:none}
@@ -434,7 +465,7 @@ body{font-family:-apple-system,Roboto,'Segoe UI',sans-serif;background:#F6F1E6;c
 </style></head><body>
 <div class="top"><img src="/logo.png" alt="Tukán"><div><b>Tukán</b><small>Viaje compartido</small></div></div>
 <div id="map"></div>
-<div class="wrap"><div class="card">__RUTA____FILAS____BOTONES__</div>
+<div class="wrap"><div class="card">__ESTADOBAR____RUTA____FILAS____BOTONES__</div>
 <div class="pie">Compartido por seguridad desde la app Tukán</div></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -447,12 +478,73 @@ if(ori){L.marker(ori,{icon:icoG}).addTo(map);pts.push(ori);}
 if(dest){L.marker(dest,{icon:icoR}).addTo(map);pts.push(dest);}
 if(pts.length>=2){map.fitBounds(pts,{padding:[45,45]});}else if(pts.length===1){map.setView(pts[0],15);}
 if(ori&&dest){fetch('https://router.project-osrm.org/route/v1/driving/'+ori[1]+','+ori[0]+';'+dest[1]+','+dest[0]+'?overview=full&geometries=geojson').then(function(r){return r.json();}).then(function(j){if(j.routes&&j.routes[0]){var p=j.routes[0].geometry.coordinates.map(function(c){return [c[1],c[0]];});L.polyline(p,{color:'#F06000',weight:6,opacity:.9}).addTo(map);}}).catch(function(){});}
+// ---- seguimiento EN VIVO (solo si viene ESTADO_URL)
+var ESTADO_URL="__ESTADOURL__", TIPO="__TIPO__";
+function icoVeh(){var em=TIPO==='moto'?'\U0001F3CD️':(TIPO==='carro'||TIPO==='auto')?'\U0001F697':'\U0001F690';
+  return L.divIcon({html:'<div style="font-size:30px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.45))">'+em+'</div>',className:'',iconSize:[34,34],iconAnchor:[17,17]});}
+var veh=null,vehPos=null,anim=null,primero=true;
+function moverVeh(la,lo){
+  if(veh===null){veh=L.marker([la,lo],{icon:icoVeh(),zIndexOffset:1000}).addTo(map);vehPos=[la,lo];
+    if(primero){primero=false;var b=[[la,lo]];if(ori)b.push(ori);if(dest)b.push(dest);map.fitBounds(b,{padding:[55,55],maxZoom:16});}return;}
+  var from=vehPos.slice(),to=[la,lo],t0=Date.now(),dur=1100;
+  if(anim)cancelAnimationFrame(anim);
+  (function paso(){var k=Math.min(1,(Date.now()-t0)/dur);
+    var cla=from[0]+(to[0]-from[0])*k,clo=from[1]+(to[1]-from[1])*k;
+    veh.setLatLng([cla,clo]);vehPos=[cla,clo];
+    if(k<1)anim=requestAnimationFrame(paso);})();
+}
+function etiqueta(s){
+  if(s==='buscando')return '\U0001F50E Buscando conductor…';
+  if(s==='aceptada')return '\U0001F697 El conductor va en camino a recoger';
+  if(s==='en_sitio')return '\U0001F4CD El conductor llegó al punto de recogida';
+  if(s==='en_camino')return '\U0001F9ED En viaje hacia el destino';
+  if(s==='finalizada')return '✅ Viaje finalizado';
+  if(s==='cancelada')return '❌ Viaje cancelado';
+  return 'Siguiendo el viaje…';
+}
+function pintarEstado(s){var el=document.getElementById('estado');if(!el)return;
+  el.innerHTML='<span class="dotlive"></span>'+etiqueta(s);
+  if(s==='finalizada'||s==='cancelada'){el.style.background='#F3F0E8';el.style.color='#6b6354';
+    el.querySelector('.dotlive').style.animation='none';el.querySelector('.dotlive').style.background='#b7b0a2';}}
+function tic(){
+  fetch(ESTADO_URL).then(function(r){return r.json();}).then(function(j){
+    if(j&&j.estado){pintarEstado(j.estado);
+      if(j.clat!=null&&j.clon!=null){moverVeh(j.clat,j.clon);}
+      if(j.estado==='finalizada'||j.estado==='cancelada'){return;}}
+    setTimeout(tic,5000);
+  }).catch(function(){setTimeout(tic,9000);});
+}
+if(ESTADO_URL){tic();}
 </script></body></html>"""
     out = (tpl.replace("__OG__", og).replace("__DESC__", e(desc))
+           .replace("__ESTADOBAR__", estado_bar)
            .replace("__RUTA__", ruta).replace("__FILAS__", filas)
            .replace("__BOTONES__", botones)
-           .replace("__DEST__", dest_js).replace("__ORI__", ori_js))
+           .replace("__DEST__", dest_js).replace("__ORI__", ori_js)
+           .replace("__ESTADOURL__", estado_url).replace("__TIPO__", tipo))
     return out
+
+@app.get("/viaje/{cid}/estado")
+def viaje_estado(cid: int, t: str = "", db: Session = Depends(get_db)):
+    """Estado + posicion en vivo del conductor para la pagina publica /viaje.
+    Protegido por el token HMAC: sin token valido, 404 (como si no existiera)."""
+    if not (t and hmac.compare_digest(t, _token_viaje(cid))):
+        raise HTTPException(status_code=404, detail="No encontrado")
+    car = db.query(Carrera).filter(Carrera.id == cid).first()
+    if not car:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    cond = db.query(Usuario).filter(Usuario.id == car.conductor_id).first() if car.conductor_id else None
+    # la ubicacion del conductor solo se expone mientras el viaje esta activo
+    activo = car.estado in ("aceptada", "en_sitio", "en_camino")
+    clat = cond.ubic_lat if (cond and activo) else None
+    clon = cond.ubic_lon if (cond and activo) else None
+    return {
+        "estado": car.estado,
+        "recogido": car.llego_recogida is not None,
+        "clat": clat, "clon": clon,
+        "olat": car.origen_lat, "olon": car.origen_lon,
+        "dlat": car.destino_lat, "dlon": car.destino_lon,
+    }
 
 def generar_codigo_referido(u):
     """Codigo corto y legible para invitar: 4 letras del nombre + id (unico)."""
@@ -1040,6 +1132,13 @@ def obtener_domiciliarios(db: Session = Depends(get_db)):
 # ---------------------------------------------------------------- CARRERAS
 # Seccion de transporte. Independiente de domicilios: solo comparte los usuarios.
 
+def _token_viaje(cid: int) -> str:
+    """Token corto e imposible de adivinar para el link publico de seguimiento en
+    vivo (/viaje?c=..&t=..). Se deriva por HMAC de una clave del servidor, asi no
+    hace falta guardarlo en la base y nadie puede 'adivinar' el viaje de otro."""
+    clave = (os.environ.get("RESPALDO_CLAVE") or "tukan-seguimiento").encode()
+    return hmac.new(clave, f"viaje:{int(cid)}".encode(), hashlib.sha256).hexdigest()[:16]
+
 def carrera_dict(c: Carrera, conductor: Usuario = None):
     return {
         "id": c.id,
@@ -1084,6 +1183,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "comentario_cliente": c.comentario_cliente,
         "conductor_calificacion": conductor.calificacion if conductor else None,
         "fecha": c.fecha,
+        "token_viaje": _token_viaje(c.id),   # para el link publico de seguimiento en vivo
     }
 
 def con_conductor(carreras, db: Session):
