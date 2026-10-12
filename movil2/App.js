@@ -1847,9 +1847,19 @@ function mapaSeguimientoHTML() {
   // Mapbox estilo CALLES limpio (como Google/Uber): vias claras y sin recargar
   L.tileLayer('${MAPBOX_STREETS}',{maxZoom:20,tileSize:512,zoomOffset:-1}).addTo(map);
   // carro visto desde arriba (apunta al NORTE por defecto; se rota al rumbo)
-  var svgCarro = '<svg viewBox="0 0 32 32" width="34" height="34" style="display:block"><rect x="9" y="3" width="14" height="26" rx="6" fill="#1A73E8" stroke="#ffffff" stroke-width="2"/><rect x="11.5" y="6.5" width="9" height="6" rx="2" fill="#dceafe"/><rect x="11.5" y="19" width="9" height="6.5" rx="2" fill="#bcd6fb"/></svg>';
+  // iconos de vehiculo (vista superior, coloridos, con degradado para dar volumen)
+  var SVG = {
+    carro: '<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="cB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="0.55" stop-color="#1E8A3E"/><stop offset="1" stop-color="#115526"/></linearGradient><linearGradient id="cG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eafff0"/><stop offset="1" stop-color="#bfe6cf"/></linearGradient></defs><rect x="13" y="5" width="18" height="33" rx="8" fill="url(#cB)" stroke="#0e4a22" stroke-width="0.9"/><rect x="15" y="7" width="4.5" height="29" rx="2.2" fill="#ffffff" opacity="0.16"/><rect x="16" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><rect x="24" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><path d="M15 12 Q22 9 29 12 L27.5 17 Q22 15 16.5 17 Z" fill="url(#cG)"/><rect x="16" y="18" width="12" height="9" rx="2.5" fill="#0f5e2a"/><rect x="17" y="19" width="10" height="2.6" rx="1.3" fill="#ffffff" opacity="0.12"/><path d="M16.5 30 Q22 32 27.5 30 L26 27 Q22 28.5 18 27 Z" fill="url(#cG)"/><rect x="10.3" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/><rect x="30.6" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/></svg>',
+    moto: '<svg viewBox="0 0 44 44" width="38" height="38" style="display:block"><defs><linearGradient id="mB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A4D"/><stop offset="0.55" stop-color="#F06000"/><stop offset="1" stop-color="#B84800"/></linearGradient></defs><rect x="20" y="6" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="20" y="30" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="13" y="12" width="18" height="2.8" rx="1.4" fill="#444"/><path d="M18 14 Q22 12 26 14 L25 30 Q22 31.5 19 30 Z" fill="url(#mB)" stroke="#9c3d00" stroke-width="0.8"/><rect x="19" y="20" width="6" height="8" rx="3" fill="#135E29"/><rect x="20" y="15" width="4" height="3" rx="1.5" fill="#fff6d8"/><rect x="19.4" y="15" width="1.8" height="12" rx="0.9" fill="#ffffff" opacity="0.14"/></svg>',
+    camion: '<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="tCab" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFF4E0"/><stop offset="1" stop-color="#E8D9B8"/></linearGradient><linearGradient id="tCar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="1" stop-color="#145E29"/></linearGradient></defs><rect x="11" y="16" width="22" height="22" rx="3" fill="url(#tCar)" stroke="#0e4a22" stroke-width="0.9"/><rect x="13.5" y="18.8" width="17" height="16.5" rx="2" fill="#176e34"/><rect x="13.5" y="18.8" width="17" height="4" rx="1.5" fill="#ffffff" opacity="0.1"/><rect x="11" y="16" width="22" height="2.6" rx="1.3" fill="#F06000"/><rect x="12" y="5" width="20" height="12" rx="3" fill="url(#tCab)" stroke="#c9b98f" stroke-width="0.9"/><rect x="14.5" y="7" width="15" height="5" rx="1.6" fill="#bfe6cf"/><rect x="15" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><rect x="25" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/></svg>'
+  };
+  var svgActual = SVG.carro;
+  function iconoVeh(){ return L.divIcon({html:'<div class="carro-rot" style="width:40px;height:40px;transform:rotate(0deg)">'+svgActual+'</div>', className:'carro-wrap', iconSize:[40,40], iconAnchor:[20,20]}); }
+  function setVehiculo(t){ t=(t||'').toLowerCase(); svgActual = t==='moto' ? SVG.moto : t==='carro' ? SVG.carro : SVG.camion; if(carro){ carro.setIcon(iconoVeh()); } }
+  // ruta por calles con Mapbox Directions (confiable, con tu token) — reemplaza al
+  // OSRM demo que a veces fallaba y dibujaba la ruta en linea recta (fuera de via)
+  var rutaURL = function(lo1,la1,lo2,la2){ return 'https://api.mapbox.com/directions/v5/mapbox/driving/'+lo1+','+la1+';'+lo2+','+la2+'?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}'; };
   var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
-  var icoCarro = L.divIcon({html:'<div class="carro-rot" style="width:34px;height:34px;transform:rotate(0deg)">'+svgCarro+'</div>', className:'carro-wrap', iconSize:[34,34], iconAnchor:[17,17]});
   var icoDest = L.divIcon({html:'🏁', className:'em', iconSize:[30,30], iconAnchor:[8,28]});
   var pin = null, carro = null, mDest = null;
   var linea = null, rutaCapa = null, capaDest = null, ultimaRuta = null;
@@ -1858,7 +1868,12 @@ function mapaSeguimientoHTML() {
   var dLat = null, dLon = null;   // objetivo de la ruta VERDE, segun metaRuta
   var metaRuta = null;            // 'recogida' | 'destino'
   var seguir = true, primera = true, animId = null;
+  var navegacion = false;         // modo conductor: cámara pegada al vehículo (como Google Maps)
   var ZOOM = 16;                  // que tan cerca sigue al carro
+  function setNavegacion(v){
+    navegacion = !!v;
+    if(navegacion && carro){ seguir = true; botones(); map.setView(carro.getLatLng(), 17, {animate:true}); }
+  }
 
   function botones(){
     document.getElementById('bSeguir').className = seguir ? 'on' : '';
@@ -1891,7 +1906,7 @@ function mapaSeguimientoHTML() {
   // avanza, asi la linea se va "consumiendo" en tiempo real como en Uber.
   function pedirRuta(la, lo){
     if(dLat == null) return;   // sin referencia no hay a donde trazar
-    var url = 'https://router.project-osrm.org/route/v1/driving/' + lo + ',' + la + ';' + dLon + ',' + dLat + '?overview=full&geometries=geojson';
+    var url = rutaURL(lo, la, dLon, dLat);
     fetch(url).then(function(r){ return r.json(); }).then(function(d){
       if(!d.routes || !d.routes[0]) throw 0;
       var r = d.routes[0];
@@ -1974,7 +1989,7 @@ function mapaSeguimientoHTML() {
   // linea punteada del viaje completo: de la recogida (📍) al destino (🏁)
   function dibujarContexto(){
     if(recLat == null || destLat == null) return;
-    var url = 'https://router.project-osrm.org/route/v1/driving/' + recLon + ',' + recLat + ';' + destLon + ',' + destLat + '?overview=full&geometries=geojson';
+    var url = rutaURL(recLon, recLat, destLon, destLat);
     fetch(url).then(function(r){ return r.json(); }).then(function(d){
       if(!d.routes || !d.routes[0]) throw 0;
       var pts = d.routes[0].geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
@@ -1991,7 +2006,7 @@ function mapaSeguimientoHTML() {
   function previa(){
     if(recLat == null || destLat == null) return;
     map.fitBounds(L.latLngBounds([[recLat,recLon],[destLat,destLon]]).pad(0.3));
-    var url = 'https://router.project-osrm.org/route/v1/driving/' + recLon + ',' + recLat + ';' + destLon + ',' + destLat + '?overview=full&geometries=geojson';
+    var url = rutaURL(recLon, recLat, destLon, destLat);
     fetch(url).then(function(r){ return r.json(); }).then(function(d){
       if(!d.routes || !d.routes[0]) throw 0;
       var r = d.routes[0];
@@ -2036,13 +2051,13 @@ function mapaSeguimientoHTML() {
   }
   function conductor(la, lo){
     if(!carro){
-      carro = L.marker([la, lo], {icon:icoCarro, zIndexOffset:1000}).addTo(map);
+      carro = L.marker([la, lo], {icon:iconoVeh(), zIndexOffset:1000}).addTo(map);
       carIdx = 0;
       if(primera){
-        // primera ubicacion del conductor: si ya hay a donde va, encuadra el
-        // carro Y el objetivo para que SIEMPRE se vea venir el vehiculo; si no,
-        // centra en el carro
-        if(dLat != null){ seguir = false; botones(); map.fitBounds(L.latLngBounds([[la,lo],[dLat,dLon]]).pad(0.35)); }
+        // modo NAVEGACION (conductor): cámara pegada al vehículo, como Google Maps.
+        // Si no, (cliente) encuadra carro + objetivo para ver venir el vehículo.
+        if(navegacion){ seguir = true; botones(); map.setView([la, lo], 17); }
+        else if(dLat != null){ seguir = false; botones(); map.fitBounds(L.latLngBounds([[la,lo],[dLat,dLon]]).pad(0.35)); }
         else { map.setView([la, lo], ZOOM); }
         primera = false;
       }
@@ -2056,7 +2071,7 @@ function mapaSeguimientoHTML() {
 </script></body></html>`;
 }
 
-function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno, preview }) {
+function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno, preview, vehiculo, navegacion }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
   // el HTML es FIJO (sin coordenadas) y se genera una sola vez por montaje: si
@@ -2090,6 +2105,16 @@ function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, l
     if (!listo || !webRef.current || !rutaA) return;
     webRef.current.injectJavaScript(`rutaA(${JSON.stringify(rutaA)}); true;`);
   }, [listo, rutaA]);
+  // tipo de vehiculo -> elige el icono (moto / carro / acarreo) en el mapa
+  useEffect(() => {
+    if (!listo || !webRef.current || !vehiculo) return;
+    webRef.current.injectJavaScript(`setVehiculo(${JSON.stringify(vehiculo)}); true;`);
+  }, [listo, vehiculo]);
+  // modo navegación (conductor): cámara pegada al vehículo, como Google Maps
+  useEffect(() => {
+    if (!listo || !webRef.current) return;
+    webRef.current.injectJavaScript(`setNavegacion(${navegacion ? "true" : "false"}); true;`);
+  }, [listo, navegacion]);
   // VISTA PREVIA: con recogida + destino (y sin conductor), traza el recorrido y
   // encuadra los dos puntos. Se re-dispara si cambia cualquiera de los extremos.
   useEffect(() => {
@@ -2266,7 +2291,7 @@ function ReciboModal({ visible, c, esConductor, onCerrar }) {
   const compartir = async () => {
     try {
       const L = [
-        "🐦 RECIBO · Tukán",
+        "🧾 RECIBO · Tukán",
         c.fecha ? `🗓️ ${fmtFechaLarga(c.fecha)}` : null,
         fin ? "✅ Finalizada" : "❌ Cancelada",
         "",
@@ -2278,7 +2303,7 @@ function ReciboModal({ visible, c, esConductor, onCerrar }) {
         estrellas ? `⭐ ${Number(estrellas).toFixed(0)}` : null,
         precio ? `💵 TOTAL: $${precio.toLocaleString()}` : null,
         "",
-        "Gracias por viajar con Tukán 🐦",
+        "Gracias por viajar con Tukán 🚕",
       ].filter(x => x !== null);
       await Share.share({ message: L.join("\n") });
     } catch (_) {}
@@ -2713,17 +2738,23 @@ function PedirCarreraScreen({ navigation, route }) {
   const compartirViaje = async () => {
     try {
       const c = carrera || {};
-      const lineas = [
-        "🐦 Voy en un viaje con Tukán.",
-        c.conductor_nombre ? `👤 Conductor: ${c.conductor_nombre}` : null,
-        c.conductor_placa ? `🚗 Placa: ${c.conductor_placa}${c.conductor_vehiculo ? " · " + c.conductor_vehiculo : ""}` : null,
-        c.conductor_telefono ? `📞 Tel: ${c.conductor_telefono}` : null,
-        c.origen ? `🟢 Desde: ${c.origen}` : null,
-        c.destino ? `🔴 Hacia: ${c.destino}` : null,
-        (c.destino_lat != null && c.destino_lon != null) ? `🗺️ Destino: https://maps.google.com/?q=${c.destino_lat},${c.destino_lon}` : null,
-        "Te comparto mi viaje por seguridad. 🙏",
-      ].filter(Boolean);
-      await Share.share({ message: lineas.join("\n") });
+      // limpia emojis/pines al inicio del texto ("📍 Escuela" -> "Escuela")
+      const limpio = (s) => (s || "").replace(/^[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]+/, "").trim();
+      // Opcion B: un SOLO link a la pagina publica /viaje. En la vista previa de
+      // WhatsApp sale el logo de Tukan (og:image) y al abrirlo hay mapa + datos del
+      // conductor, como el link que comparte Uber. Los datos viajan en la URL.
+      const p = qs({
+        con: c.conductor_nombre,
+        pla: c.conductor_placa,
+        tel: c.conductor_telefono,
+        veh: c.conductor_vehiculo,
+        o: c.origen ? limpio(c.origen) : undefined,
+        d: c.destino ? limpio(c.destino) : undefined,
+        dlat: c.destino_lat, dlon: c.destino_lon,
+        olat: c.origen_lat, olon: c.origen_lon,
+      });
+      const url = `${API}/viaje?${p}`;
+      await Share.share({ message: `Te comparto mi viaje por seguridad 🛡️\n${url}` });
     } catch (_) {}
   };
   // LUGARES GUARDADOS (Casa/Trabajo/favoritos) + destinos recientes, para pedir rapido
@@ -2772,7 +2803,7 @@ function PedirCarreraScreen({ navigation, route }) {
     if (!referidos) return;
     try {
       await Share.share({ message:
-        `🐦 ¡Únete a Tukán! Carreras y acarreos, tú pones el precio.\n` +
+        `🚕 ¡Únete a Tukán! Carreras y acarreos, tú pones el precio.\n` +
         `Regístrate con mi código: ${referidos.codigo}\n` +
         `Descárgala aquí 👉 https://orito-app-production.up.railway.app/app` });
     } catch (_) {}
@@ -3115,6 +3146,7 @@ function PedirCarreraScreen({ navigation, route }) {
           <View style={{ height: 300, backgroundColor: "#e8e8e8" }}>
             <MapaSeguimiento key={carrera.estado}
               conductor={cond}
+              vehiculo={carrera.vehiculo_pedido}
               recogida={carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null}
               destino={carrera.destino_lat != null ? { lat: carrera.destino_lat, lon: carrera.destino_lon } : null}
               rutaA={yendoARecoger ? "recogida" : "destino"}
@@ -4480,14 +4512,7 @@ function ConductorScreen({ navigation, route }) {
         </View>
       )}
 
-      <TouchableOpacity style={[styles.disponibleBar, { backgroundColor: disponible ? "#E8F5E9" : "#FBECEC" }]} onPress={cambiarDisponibilidad}>
-        <Text style={{ fontWeight: "600", color: disponible ? "#187830" : "#C0392B" }}>
-          {disponible ? "🟢 Estas conectado" : "🔴 Estas desconectado"}
-        </Text>
-        <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Toca para cambiar</Text>
-      </TouchableOpacity>
-
-      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 8 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 12 }}>
         {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
         {tab === "solicitudes" && (
           <>
@@ -4530,6 +4555,8 @@ function ConductorScreen({ navigation, route }) {
                       )}
                       <MapaSeguimiento key={"cond-" + c.estado}
                         conductor={miUbic}
+                        vehiculo={c.vehiculo_pedido}
+                        navegacion
                         recogida={c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null}
                         destino={c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null}
                         rutaA={yendoARecoger ? "recogida" : "destino"}
@@ -4586,9 +4613,11 @@ function ConductorScreen({ navigation, route }) {
               const km = rutaPreview && (rutaPreview.km < 1 ? `${Math.round(rutaPreview.km * 1000)} m` : `${rutaPreview.km.toFixed(1)} km`);
               return (
                 <>
-                  <View style={{ height: 250, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
+                  <View style={{ height: 340, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
                     <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")}
                       conductor={miUbic}
+                      vehiculo={usuario.tipo_vehiculo}
+                      navegacion
                       recogida={punto}
                       destino={foco && foco.destino_lat != null ? { lat: foco.destino_lat, lon: foco.destino_lon } : null}
                       rutaA="recogida"
@@ -4630,9 +4659,10 @@ function ConductorScreen({ navigation, route }) {
                   <Text style={{ color: "#888", marginTop: 2, textAlign: "center", fontSize: 12.5 }}>Termínala para recibir nuevas solicitudes.</Text>
                 </View>
               ) : (
-                <View style={{ alignItems: "center", padding: 30 }}>
-                  <Text style={{ fontSize: 40 }}>😴</Text>
-                  <Text style={{ color: "#888", marginTop: 8 }}>Esperando solicitudes...</Text>
+                // estado vacío compacto (sin emoji): no le roba espacio al mapa ni
+                // a la tarjeta del servicio cuando entre uno
+                <View style={{ alignItems: "center", paddingVertical: 12 }}>
+                  <Text style={{ color: "#9a948a", fontSize: 13, fontWeight: "600" }}>Esperando solicitudes…</Text>
                 </View>
               )
             ) : disponiblesOrden.map(c => {
@@ -4826,21 +4856,26 @@ function ConductorScreen({ navigation, route }) {
         const enServicio = mias.length > 0;
         const hayDisp = disponibles.length > 0;
         let e;
-        if (!disponible) e = { txt: "Desconectado", sub: "Conéctate arriba para recibir viajes", color: "#C0392B", pulse: false };
+        if (!disponible) e = { txt: "Desconectado", sub: "Toca aquí para conectarte y recibir viajes", color: "#C0392B", pulse: false };
         else if (enServicio) e = { txt: "En servicio", sub: "Tienes una carrera en curso", color: "#187830", pulse: false };
         else if (hayDisp) e = { txt: "🚗 ¡Viaje disponible!", sub: `${disponibles.length} solicitud${disponibles.length > 1 ? "es" : ""} esperando`, color: "#F06000", pulse: true };
         else e = { txt: "Buscando viajes…", sub: "Estás conectado. Te avisamos apenas entre uno", color: "#187830", pulse: true };
         return (
-          <View style={[styles.barraEstado, { borderTopColor: e.color }]}>
+          <TouchableOpacity activeOpacity={enServicio ? 1 : 0.7} onPress={enServicio ? undefined : cambiarDisponibilidad}
+            style={[styles.barraEstado, { borderTopColor: e.color }]}>
             <PuntoVivo color={e.color} activo={e.pulse} />
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 13.5, fontWeight: "700", color: e.color }}>{e.txt}</Text>
               <Text style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{e.sub}</Text>
             </View>
-            {disponible && !enServicio && hayDisp && (
+            {disponible && !enServicio && hayDisp ? (
               <Text style={{ fontSize: 22, fontWeight: "800", color: e.color }}>{disponibles.length}</Text>
-            )}
-          </View>
+            ) : !enServicio ? (
+              <View style={{ backgroundColor: disponible ? "#FDECEA" : "#E8F5E9", borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 }}>
+                <Text style={{ fontSize: 12, fontWeight: "800", color: disponible ? "#C0392B" : "#187830" }}>{disponible ? "Desconectar" : "Conectar"}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
         );
       })()}
 

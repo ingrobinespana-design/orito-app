@@ -302,7 +302,7 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tukán — Descarga la app</title>
-<meta property="og:title" content="Tukán 🦜 — Movilidad y acarreos">
+<meta property="og:title" content="Tukán — Movilidad y acarreos">
 <meta property="og:description" content="Carreras, acarreos y mudanzas. Tú pones el precio y pagas directo al conductor. Descarga la app gratis.">
 <meta property="og:image" content="{base}/logo.png">
 <meta property="og:type" content="website">
@@ -356,7 +356,7 @@ def pagina_descarga(request: Request, db: Session = Depends(get_db)):
     <a href="/terminos" style="color:#A9CBB4">Términos</a> ·
     <a href="/privacidad" style="color:#A9CBB4">Privacidad y Habeas Data</a>
   </div>
-  <div class="pie">Tukán · Movilidad y acarreos · Colombia 🦜</div>
+  <div class="pie">Tukán · Movilidad y acarreos · Colombia</div>
 </div></body></html>"""
 
 @app.get("/terminos", response_class=HTMLResponse)
@@ -366,6 +366,93 @@ def pagina_terminos():
 @app.get("/privacidad", response_class=HTMLResponse)
 def pagina_privacidad():
     return legal.privacidad_html()
+
+@app.get("/viaje", response_class=HTMLResponse)
+def viaje_compartido(con: str = "", pla: str = "", tel: str = "", veh: str = "",
+                     o: str = "", d: str = "", dlat: float = None, dlon: float = None,
+                     olat: float = None, olon: float = None):
+    """Pagina publica de 'viaje compartido' (como el link que comparte Uber): la
+    vista previa muestra el logo de Tukan y al abrirla hay un mapa con el recorrido
+    y los datos del conductor. Los datos vienen por la URL (no toca la base de datos,
+    asi no se puede 'adivinar' el viaje de otro)."""
+    import html as _h
+    e = lambda s: _h.escape(s or "")
+    og = "https://tukan-landing.vercel.app/assets/og-image.png"
+    desc = (f"De {o} hacia {d}" if (o or d) else "Sigue mi viaje en vivo") + " · Tukán"
+    dest_js = f"[{dlat},{dlon}]" if (dlat is not None and dlon is not None) else "null"
+    ori_js = f"[{olat},{olon}]" if (olat is not None and olon is not None) else "null"
+    filas = ""
+    if con: filas += f'<div class="row"><span class="k">Conductor</span><span class="v">{e(con)}</span></div>'
+    placa_val = (pla + (" · " + veh if veh else "")) if pla else veh
+    if placa_val: filas += f'<div class="row"><span class="k">Vehículo</span><span class="v">{e(placa_val)}</span></div>'
+    if tel: filas += f'<div class="row"><span class="k">Teléfono</span><span class="v"><a href="tel:{e(tel)}" style="color:#187830">{e(tel)}</a></span></div>'
+    ruta = ""
+    if o or d:
+        ruta = (f'<div class="ruta"><div class="pt"><span class="dot g"></span><div><div class="kk">RECOGIDA</div>'
+                f'<div class="vv">{e(o or "—")}</div></div></div><div class="ln"></div>'
+                f'<div class="pt"><span class="dot r"></span><div><div class="kk">DESTINO</div>'
+                f'<div class="vv">{e(d or "—")}</div></div></div></div>')
+    botones = ""
+    if tel:
+        _dig = "".join(ch for ch in tel if ch.isdigit())
+        _wa = ("57" + _dig) if len(_dig) == 10 else _dig
+        botones += f'<a class="btn wa" href="https://wa.me/{_wa}">💬 WhatsApp al conductor</a>'
+    if dlat is not None and dlon is not None:
+        botones += f'<a class="btn gm" href="https://www.google.com/maps/dir/?api=1&destination={dlat},{dlon}">🧭 Abrir en Google Maps</a>'
+    tpl = """<!doctype html><html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tukán · Viaje compartido</title>
+<meta property="og:title" content="Voy en un viaje con Tukán">
+<meta property="og:description" content="__DESC__">
+<meta property="og:image" content="__OG__">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="__OG__">
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,Roboto,'Segoe UI',sans-serif;background:#F6F1E6;color:#1C2B22}
+.top{background:#187830;color:#fff;padding:16px 18px;display:flex;align-items:center;gap:10px}
+.top img{width:40px;height:40px;border-radius:11px;background:#F6F1E6}
+.top b{font-size:19px;font-weight:800}.top small{display:block;color:rgba(255,255,255,.8);font-size:12px}
+#map{height:300px;width:100%}
+.wrap{max-width:560px;margin:0 auto}
+.card{background:#fff;margin:-18px 14px 16px;border-radius:16px;padding:16px;box-shadow:0 8px 22px rgba(0,0,0,.08);position:relative}
+.ruta{margin-bottom:12px}
+.pt{display:flex;gap:12px;align-items:flex-start}
+.dot{width:12px;height:12px;border-radius:50%;margin-top:4px;flex:none}
+.dot.g{background:#187830}.dot.r{background:#F06000;border-radius:3px}
+.ln{width:2px;height:16px;background:#E2DED3;margin:2px 0 2px 5px}
+.kk{font-size:10.5px;color:#9A948A;font-weight:800;letter-spacing:.5px}
+.vv{font-size:15px;color:#1C2B22;font-weight:600}
+.row{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid #f0ece0;font-size:14.5px}
+.k{color:#888}.v{font-weight:600}
+.btn{display:block;text-align:center;text-decoration:none;font-weight:800;border-radius:12px;padding:14px;margin-top:10px;font-size:15px}
+.btn.wa{background:#25D366;color:#08351d}.btn.gm{background:#187830;color:#fff}
+.pie{text-align:center;color:#9A948A;font-size:12px;padding:6px 0 24px}
+</style></head><body>
+<div class="top"><img src="/logo.png" alt="Tukán"><div><b>Tukán</b><small>Viaje compartido</small></div></div>
+<div id="map"></div>
+<div class="wrap"><div class="card">__RUTA____FILAS____BOTONES__</div>
+<div class="pie">Compartido por seguridad desde la app Tukán</div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([1.0,-77.0],12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+var icoG=L.divIcon({html:'<div style="font-size:30px">\U0001F4CD</div>',className:'',iconSize:[30,30],iconAnchor:[8,28]});
+var icoR=L.divIcon({html:'<div style="font-size:28px">\U0001F3C1</div>',className:'',iconSize:[28,28],iconAnchor:[6,26]});
+var dest=__DEST__,ori=__ORI__,pts=[];
+if(ori){L.marker(ori,{icon:icoG}).addTo(map);pts.push(ori);}
+if(dest){L.marker(dest,{icon:icoR}).addTo(map);pts.push(dest);}
+if(pts.length>=2){map.fitBounds(pts,{padding:[45,45]});}else if(pts.length===1){map.setView(pts[0],15);}
+if(ori&&dest){fetch('https://router.project-osrm.org/route/v1/driving/'+ori[1]+','+ori[0]+';'+dest[1]+','+dest[0]+'?overview=full&geometries=geojson').then(function(r){return r.json();}).then(function(j){if(j.routes&&j.routes[0]){var p=j.routes[0].geometry.coordinates.map(function(c){return [c[1],c[0]];});L.polyline(p,{color:'#F06000',weight:6,opacity:.9}).addTo(map);}}).catch(function(){});}
+</script></body></html>"""
+    out = (tpl.replace("__OG__", og).replace("__DESC__", e(desc))
+           .replace("__RUTA__", ruta).replace("__FILAS__", filas)
+           .replace("__BOTONES__", botones)
+           .replace("__DEST__", dest_js).replace("__ORI__", ori_js))
+    return out
 
 def generar_codigo_referido(u):
     """Codigo corto y legible para invitar: 4 letras del nombre + id (unico)."""
