@@ -164,6 +164,33 @@ def actualizar_apk_url(clave: str, valor: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "apk_url": valor}
 
+@app.put("/municipio-tarifa/{nombre}")
+def actualizar_tarifa_municipio(nombre: str, clave: str, valor_km: int = None,
+                                tarifa_minima: int = None, tarifa_base: int = None,
+                                db: Session = Depends(get_db)):
+    """Ajusta SOLO la tarifa de una ciudad (valor por km, minima, base) con la clave
+    dedicada RESPALDO_CLAVE, sin depender de la sesion viva del admin. Alcance minimo:
+    no toca vehiculos, centro, ni activa/desactiva nada. El ajuste manual del admin
+    (PUT /municipios/{nombre}) sigue intacto en paralelo."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    m = db.query(Municipio).filter(Municipio.nombre == nombre).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Municipio no encontrado")
+    for campo, valor in (("tarifa_base", tarifa_base), ("valor_km", valor_km), ("tarifa_minima", tarifa_minima)):
+        if valor is not None:
+            if valor < 0:
+                raise HTTPException(status_code=400, detail=f"{campo} no puede ser negativo")
+            setattr(m, campo, valor)
+    # si se le pone un $/km, que mida la distancia por GPS (igual que el panel admin)
+    if (valor_km or 0) > 0:
+        m.usa_gps = "si"
+    db.commit()
+    db.refresh(m)
+    return {"ok": True, "municipio": m.nombre, "tarifa_base": m.tarifa_base or 0,
+            "valor_km": m.valor_km or 0, "tarifa_minima": m.tarifa_minima or 0}
+
 @app.get("/diag-push")
 def diag_push(clave: str = None, telefono: str = None,
               x_admin_token: str = Header(None), db: Session = Depends(get_db)):
