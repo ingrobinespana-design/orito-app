@@ -958,6 +958,59 @@ def reactivar_usuario(usuario_id: int, db: Session = Depends(get_db), admin: Usu
     db.commit()
     return {"ok": True, "nombre": u.nombre}
 
+@app.delete("/usuarios/{usuario_id}")
+def eliminar_mi_cuenta(usuario_id: int, db: Session = Depends(get_db),
+                       actual: Usuario = Depends(usuario_actual)):
+    """Habeas Data (Ley 1581): el usuario borra SU PROPIA cuenta y sus datos
+    personales. Sin historial -> se elimina por completo. Con historial -> se
+    ANONIMIZA (se borran nombre, telefono, fotos, vehiculo, lugares y claves) y se
+    bloquea, conservando solo el registro anonimo para las estadisticas agregadas."""
+    exigir_dueño(actual, usuario_id)
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.rol == "admin":
+        raise HTTPException(status_code=400, detail="Una cuenta de administrador no se elimina desde la app")
+    # cancela lo que tenga en curso para no dejar viajes colgados
+    db.query(Carrera).filter(
+        ((Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)),
+        Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])
+    ).update({"estado": "cancelada"}, synchronize_session=False)
+    db.query(Expreso).filter(
+        ((Expreso.cliente_id == u.id) | (Expreso.conductor_id == u.id)),
+        Expreso.estado.in_(["buscando", "aceptado", "en_camino"])
+    ).update({"estado": "cancelado"}, synchronize_session=False)
+    # sus lugares guardados (casa/trabajo) son datos personales: se borran
+    try:
+        db.query(LugarGuardado).filter(LugarGuardado.usuario_id == u.id).delete(synchronize_session=False)
+    except Exception:
+        pass
+    tiene_historial = (
+        db.query(Carrera).filter((Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)).count() > 0 or
+        db.query(Expreso).filter((Expreso.cliente_id == u.id) | (Expreso.conductor_id == u.id)).count() > 0
+    )
+    if tiene_historial:
+        u.nombre = "Cuenta eliminada"
+        u.telefono = f"ELIMINADO-{u.id}"      # unico, ya no es un telefono real
+        u.password = pwd_context.hash(secrets.token_urlsafe(24))   # clave inservible
+        u.token = None
+        u.push_token = None
+        u.placa = None
+        u.vehiculo = None
+        u.veh_color = None
+        u.veh_modelo = None
+        for campo in ("foto_conductor", "foto_vehiculo", "foto_tarjeta", "foto_licencia", "foto_cedula", "foto_soat"):
+            if hasattr(u, campo):
+                setattr(u, campo, None)
+        u.activo = "no"
+        u.disponible = "no"
+        modo = "anonimizado"
+    else:
+        db.delete(u)
+        modo = "eliminado"
+    db.commit()
+    return {"ok": True, "modo": modo}
+
 @app.post("/login")
 def login(telefono: str, password: str, db: Session = Depends(get_db)):
     # anti-fuerza-bruta: se limita por telefono (no por IP, que la comparte medio

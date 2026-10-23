@@ -6017,6 +6017,20 @@ function ConfiguracionScreen({ navigation, route }) {
             style={{ marginTop: 14, alignSelf: "flex-start", backgroundColor: "#FDECEA", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 16 }}>
             <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>🚪 Cerrar sesión</Text>
           </TouchableOpacity>
+          {/* Habeas Data: eliminar cuenta y datos personales (doble confirmacion) */}
+          <TouchableOpacity
+            onPress={() => confirmar("Eliminar mi cuenta",
+              "Borra tu cuenta y tus datos personales (nombre, teléfono, fotos, vehículo, lugares guardados). No se puede deshacer.",
+              () => confirmar("¿Seguro, seguro?", "Perderás el acceso. Si tienes historial de viajes, se conserva de forma anónima para estadísticas.",
+                () => userFetch(`${API}/usuarios/${usuario.id}`, { method: "DELETE" }).then(async r => {
+                  if (r.ok) { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }
+                  else { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || "Intenta de nuevo."); }
+                }).catch(() => avisar("Error", "No hay conexión.")),
+                "Sí, eliminar definitivamente"),
+              "Continuar")}
+            style={{ marginTop: 10, alignSelf: "flex-start", paddingVertical: 6, paddingHorizontal: 4 }}>
+            <Text style={{ color: "#B42318", fontWeight: "600", fontSize: 12, textDecorationLine: "underline" }}>Eliminar mi cuenta y mis datos</Text>
+          </TouchableOpacity>
         </View>
 
         {/* HABILITACIÓN del conductor: verificación de documentos + suscripción */}
