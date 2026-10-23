@@ -1665,6 +1665,40 @@ def _mapbox_geo(t, cerca_lat, cerca_lon):
                 out.append({"nombre": nombre, "lat": c[1], "lon": c[0]})
     return out
 
+def _mapbox_searchbox(t, cerca_lat, cerca_lon):
+    """Mapbox Search Box /forward: MEJOR que Geocoding v6 en vias con nombre (Avenida
+    Roosevelt), POIs/negocios (Unicentro, centros comerciales) y nomenclatura. Mismo
+    token (con Referer) y sesgo por proximity. Devuelve [{nombre,lat,lon}]. Si falla,
+    el que lo llama cae a v6/OSM (no se rompe el buscador)."""
+    import urllib.request as _ur, urllib.parse as _up, json as _json
+    params = {"q": t, "access_token": MAPBOX_TOKEN, "country": "co", "language": "es",
+              "limit": "8", "types": "address,street,place,locality,neighborhood,poi"}
+    if cerca_lat is not None and cerca_lon is not None:
+        params["proximity"] = f"{cerca_lon},{cerca_lat}"   # solo sesgo, sin recorte
+    url = "https://api.mapbox.com/search/searchbox/v1/forward?" + _up.urlencode(params)
+    req = _ur.Request(url, headers={"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"})
+    with _ur.urlopen(req, timeout=5) as r:
+        data = _json.loads(r.read().decode("utf-8"))
+    out = []
+    for f in data.get("features", []):
+        props = f.get("properties", {}) or {}
+        geom = f.get("geometry", {}) or {}
+        c = geom.get("coordinates")
+        if not (c and len(c) == 2):
+            co = props.get("coordinates") or {}
+            if "longitude" in co and "latitude" in co:
+                c = [co["longitude"], co["latitude"]]
+        if c and len(c) == 2:
+            nombre = props.get("full_address") or props.get("name_preferred") or props.get("name")
+            pf = props.get("place_formatted")
+            # si el nombre es corto (solo "Unicentro") y no es direccion completa, le
+            # pega la ciudad para que se entienda cual es
+            if nombre and pf and not props.get("full_address") and pf not in nombre:
+                nombre = f"{nombre}, {pf}"
+            if nombre:
+                out.append({"nombre": nombre, "lat": c[1], "lon": c[0]})
+    return out
+
 def _nominatim_geo(t, cerca_lat, cerca_lon):
     """OpenStreetMap: FUERTE en sitios/negocios (Unicentro, terminal, parque,
     hospital). Acotado a la zona (bounded). Gratis. Complementa a Mapbox."""
@@ -1716,14 +1750,19 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
             vistos.add(k)
             resultados.append(r)
 
-    # Mapbox v6 PRIMERO: es rapido y confiable (no cuelga el servidor). OSM solo
-    # como RESPALDO cuando Mapbox quedo corto (tipico al buscar un sitio/negocio),
-    # con timeout corto. Asi no saturamos a OSM (que es lento y limitado) ni
-    # bloqueamos los workers del backend.
+    # Search Box PRIMERO (mejor en vias con nombre y POIs), luego Geocoding v6
+    # (nomenclatura) y por ultimo OSM (negocios). Cada uno en try/except: si falla o
+    # queda corto, cae al siguiente -> EN EL PEOR CASO queda igual que antes (Search
+    # Box fuera = v6 + OSM, lo de hoy). Timeouts cortos: no cuelga los workers.
     try:
-        agregar(_mapbox_geo(t, cerca_lat, cerca_lon))
+        agregar(_mapbox_searchbox(t, cerca_lat, cerca_lon))
     except Exception:
         pass
+    if len(resultados) < 3:
+        try:
+            agregar(_mapbox_geo(t, cerca_lat, cerca_lon))
+        except Exception:
+            pass
     if len(resultados) < 3:
         try:
             agregar(_nominatim_geo(t, cerca_lat, cerca_lon))
@@ -1743,7 +1782,20 @@ def buscar_coordenadas(texto: str, municipio: str = "Orito",
     conocido = buscar_lugar(texto, municipio, db)
     if conocido and conocido.lat is not None:
         return {"lat": conocido.lat, "lon": conocido.lon, "fuente": "lugar"}
-    # 2) acotado a DONDE MIRA el usuario (lo mas confiable: su GPS/centro del mapa;
+    # 2) Mapbox Search Box (POIs, vias con nombre, nomenclatura) sesgado a donde mira
+    #    el usuario; toma el mas cercano. Aditivo: si no trae nada, sigue con OSM.
+    if cerca_lat is not None and cerca_lon is not None:
+        try:
+            cand = _mapbox_searchbox(texto, cerca_lat, cerca_lon)
+        except Exception:
+            cand = []
+        if cand:
+            cand.sort(key=lambda r: tarifas.distancia_km(cerca_lat, cerca_lon, r["lat"], r["lon"]) or 1e9)
+            m = cand[0]
+            km = tarifas.distancia_km(cerca_lat, cerca_lon, m["lat"], m["lon"])
+            if km is None or km <= 80:
+                return {"lat": m["lat"], "lon": m["lon"], "nombre": m["nombre"], "fuente": "mapbox"}
+    # 3) acotado a DONDE MIRA el usuario (lo mas confiable: su GPS/centro del mapa;
     #    no depende de que el centro de la ciudad este bien configurado)
     if cerca_lat is not None and cerca_lon is not None:
         g = geocodificar_amplio(texto, cerca_lat, cerca_lon, acotado=True)
