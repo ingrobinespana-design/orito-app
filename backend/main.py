@@ -2348,7 +2348,15 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
 def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)):
     """Lo que ve el conductor en 'Otra ciudad': viajes que SALEN de su ciudad. Sin
     conductor_id devuelve todos los que estan buscando (para el panel)."""
-    q = db.query(Expreso).filter(Expreso.estado == "buscando").order_by(Expreso.fecha.desc())
+    # NO ofrecer los VENCIDOS: si tienen fecha de salida y ya paso (con ~3h de gracia
+    # por si el viaje arranca tarde), se consideran colgados y no se muestran. Los "lo
+    # antes posible" (salida = None) siempre se ven. El cliente los maneja desde su
+    # lista con Reprogramar / Ejecutado / Cancelar.
+    limite = datetime.now() - timedelta(hours=3)
+    q = (db.query(Expreso)
+         .filter(Expreso.estado == "buscando")
+         .filter((Expreso.salida.is_(None)) | (Expreso.salida >= limite))
+         .order_by(Expreso.fecha.desc()))
     if conductor_id:
         conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
         if not conductor:
