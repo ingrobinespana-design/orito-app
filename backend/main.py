@@ -2513,6 +2513,34 @@ def actualizar_estado_expreso(expreso_id: int, estado: str, tareas: BackgroundTa
         tareas.add_task(avisar_expreso_estado, expreso_id, estado)
     return expreso_dict(e)
 
+@app.put("/expresos/{expreso_id}/reprogramar")
+def reprogramar_expreso(expreso_id: int, salida: str = None, db: Session = Depends(get_db),
+                        actual: Usuario = Depends(usuario_actual)):
+    """El cliente dueno cambia la FECHA de salida de su viaje (reprogramar). Lo deja
+    de nuevo 'buscando' con la nueva fecha para que los conductores lo vean. Util para
+    los viajes que se vencieron y quedaron colgados."""
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    if actual.id != e.cliente_id and actual.rol != "admin":
+        raise HTTPException(status_code=403, detail="No es tu viaje")
+    if e.estado in ("en_camino", "finalizado"):
+        raise HTTPException(status_code=400, detail="Un viaje en curso o terminado no se reprograma")
+    nueva = None
+    if salida:
+        try:
+            nueva = datetime.fromisoformat(salida)
+        except ValueError:
+            nueva = None
+    e.salida = nueva
+    e.estado = "buscando"      # vuelve a quedar disponible con la nueva fecha
+    e.conductor_id = None      # reprograma de cero: si alguien lo habia tomado, se libera
+    db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
+        {"estado": "descartada"}, synchronize_session=False)
+    db.commit()
+    db.refresh(e)
+    return expreso_dict(e)
+
 @app.put("/carreras/{carrera_id}/estado")
 def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTasks,
                               tarifa: int = None, db: Session = Depends(get_db),

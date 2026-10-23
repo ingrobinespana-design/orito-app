@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -1341,7 +1341,9 @@ function AdminScreen({ navigation, route }) {
         </ScrollView>
       )}
 
-      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
+      {/* Cerrar sesion de verdad: borra la sesion guardada y resetea a Login. Si
+          solo hiciera replace("Login"), la restauracion de sesion rebota a Admin. */}
+      <TouchableOpacity style={{ padding: 16, alignItems: "center" }} onPress={async () => { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }}>
         <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
       </TouchableOpacity>
     </SafeAreaView>
@@ -1820,18 +1822,16 @@ function mapaSeguimientoHTML() {
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css" rel="stylesheet">
 <style>
   html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}
-  .em{font-size:34px;line-height:34px;text-align:center}
-  .leaflet-div-icon{background:transparent;border:none}
-  .carro-wrap{background:transparent;border:none}
-  .carro-rot{transition:transform .28s ease-out;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
-  #btns{position:absolute;top:10px;right:10px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+  .veh{width:40px;height:40px;will-change:transform;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
+  .em{font-size:30px;line-height:30px;text-align:center}
+  #btns{position:absolute;top:10px;right:10px;z-index:3;display:flex;flex-direction:column;gap:8px}
   #btns button{border:none;border-radius:22px;padding:9px 13px;font-size:13px;font-weight:700;
     box-shadow:0 2px 6px rgba(0,0,0,.25);background:#fff;color:#187830}
   #btns button.on{background:#187830;color:#fff}
-  #leyenda{position:absolute;left:8px;bottom:8px;z-index:1000;background:rgba(255,255,255,.92);
+  #leyenda{position:absolute;left:8px;bottom:24px;z-index:3;background:rgba(255,255,255,.92);
     border-radius:10px;padding:5px 9px;font-size:12px;font-weight:600;color:#333;
     box-shadow:0 1px 4px rgba(0,0,0,.2);line-height:1.15}
 </style>
@@ -1841,233 +1841,117 @@ function mapaSeguimientoHTML() {
   <button id="bRuta" onclick="modoRuta()">🗺️ Ruta</button>
 </div>
 <div id="leyenda">🚗 Tú · 📍 Recogida · 🏁 Destino</div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
 <script>
-  var map = L.map('map',{zoomControl:false}).setView([0.6668, -76.8719], 14);
-  // Mapbox estilo CALLES limpio (como Google/Uber): vias claras y sin recargar
-  L.tileLayer('${MAPBOX_STREETS}',{maxZoom:20,tileSize:512,zoomOffset:-1}).addTo(map);
-  // carro visto desde arriba (apunta al NORTE por defecto; se rota al rumbo)
-  // iconos de vehiculo (vista superior, coloridos, con degradado para dar volumen)
-  var SVG = {
-    carro: '<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="cB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="0.55" stop-color="#1E8A3E"/><stop offset="1" stop-color="#115526"/></linearGradient><linearGradient id="cG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eafff0"/><stop offset="1" stop-color="#bfe6cf"/></linearGradient></defs><rect x="13" y="5" width="18" height="33" rx="8" fill="url(#cB)" stroke="#0e4a22" stroke-width="0.9"/><rect x="15" y="7" width="4.5" height="29" rx="2.2" fill="#ffffff" opacity="0.16"/><rect x="16" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><rect x="24" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><path d="M15 12 Q22 9 29 12 L27.5 17 Q22 15 16.5 17 Z" fill="url(#cG)"/><rect x="16" y="18" width="12" height="9" rx="2.5" fill="#0f5e2a"/><rect x="17" y="19" width="10" height="2.6" rx="1.3" fill="#ffffff" opacity="0.12"/><path d="M16.5 30 Q22 32 27.5 30 L26 27 Q22 28.5 18 27 Z" fill="url(#cG)"/><rect x="10.3" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/><rect x="30.6" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/></svg>',
-    moto: '<svg viewBox="0 0 44 44" width="38" height="38" style="display:block"><defs><linearGradient id="mB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A4D"/><stop offset="0.55" stop-color="#F06000"/><stop offset="1" stop-color="#B84800"/></linearGradient></defs><rect x="20" y="6" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="20" y="30" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="13" y="12" width="18" height="2.8" rx="1.4" fill="#444"/><path d="M18 14 Q22 12 26 14 L25 30 Q22 31.5 19 30 Z" fill="url(#mB)" stroke="#9c3d00" stroke-width="0.8"/><rect x="19" y="20" width="6" height="8" rx="3" fill="#135E29"/><rect x="20" y="15" width="4" height="3" rx="1.5" fill="#fff6d8"/><rect x="19.4" y="15" width="1.8" height="12" rx="0.9" fill="#ffffff" opacity="0.14"/></svg>',
-    camion: '<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="tCab" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFF4E0"/><stop offset="1" stop-color="#E8D9B8"/></linearGradient><linearGradient id="tCar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="1" stop-color="#145E29"/></linearGradient></defs><rect x="11" y="16" width="22" height="22" rx="3" fill="url(#tCar)" stroke="#0e4a22" stroke-width="0.9"/><rect x="13.5" y="18.8" width="17" height="16.5" rx="2" fill="#176e34"/><rect x="13.5" y="18.8" width="17" height="4" rx="1.5" fill="#ffffff" opacity="0.1"/><rect x="11" y="16" width="22" height="2.6" rx="1.3" fill="#F06000"/><rect x="12" y="5" width="20" height="12" rx="3" fill="url(#tCab)" stroke="#c9b98f" stroke-width="0.9"/><rect x="14.5" y="7" width="15" height="5" rx="1.6" fill="#bfe6cf"/><rect x="15" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><rect x="25" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/></svg>'
+  // Mapa VECTORIAL (Mapbox GL JS): gira 360 con el dedo (2 dedos) manteniendo los
+  // nombres derechos, mas fino que el raster. Carga con el referer orito.app (baseUrl
+  // del WebView), por eso el token restringido funciona.
+  mapboxgl.accessToken='${MAPBOX_TOKEN}';
+  var map=new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/streets-v12',
+    center:[-76.8719,0.6668],zoom:14,attributionControl:false,
+    dragRotate:true,touchZoomRotate:true,touchPitch:false,pitchWithRotate:false});
+  var SVG={
+    carro:'<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="cB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="0.55" stop-color="#1E8A3E"/><stop offset="1" stop-color="#115526"/></linearGradient><linearGradient id="cG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eafff0"/><stop offset="1" stop-color="#bfe6cf"/></linearGradient></defs><rect x="13" y="5" width="18" height="33" rx="8" fill="url(#cB)" stroke="#0e4a22" stroke-width="0.9"/><rect x="15" y="7" width="4.5" height="29" rx="2.2" fill="#ffffff" opacity="0.16"/><rect x="16" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><rect x="24" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><path d="M15 12 Q22 9 29 12 L27.5 17 Q22 15 16.5 17 Z" fill="url(#cG)"/><rect x="16" y="18" width="12" height="9" rx="2.5" fill="#0f5e2a"/><rect x="17" y="19" width="10" height="2.6" rx="1.3" fill="#ffffff" opacity="0.12"/><path d="M16.5 30 Q22 32 27.5 30 L26 27 Q22 28.5 18 27 Z" fill="url(#cG)"/><rect x="10.3" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/><rect x="30.6" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/></svg>',
+    moto:'<svg viewBox="0 0 44 44" width="38" height="38" style="display:block"><defs><linearGradient id="mB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A4D"/><stop offset="0.55" stop-color="#F06000"/><stop offset="1" stop-color="#B84800"/></linearGradient></defs><rect x="20" y="6" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="20" y="30" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="13" y="12" width="18" height="2.8" rx="1.4" fill="#444"/><path d="M18 14 Q22 12 26 14 L25 30 Q22 31.5 19 30 Z" fill="url(#mB)" stroke="#9c3d00" stroke-width="0.8"/><rect x="19" y="20" width="6" height="8" rx="3" fill="#135E29"/><rect x="20" y="15" width="4" height="3" rx="1.5" fill="#fff6d8"/><rect x="19.4" y="15" width="1.8" height="12" rx="0.9" fill="#ffffff" opacity="0.14"/></svg>',
+    camion:'<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="tCab" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFF4E0"/><stop offset="1" stop-color="#E8D9B8"/></linearGradient><linearGradient id="tCar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="1" stop-color="#145E29"/></linearGradient></defs><rect x="11" y="16" width="22" height="22" rx="3" fill="url(#tCar)" stroke="#0e4a22" stroke-width="0.9"/><rect x="13.5" y="18.8" width="17" height="16.5" rx="2" fill="#176e34"/><rect x="11" y="16" width="22" height="2.6" rx="1.3" fill="#F06000"/><rect x="12" y="5" width="20" height="12" rx="3" fill="url(#tCab)" stroke="#c9b98f" stroke-width="0.9"/><rect x="14.5" y="7" width="15" height="5" rx="1.6" fill="#bfe6cf"/></svg>'
   };
-  var svgActual = SVG.carro;
-  function iconoVeh(){ return L.divIcon({html:'<div class="carro-rot" style="width:40px;height:40px;transform:rotate(0deg)">'+svgActual+'</div>', className:'carro-wrap', iconSize:[40,40], iconAnchor:[20,20]}); }
-  function setVehiculo(t){ t=(t||'').toLowerCase(); svgActual = t==='moto' ? SVG.moto : t==='carro' ? SVG.carro : SVG.camion; if(carro){ carro.setIcon(iconoVeh()); } }
-  // ruta por calles con Mapbox Directions (confiable, con tu token) — reemplaza al
-  // OSRM demo que a veces fallaba y dibujaba la ruta en linea recta (fuera de via)
-  var rutaURL = function(lo1,la1,lo2,la2){ return 'https://api.mapbox.com/directions/v5/mapbox/driving/'+lo1+','+la1+';'+lo2+','+la2+'?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}'; };
-  var icoPin = L.divIcon({html:'📍', className:'em', iconSize:[34,34], iconAnchor:[17,32]});
-  var icoDest = L.divIcon({html:'🏁', className:'em', iconSize:[30,30], iconAnchor:[8,28]});
-  var pin = null, carro = null, mDest = null;
-  var linea = null, rutaCapa = null, capaDest = null, ultimaRuta = null;
-  var rutaPts = null, carIdx = 0;   // ruta actual (por calles) e indice del carro en ella
-  var recLat = null, recLon = null, destLat = null, destLon = null;   // recogida (📍) y destino (🏁)
-  var dLat = null, dLon = null;   // objetivo de la ruta VERDE, segun metaRuta
-  var metaRuta = null;            // 'recogida' | 'destino'
-  var seguir = true, primera = true, animId = null;
-  var navegacion = false;         // modo conductor: cámara pegada al vehículo (como Google Maps)
-  var ZOOM = 16;                  // que tan cerca sigue al carro
-  function setNavegacion(v){
-    navegacion = !!v;
-    if(navegacion && carro){ seguir = true; botones(); map.setView(carro.getLatLng(), 17, {animate:true}); }
+  var svgActual=SVG.carro;
+  var recLat=null,recLon=null,destLat=null,destLon=null,dLat=null,dLon=null,metaRuta=null;
+  var carro=null,pin=null,mDest=null,rutaPts=null,carIdx=0,ultimaRuta=null;
+  var seguir=true,primera=true,animId=null,navegacion=false,ZOOM=16;
+  var ready=false,cola=[];
+  function enListo(fn){ if(ready){ try{fn();}catch(e){} } else cola.push(fn); }
+  function line(coords){ return {type:'Feature',geometry:{type:'LineString',coordinates:coords||[]}}; }
+  function rutaURL(lo1,la1,lo2,la2){ return 'https://api.mapbox.com/directions/v5/mapbox/driving/'+lo1+','+la1+';'+lo2+','+la2+'?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}'; }
+  function rumbo(a,b){ var la1=a[1]*Math.PI/180,la2=b[1]*Math.PI/180,dlo=(b[0]-a[0])*Math.PI/180; var y=Math.sin(dlo)*Math.cos(la2); var x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dlo); return (Math.atan2(y,x)*180/Math.PI+360)%360; }
+  function emoji(ch){ var d=document.createElement('div'); d.className='em'; d.textContent=ch; return d; }
+
+  map.on('load', function(){
+    map.addSource('ctx',{type:'geojson',data:line([])});
+    map.addLayer({id:'ctx',type:'line',source:'ctx',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#C0392B','line-width':4,'line-opacity':0.5,'line-dasharray':[1,3]}});
+    map.addSource('ruta',{type:'geojson',data:line([])});
+    map.addLayer({id:'ruta',type:'line',source:'ruta',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#187830','line-width':6,'line-opacity':0.9}});
+    ready=true; map.resize(); var q=cola; cola=[]; q.forEach(function(f){ try{f();}catch(e){} });
+  });
+  window.addEventListener('resize', function(){ try{ map.resize(); }catch(e){} });
+  // si el usuario arrastra (pan) a mano, dejamos de perseguir el carro
+  map.on('dragstart', function(){ if(seguir){ seguir=false; botones(); } });
+
+  function botones(){ document.getElementById('bSeguir').className=seguir?'on':''; document.getElementById('bRuta').className=seguir?'':'on'; }
+  function modoSeguir(){ seguir=true; botones(); if(carro){ map.easeTo({center:carro.getLngLat(),zoom:Math.max(map.getZoom(),ZOOM),duration:400}); } }
+  function modoRuta(){ seguir=false; botones(); var pts=[]; if(carro){ var c=carro.getLngLat(); pts.push([c.lng,c.lat]); } if(recLat!=null)pts.push([recLon,recLat]); if(destLat!=null)pts.push([destLon,destLat]); if(pts.length>=2){ var b=new mapboxgl.LngLatBounds(pts[0],pts[0]); pts.forEach(function(p){b.extend(p);}); map.fitBounds(b,{padding:60,duration:500}); } else if(pts.length===1){ map.easeTo({center:pts[0],zoom:Math.max(map.getZoom(),14)}); } }
+
+  function setVehiculo(t){ t=(t||'').toLowerCase(); svgActual=t==='moto'?SVG.moto:t==='carro'?SVG.carro:SVG.camion; if(carro){ carro.getElement().innerHTML=svgActual; } }
+  function setNavegacion(v){ navegacion=!!v; if(navegacion&&carro){ seguir=true; botones(); map.easeTo({center:carro.getLngLat(),zoom:17,duration:500}); } }
+
+  function aplicarMeta(){ if(metaRuta==='destino'&&destLat!=null){ dLat=destLat; dLon=destLon; } else if(recLat!=null){ dLat=recLat; dLon=recLon; } else if(destLat!=null){ dLat=destLat; dLon=destLon; } else { dLat=null; dLon=null; } }
+
+  function pedirRuta(la,lo){
+    if(dLat==null) return;
+    fetch(rutaURL(lo,la,dLon,dLat)).then(function(r){return r.json();}).then(function(d){
+      if(!d.routes||!d.routes[0]) throw 0;
+      var r=d.routes[0]; var pts=r.geometry.coordinates;
+      map.getSource('ruta').setData(line(pts));
+      rutaPts=pts; carIdx=carro?nearestIdx(carro.getLngLat().lng,carro.getLngLat().lat):0;
+      ultimaRuta=[la,lo];
+      if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(JSON.stringify({km:r.distance/1000,min:Math.round(r.duration/60)})); }
+    }).catch(function(){ if(map.getSource('ruta')) map.getSource('ruta').setData(line(dLat!=null?[[lo,la],[dLon,dLat]]:[])); });
+  }
+  function dibujarContexto(){
+    if(recLat==null||destLat==null||!map.getSource('ctx')) return;
+    map.setPaintProperty('ctx','line-color','#C0392B'); map.setPaintProperty('ctx','line-width',4); map.setPaintProperty('ctx','line-opacity',0.5); map.setPaintProperty('ctx','line-dasharray',[1,3]);
+    fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
+      if(!d.routes||!d.routes[0]) throw 0;
+      map.getSource('ctx').setData(line(d.routes[0].geometry.coordinates));
+    }).catch(function(){ if(map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
+  }
+  function previa(){
+    if(recLat==null||destLat==null||!map.getSource('ctx')) return;
+    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',6); map.setPaintProperty('ctx','line-opacity',0.95); map.setPaintProperty('ctx','line-dasharray',[1,0]);
+    var b=new mapboxgl.LngLatBounds([recLon,recLat],[recLon,recLat]); b.extend([destLon,destLat]); map.fitBounds(b,{padding:60,duration:400});
+    fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
+      if(!d.routes||!d.routes[0]) throw 0;
+      var r=d.routes[0]; var pts=r.geometry.coordinates;
+      var bb=new mapboxgl.LngLatBounds(pts[0],pts[0]); pts.forEach(function(p){bb.extend(p);}); map.fitBounds(bb,{padding:55,duration:400});
+      var total=pts.length,t0=performance.now(),DUR=900;
+      (function dibuja(now){ var prog=Math.min(1,(now-t0)/DUR); var n=Math.max(2,Math.floor(prog*total)); map.getSource('ctx').setData(line(pts.slice(0,n))); if(prog<1) requestAnimationFrame(dibuja); else map.getSource('ctx').setData(line(pts)); })(performance.now());
+      if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(JSON.stringify({km:r.distance/1000,min:Math.round(r.duration/60)})); }
+    }).catch(function(){ if(map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
   }
 
-  function botones(){
-    document.getElementById('bSeguir').className = seguir ? 'on' : '';
-    document.getElementById('bRuta').className = seguir ? '' : 'on';
+  function nearestIdx(lng,lat){ if(!rutaPts) return 0; var best=0,bd=Infinity; for(var i=0;i<rutaPts.length;i++){ var dx=rutaPts[i][0]-lng,dy=rutaPts[i][1]-lat,d=dx*dx+dy*dy; if(d<bd){bd=d;best=i;} } return best; }
+  function moverEnRuta(la,lo){
+    var c=carro.getLngLat(); var a=[c.lng,c.lat];
+    if(!rutaPts||rutaPts.length<2){ animarSecuencia([a,[lo,la]]); return; }
+    var idx=nearestIdx(lo,la); var seq=[a]; if(idx>=carIdx){ for(var i=carIdx+1;i<=idx;i++) seq.push(rutaPts[i]); } seq.push([lo,la]); carIdx=idx; animarSecuencia(seq);
   }
-  function modoSeguir(){
-    seguir = true; botones();
-    if(carro){ map.setView(carro.getLatLng(), Math.max(map.getZoom(), ZOOM), {animate:true}); }
-  }
-  function modoRuta(){
-    seguir = false; botones();
-    // encuadra TODO lo que exista: 🚗 tu, 📍 recogida y 🏁 destino
-    var pts = [];
-    if(carro){ pts.push(carro.getLatLng()); }
-    if(recLat != null){ pts.push([recLat, recLon]); }
-    if(destLat != null){ pts.push([destLat, destLon]); }
-    if(pts.length >= 2){ map.fitBounds(L.latLngBounds(pts).pad(0.25)); }
-    else if(pts.length === 1){ map.setView(pts[0], Math.max(map.getZoom(), 14)); }
-  }
-  // si el usuario arrastra el mapa a mano, dejamos de perseguir el carro para no
-  // pelearle la camara; puede volver a "Seguir" con el boton
-  map.on('dragstart', function(){ if(seguir){ seguir = false; botones(); } });
-
-  function recta(la, lo){
-    if(linea){ map.removeLayer(linea); linea = null; }
-    if(dLat == null) return;
-    linea = L.polyline([[la, lo], [dLat, dLon]], {color:'#187830', weight:3, dashArray:'6 8'}).addTo(map);
-  }
-  // ruta REAL por las calles (OSRM, gratis). Se recalcula cuando el conductor
-  // avanza, asi la linea se va "consumiendo" en tiempo real como en Uber.
-  function pedirRuta(la, lo){
-    if(dLat == null) return;   // sin referencia no hay a donde trazar
-    var url = rutaURL(lo, la, dLon, dLat);
-    fetch(url).then(function(r){ return r.json(); }).then(function(d){
-      if(!d.routes || !d.routes[0]) throw 0;
-      var r = d.routes[0];
-      var pts = r.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
-      if(rutaCapa){ map.removeLayer(rutaCapa); }
-      if(linea){ map.removeLayer(linea); linea = null; }
-      rutaCapa = L.polyline(pts, {color:'#187830', weight:6, opacity:0.9, lineCap:'round', lineJoin:'round'}).addTo(map);
-      rutaPts = pts;   // el carro seguira ESTOS puntos (van por la carretera)
-      carIdx = carro ? nearestIdx(carro.getLatLng().lat, carro.getLatLng().lng) : 0;
-      ultimaRuta = [la, lo];
-      if(window.ReactNativeWebView){
-        window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)}));
-      }
-      // OJO: ya NO se reencuadra a toda la ruta en cada refresco — eso es lo que
-      // alejaba el mapa y hacia que el carro se viera quieto
-    }).catch(function(){ recta(la, lo); });
-  }
-  // rumbo (0-360, 0=norte) de A hacia B, para apuntar el carro a donde avanza
-  function rumbo(a, b){
-    var la1=a[0]*Math.PI/180, la2=b[0]*Math.PI/180, dlo=(b[1]-a[1])*Math.PI/180;
-    var y=Math.sin(dlo)*Math.cos(la2);
-    var x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dlo);
-    return (Math.atan2(y,x)*180/Math.PI+360)%360;
-  }
-  function rotarCarro(deg){
-    var el = document.querySelector('.carro-rot');
-    if(el){ el.style.transform = 'rotate(' + deg + 'deg)'; }
-  }
-  // indice del punto de la ruta mas cercano a (la,lo)
-  function nearestIdx(la, lo){
-    if(!rutaPts) return 0;
-    var best=0, bd=Infinity;
-    for(var i=0;i<rutaPts.length;i++){
-      var dx=rutaPts[i][0]-la, dy=rutaPts[i][1]-lo, d=dx*dx+dy*dy;
-      if(d<bd){ bd=d; best=i; }
-    }
-    return best;
-  }
-  // en vez de saltar en linea recta, el carro AVANZA por los puntos de la ruta
-  // (que van por la carretera) desde donde estaba hasta su nueva posicion
-  function moverEnRuta(la, lo){
-    var a = carro.getLatLng();
-    if(!rutaPts || rutaPts.length < 2){ animarSecuencia([[a.lat,a.lng],[la,lo]]); return; }
-    var idx = nearestIdx(la, lo);
-    var seq = [[a.lat, a.lng]];
-    if(idx >= carIdx){ for(var i=carIdx+1;i<=idx;i++){ seq.push(rutaPts[i]); } }
-    seq.push([la, lo]);
-    carIdx = idx;
-    animarSecuencia(seq);
-  }
-  // recorre una lista de puntos suave (~1.3s en total), rotando en cada tramo
   function animarSecuencia(seq){
     if(animId) cancelAnimationFrame(animId);
-    var pts = [seq[0]];
-    for(var k=1;k<seq.length;k++){ var p=seq[k], q=pts[pts.length-1]; if(p[0]!==q[0]||p[1]!==q[1]) pts.push(p); }
-    if(pts.length < 2){ if(carro) carro.setLatLng(pts[0]); return; }
-    var i=0, t0=performance.now(), segDur=1300/(pts.length-1);
-    function paso(now){
-      var t = Math.min(1, (now-t0)/segDur);
-      var a=pts[i], b=pts[i+1];
-      carro.setLatLng([a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t]);
-      rotarCarro(rumbo(a,b));
-      if(seguir){ map.panTo(carro.getLatLng(), {animate:false}); }
-      if(t>=1){ i++; if(i<pts.length-1){ t0=now; animId=requestAnimationFrame(paso); } }
-      else { animId=requestAnimationFrame(paso); }
+    var pts=[seq[0]]; for(var k=1;k<seq.length;k++){ var p=seq[k],q=pts[pts.length-1]; if(p[0]!==q[0]||p[1]!==q[1]) pts.push(p); }
+    if(pts.length<2){ if(carro) carro.setLngLat(pts[0]); return; }
+    var i=0,t0=performance.now(),segDur=1300/(pts.length-1);
+    function paso(now){ var t=Math.min(1,(now-t0)/segDur); var a=pts[i],b=pts[i+1];
+      carro.setLngLat([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]); carro.setRotation(rumbo(a,b));
+      if(seguir){ map.setCenter(carro.getLngLat()); }
+      if(t>=1){ i++; if(i<pts.length-1){ t0=now; animId=requestAnimationFrame(paso); } } else { animId=requestAnimationFrame(paso); }
     }
     animId=requestAnimationFrame(paso);
   }
-  // cual punto persigue la ruta VERDE (y el km/min): recogida por defecto
-  function aplicarMeta(){
-    if(metaRuta === 'destino' && destLat != null){ dLat = destLat; dLon = destLon; }
-    else if(recLat != null){ dLat = recLat; dLon = recLon; }
-    else if(destLat != null){ dLat = destLat; dLon = destLon; }
-    else { dLat = null; dLon = null; }
+
+  function _recogida(la,lo){ recLat=la; recLon=lo; if(!pin){ pin=new mapboxgl.Marker({element:emoji('📍'),anchor:'bottom'}).setLngLat([lo,la]).addTo(map); } else pin.setLngLat([lo,la]); aplicarMeta(); ultimaRuta=null; dibujarContexto(); if(!carro){ map.easeTo({center:[lo,la],zoom:ZOOM}); } else if(metaRuta!=='destino'){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
+  function _destino(la,lo){ destLat=la; destLon=lo; if(!mDest){ mDest=new mapboxgl.Marker({element:emoji('🏁'),anchor:'bottom'}).setLngLat([lo,la]).addTo(map); } else mDest.setLngLat([lo,la]); aplicarMeta(); dibujarContexto(); if(!carro&&!pin){ map.easeTo({center:[lo,la],zoom:ZOOM}); } else if(metaRuta==='destino'&&carro){ ultimaRuta=null; var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
+  function _conductor(la,lo){
+    if(!carro){ var el=document.createElement('div'); el.className='veh'; el.innerHTML=svgActual; carro=new mapboxgl.Marker({element:el,rotationAlignment:'map'}).setLngLat([lo,la]).addTo(map); carIdx=0;
+      if(primera){ if(navegacion){ seguir=true; botones(); map.easeTo({center:[lo,la],zoom:17}); } else if(dLat!=null){ seguir=false; botones(); var b=new mapboxgl.LngLatBounds([lo,la],[lo,la]); b.extend([dLon,dLat]); map.fitBounds(b,{padding:60,duration:400}); } else { map.easeTo({center:[lo,la],zoom:ZOOM}); } primera=false; }
+    } else { moverEnRuta(la,lo); }
+    var mover=!ultimaRuta||Math.sqrt(Math.pow(la-ultimaRuta[0],2)+Math.pow(lo-ultimaRuta[1],2))>0.0008; if(mover) pedirRuta(la,lo);
   }
-  function rutaA(cual){
-    metaRuta = cual; aplicarMeta(); ultimaRuta = null;
-    if(carro && dLat != null){ var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
-  }
-  // linea punteada del viaje completo: de la recogida (📍) al destino (🏁)
-  function dibujarContexto(){
-    if(recLat == null || destLat == null) return;
-    var url = rutaURL(recLon, recLat, destLon, destLat);
-    fetch(url).then(function(r){ return r.json(); }).then(function(d){
-      if(!d.routes || !d.routes[0]) throw 0;
-      var pts = d.routes[0].geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
-      if(capaDest){ map.removeLayer(capaDest); }
-      capaDest = L.polyline(pts, {color:'#C0392B', weight:4, opacity:0.5, dashArray:'1 8'}).addTo(map);
-    }).catch(function(){
-      if(capaDest){ map.removeLayer(capaDest); }
-      capaDest = L.polyline([[recLat,recLon],[destLat,destLon]], {color:'#C0392B', weight:3, opacity:0.5, dashArray:'1 8'}).addTo(map);
-    });
-  }
-  // VISTA PREVIA (antes de pedir): traza el recorrido recogida -> destino por las
-  // calles, lo pinta prominente (naranja Tukan) y encuadra los dos puntos. Reporta
-  // km/min reales para mostrarlos en la tarjeta. No necesita conductor.
-  function previa(){
-    if(recLat == null || destLat == null) return;
-    map.fitBounds(L.latLngBounds([[recLat,recLon],[destLat,destLon]]).pad(0.3));
-    var url = rutaURL(recLon, recLat, destLon, destLat);
-    fetch(url).then(function(r){ return r.json(); }).then(function(d){
-      if(!d.routes || !d.routes[0]) throw 0;
-      var r = d.routes[0];
-      var pts = r.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
-      if(capaDest){ map.removeLayer(capaDest); }
-      map.fitBounds(L.polyline(pts).getBounds().pad(0.22));
-      // animar el TRAZADO: la linea crece de la recogida al destino (~0.9s)
-      capaDest = L.polyline([pts[0]], {color:'#F06000', weight:6, opacity:0.95, lineCap:'round', lineJoin:'round'}).addTo(map);
-      var total = pts.length, t0 = performance.now(), DUR = 900;
-      function dibuja(now){
-        var prog = Math.min(1, (now - t0) / DUR);
-        var n = Math.max(2, Math.floor(prog * total));
-        capaDest.setLatLngs(pts.slice(0, n));
-        if(prog < 1){ requestAnimationFrame(dibuja); } else { capaDest.setLatLngs(pts); }
-      }
-      requestAnimationFrame(dibuja);
-      if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(JSON.stringify({km: r.distance/1000, min: Math.round(r.duration/60)})); }
-    }).catch(function(){
-      if(capaDest){ map.removeLayer(capaDest); }
-      capaDest = L.polyline([[recLat,recLon],[destLat,destLon]], {color:'#F06000', weight:4, opacity:0.85, dashArray:'4 8'}).addTo(map);
-    });
-  }
-  // 📍 donde recoge al cliente
-  function recogida(la, lo){
-    recLat = la; recLon = lo;
-    if(!pin){ pin = L.marker([la, lo], {icon:icoPin}).addTo(map); }
-    else { pin.setLatLng([la, lo]); }
-    aplicarMeta(); ultimaRuta = null; dibujarContexto();
-    if(!carro){ map.setView([la, lo], ZOOM); }
-    else if(metaRuta !== 'destino'){ var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
-  }
-  // compatibilidad: pantallas que aun inyectan punto()
-  function punto(la, lo){ recogida(la, lo); }
-  // 🏁 a donde va la carrera
-  function destino(la, lo){
-    destLat = la; destLon = lo;
-    if(!mDest){ mDest = L.marker([la, lo], {icon:icoDest}).addTo(map); }
-    else { mDest.setLatLng([la, lo]); }
-    aplicarMeta(); dibujarContexto();
-    if(!carro && !pin){ map.setView([la, lo], ZOOM); }
-    else if(metaRuta === 'destino' && carro){ ultimaRuta = null; var c = carro.getLatLng(); pedirRuta(c.lat, c.lng); }
-  }
-  function conductor(la, lo){
-    if(!carro){
-      carro = L.marker([la, lo], {icon:iconoVeh(), zIndexOffset:1000}).addTo(map);
-      carIdx = 0;
-      if(primera){
-        // modo NAVEGACION (conductor): cámara pegada al vehículo, como Google Maps.
-        // Si no, (cliente) encuadra carro + objetivo para ver venir el vehículo.
-        if(navegacion){ seguir = true; botones(); map.setView([la, lo], 17); }
-        else if(dLat != null){ seguir = false; botones(); map.fitBounds(L.latLngBounds([[la,lo],[dLat,dLon]]).pad(0.35)); }
-        else { map.setView([la, lo], ZOOM); }
-        primera = false;
-      }
-    } else {
-      moverEnRuta(la, lo);   // avanza por la carretera, no en linea recta
-    }
-    // recalcular la ruta solo si se movio ~90m o es la primera vez (no saturar)
-    var mover = !ultimaRuta || Math.sqrt(Math.pow(la-ultimaRuta[0],2) + Math.pow(lo-ultimaRuta[1],2)) > 0.0008;
-    if(mover){ pedirRuta(la, lo); }
-  }
+  function _rutaA(cual){ metaRuta=cual; aplicarMeta(); ultimaRuta=null; if(carro&&dLat!=null){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
+  function recogida(la,lo){ enListo(function(){_recogida(la,lo);}); }
+  function punto(la,lo){ recogida(la,lo); }
+  function destino(la,lo){ enListo(function(){_destino(la,lo);}); }
+  function conductor(la,lo){ enListo(function(){_conductor(la,lo);}); }
+  function rutaA(cual){ enListo(function(){_rutaA(cual);}); }
 </script></body></html>`;
 }
 
@@ -2463,6 +2347,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const [hSel, setHSel] = useState(null);   // hora (0-23) elegida
   const [mSel, setMSel] = useState(null);   // minutos elegidos
   const [calAbierto, setCalAbierto] = useState(false); // calendario para programar
+  const [reprogE, setReprogE] = useState(null); // expreso que se esta reprogramando
   const [mapaOpen, setMapaOpen] = useState(false);
   const [pinDest, setPinDest] = useState(null);       // destino EXACTO en el mapa (puerta a puerta)
   const [mapaDestOpen, setMapaDestOpen] = useState(false);
@@ -2527,6 +2412,22 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const cancelar = (e) => {
     confirmar("Cancelar viaje", "¿Seguro que quieres cancelar este viaje?",
       () => userFetch(`${API}/expresos/${e.id}/estado?estado=cancelado`, { method: "PUT" }).then(cargarMios).catch(() => {}), "Sí");
+  };
+  // marcar que el viaje YA se hizo (p. ej. se coordinó por fuera): queda finalizado
+  const ejecutado = (e) => {
+    confirmar("Marcar como ejecutado", "¿Este viaje ya se realizó? Se marcará como finalizado y saldrá de los activos.",
+      () => userFetch(`${API}/expresos/${e.id}/estado?estado=finalizado`, { method: "PUT" }).then(cargarMios).catch(() => {}), "Sí, ya se hizo");
+  };
+  // reprogramar: abre el calendario; al confirmar, pone la nueva fecha y lo reactiva
+  const reprogramar = (e) => setReprogE(e);
+  const confirmarReprog = (d, h, mm) => {
+    const nueva = isoLocal(d, h, mm);
+    userFetch(`${API}/expresos/${reprogE.id}/reprogramar?salida=${encodeURIComponent(nueva)}`, { method: "PUT" })
+      .then(async r => {
+        if (r.ok) { avisar("📅 Reprogramado", "Tu viaje quedó con la nueva fecha y volvió a estar disponible."); cargarMios(); }
+        else { const dd = await r.json().catch(() => null); avisar("No se pudo", (dd && dd.detail) || "Intenta de nuevo."); }
+      }).catch(() => avisar("Error", "No hay conexión."));
+    setReprogE(null);
   };
 
   const totalCalc = (parseInt(cupos, 10) || 0) * (parseInt((precio || "0").replace(/\D/g, ""), 10) || 0);
@@ -2675,16 +2576,40 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                     ))}
                   </View>
                 )}
-                {e.estado === "buscando" && (
-                  <TouchableOpacity style={{ marginTop: 8 }} onPress={() => cancelar(e)}>
-                    <Text style={{ color: "#C0392B", fontWeight: "600", fontSize: 12 }}>Cancelar viaje</Text>
-                  </TouchableOpacity>
-                )}
+                {e.estado === "buscando" && (() => {
+                  const vencido = e.salida && new Date(e.salida).getTime() < Date.now();
+                  return (
+                    <View style={{ marginTop: 10 }}>
+                      {vencido && (
+                        <Text style={{ fontSize: 12, color: "#B85C00", fontWeight: "800", marginBottom: 6 }}>
+                          ⏰ Se pasó la fecha de este viaje. ¿Qué hacemos?
+                        </Text>
+                      )}
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", paddingVertical: 9, paddingHorizontal: 14 }]} onPress={() => reprogramar(e)}>
+                          <Text style={[styles.buttonText, { fontSize: 13 }]}>📅 Reprogramar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#1C2B22", paddingVertical: 9, paddingHorizontal: 14 }]} onPress={() => ejecutado(e)}>
+                          <Text style={[styles.buttonText, { fontSize: 13 }]}>✅ Ejecutado</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#E6BDBD", paddingVertical: 9, paddingHorizontal: 14 }]} onPress={() => cancelar(e)}>
+                          <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>✕ Cancelar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })()}
               </View>
             );
           })}
         </View>
       )}
+
+      {/* calendario para REPROGRAMAR un viaje (reutiliza el mismo componente) */}
+      <CalendarioModal
+        visible={!!reprogE}
+        onConfirmar={confirmarReprog}
+        onCerrar={() => setReprogE(null)} />
 
       <MapaSelector visible={mapaOpen} titulo="Marca dónde te recogen"
         centro={pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
@@ -3332,13 +3257,12 @@ function PedirCarreraScreen({ navigation, route }) {
                     <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
                     <Estrellas valor={carrera.conductor_calificacion} size={14} />
                   </View>
-                  {carrera.conductor_tipo_vehiculo ? (
+                  {(carrera.conductor_vehiculo || carrera.conductor_tipo_vehiculo) ? (
                     <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>
-                      {vehIcono(carrera.conductor_tipo_vehiculo)} {vehLabel(carrera.conductor_tipo_vehiculo)}
-                      {carrera.conductor_vehiculo ? ` · ${carrera.conductor_vehiculo}` : ""}{carrera.conductor_veh_color ? ` · ${carrera.conductor_veh_color}` : ""}
+                      {/* lidera la MARCA/linea del carro; si el conductor no la puso,
+                          cae al tipo (Carro/Moto). El icono ya dice el tipo. */}
+                      {vehIcono(carrera.conductor_tipo_vehiculo)} {carrera.conductor_vehiculo || vehLabel(carrera.conductor_tipo_vehiculo)}{carrera.conductor_veh_color ? ` · ${carrera.conductor_veh_color}` : ""}
                     </Text>
-                  ) : carrera.conductor_vehiculo ? (
-                    <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>🚕 {carrera.conductor_vehiculo}</Text>
                   ) : null}
                 </View>
               </View>
@@ -3677,31 +3601,18 @@ function PedirCarreraScreen({ navigation, route }) {
             </View>
           )}
 
-          {/* detalles opcionales (recogida, destino y nota) */}
-          <TextInput
-            value={form.origen_detalle}
-            onChangeText={(t) => setForm({ ...form, origen_detalle: t })}
-            placeholder="Detalle de recogida (opcional): portón azul, 2 pisos..."
-            style={[styles.input, { marginTop: 12, marginBottom: 8 }]}
-            multiline
-          />
-          <TextInput
-            ref={refDestDet}
-            onFocus={() => subirCampo(refDestDet)}
-            value={form.destino_detalle}
-            onChangeText={(t) => setForm({ ...form, destino_detalle: t })}
-            placeholder="Detalle del destino (opcional)"
-            style={[styles.input, { marginBottom: esCarga(vehiculo) ? 0 : 8 }]}
-            multiline
-          />
+          {/* UNA sola nota opcional para el conductor. (En acarreos la nota es la
+              "Descripcion de la carga", que va en su propia tarjeta mas abajo, por
+              eso aqui solo aparece cuando NO es carga.) */}
           {!esCarga(vehiculo) && (
             <TextInput
               ref={refNotas}
               onFocus={() => subirCampo(refNotas)}
               value={form.notas}
               onChangeText={(t) => setForm({ ...form, notas: t })}
-              placeholder="Algo más que deba saber? (opcional)"
-              style={[styles.input, { marginBottom: 0 }]}
+              placeholder="Indicaciones para el conductor (opcional)"
+              style={[styles.input, { marginTop: 12, marginBottom: 0 }]}
+              multiline
             />
           )}
         </View>
@@ -4109,7 +4020,10 @@ function ConductorScreen({ navigation, route }) {
   }, [debeCorrerFondo]);
 
   useEffect(() => {
-    if (!debeRastrear) return;
+    // corre con carrera activa (el cliente te ve venir) Y TAMBIEN cuando estas solo
+    // DISPONIBLE esperando: con la pantalla encendida tu carrito debe moverse en el
+    // mapa mientras manejas (antes solo se tomaba el GPS una vez y se veia quieto).
+    if (!debeRastrear && !disponible) return;
     let vivo = true;
     let sub = null;
     (async () => {
@@ -4129,7 +4043,7 @@ function ConductorScreen({ navigation, route }) {
       } catch (e) {}
     })();
     return () => { vivo = false; if (sub) { try { sub.remove(); } catch (e) {} } };
-  }, [debeRastrear]);
+  }, [debeRastrear, disponible]);
 
   const aceptar = (c) => {
     // se quita YA del listado (no espera al refresco) para que no la vuelva a
@@ -4561,6 +4475,9 @@ function ConductorScreen({ navigation, route }) {
                   if (!punto && !miUbic) return null;
                   const dist = punto && miUbic ? kmEntre(miUbic, punto) : null;
                   const info = rutaCond;
+                  // carrera aceptada/en curso = modo navegacion: el mapa manda y ocupa
+                  // casi toda la pantalla; nunca se achica por debajo de 380.
+                  const altoMapa = Math.max(380, Dimensions.get("window").height - 250);
                   return (
                     <>
                       {c.estado === "en_sitio" && (
@@ -4569,14 +4486,16 @@ function ConductorScreen({ navigation, route }) {
                           <Text style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Ya le avisamos al cliente. Cuando suba, toca "Ya lo recogí".</Text>
                         </View>
                       )}
-                      <MapaSeguimiento key={"cond-" + c.estado}
-                        conductor={miUbic}
-                        vehiculo={c.vehiculo_pedido}
-                        navegacion
-                        recogida={c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null}
-                        destino={c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null}
-                        rutaA={yendoARecoger ? "recogida" : "destino"}
-                        onInfo={setRutaCond} />
+                      <View style={{ height: altoMapa, borderRadius: 14, overflow: "hidden", marginBottom: 10 }}>
+                        <MapaSeguimiento key={"cond-" + c.estado}
+                          conductor={miUbic}
+                          vehiculo={c.vehiculo_pedido}
+                          navegacion
+                          recogida={c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null}
+                          destino={c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null}
+                          rutaA={yendoARecoger ? "recogida" : "destino"}
+                          onInfo={setRutaCond} lleno />
+                      </View>
                       <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                         {(info || dist != null) && (
                           <View style={{ flex: 1, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, alignItems: "center", justifyContent: "center" }}>
@@ -4629,7 +4548,10 @@ function ConductorScreen({ navigation, route }) {
               const km = rutaPreview && (rutaPreview.km < 1 ? `${Math.round(rutaPreview.km * 1000)} m` : `${rutaPreview.km.toFixed(1)} km`);
               return (
                 <>
-                  <View style={{ height: 340, borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
+                  {/* esperando sin solicitudes = el mapa manda (ocupa casi toda la
+                      pantalla); cuando entra una solicitud se achica para dejar ver
+                      la tarjeta. Nunca baja de 360. */}
+                  <View style={{ height: disponibles.length > 0 ? 300 : Math.max(360, Dimensions.get("window").height - 330), borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
                     <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")}
                       conductor={miUbic}
                       vehiculo={usuario.tipo_vehiculo}
@@ -4639,54 +4561,53 @@ function ConductorScreen({ navigation, route }) {
                       rutaA="recogida"
                       onInfo={setRutaPreview} lleno />
                   </View>
-                  <View style={{ backgroundColor: foco ? "#FFF3E6" : "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Text style={{ fontSize: 16 }}>{foco ? "🚗" : "📍"}</Text>
-                    <Text style={{ flex: 1, fontSize: 12.5, fontWeight: "600", color: foco ? "#B85C00" : "#187830" }}>
-                      {foco
-                        ? (rutaPreview ? `Recogida a ${km} · ~${Math.max(1, rutaPreview.min)} min de ti` : "Calculando la ruta hasta la recogida…")
-                        : "Estás aquí. Cuando entre una solicitud verás la ruta hasta el pasajero."}
-                    </Text>
-                  </View>
+                  {/* solo cuando hay una solicitud a la vista: la distancia hasta la
+                      recogida. Esperando (sin foco) no se muestra nada (el banner de
+                      abajo ya dice "Buscando viajes"). */}
+                  {foco && (
+                    <View style={{ backgroundColor: "#FFF3E6", borderRadius: 10, padding: 10, marginBottom: 12, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={{ fontSize: 16 }}>🚗</Text>
+                      <Text style={{ flex: 1, fontSize: 12.5, fontWeight: "600", color: "#B85C00" }}>
+                        {rutaPreview ? `Recogida a ${km} · ~${Math.max(1, rutaPreview.min)} min de ti` : "Calculando la ruta hasta la recogida…"}
+                      </Text>
+                    </View>
+                  )}
                 </>
               );
             })()}
 
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <Text style={styles.seccionTitulo}>Solicitudes en vivo</Text>
-              {disponible && (
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#2E7D32" }} />
-                  <Text style={{ fontSize: 11, color: "#2E7D32", fontWeight: "600" }}>EN VIVO · {disponibles.length}</Text>
-                </View>
-              )}
-            </View>
-            {!disponible ? (
+            {/* Feed de solicitudes: SOLO cuando NO estas en servicio. En servicio
+                mandan el mapa + la tarjeta del viaje; el banner inferior "En
+                servicio" es el unico indicador (no se repite el mismo mensaje ni
+                se le roba espacio al mapa). */}
+            {/* Desconectado: un recordatorio (el mapa no se muestra si no estas
+                disponible). */}
+            {mias.length === 0 && !disponible && (
               <View style={{ alignItems: "center", padding: 24 }}>
                 <Text style={{ fontSize: 34 }}>🔌</Text>
-                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>Estas desconectado.{"\n"}Conectate arriba para recibir solicitudes.</Text>
+                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>Estás desconectado.{"\n"}Conéctate abajo para recibir solicitudes.</Text>
               </View>
-            ) : disponibles.length === 0 ? (
-              tieneCarreraActiva ? (
-                // ya tomo una carrera: no tiene sentido decirle "esperando", ya
-                // esta en servicio. Se lo recordamos en vez del emoji dormido.
-                <View style={{ alignItems: "center", padding: 24 }}>
-                  <Text style={{ fontSize: 34 }}>🚗</Text>
-                  <Text style={{ color: "#187830", marginTop: 8, fontWeight: "700" }}>Estás en una carrera</Text>
-                  <Text style={{ color: "#888", marginTop: 2, textAlign: "center", fontSize: 12.5 }}>Termínala para recibir nuevas solicitudes.</Text>
+            )}
+            {/* Solicitudes: SOLO cuando hay alguna (encabezado + tarjetas). Conectado
+                SIN solicitudes = el mapa grande + el banner "Buscando viajes" de abajo
+                es el unico indicador (no se repite el mensaje ni se deja el hueco). */}
+            {mias.length === 0 && disponibles.length > 0 && (
+              <>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <Text style={styles.seccionTitulo}>Solicitudes en vivo</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#2E7D32" }} />
+                    <Text style={{ fontSize: 11, color: "#2E7D32", fontWeight: "600" }}>EN VIVO · {disponibles.length}</Text>
+                  </View>
                 </View>
-              ) : (
-                // estado vacío compacto (sin emoji): no le roba espacio al mapa ni
-                // a la tarjeta del servicio cuando entre uno
-                <View style={{ alignItems: "center", paddingVertical: 12 }}>
-                  <Text style={{ color: "#9a948a", fontSize: 13, fontWeight: "600" }}>Esperando solicitudes…</Text>
-                </View>
-              )
-            ) : disponiblesOrden.map(c => {
-              // recien llegada (< 6s): tarjeta grande con cuenta regresiva y
-              // contraoferta rapida. Pasados los 6s baja al listado normal.
-              const restante = VENTANA - (ahora - (recibidas.current[c.id] || 0));
-              return restante > 0 ? tarjetaUrgente(c, restante) : tarjeta(c, false);
-            })}
+                {disponiblesOrden.map(c => {
+                  // recien llegada (< 6s): tarjeta grande con cuenta regresiva y
+                  // contraoferta rapida. Pasados los 6s baja al listado normal.
+                  const restante = VENTANA - (ahora - (recibidas.current[c.id] || 0));
+                  return restante > 0 ? tarjetaUrgente(c, restante) : tarjeta(c, false);
+                })}
+              </>
+            )}
           </>
         )}
 
@@ -4867,13 +4788,14 @@ function ConductorScreen({ navigation, route }) {
 
       </ScrollView>
 
-      {/* barra de ESTADO (el tic-tac): Conectado -> Buscando -> Viaje disponible */}
-      {(() => {
-        const enServicio = mias.length > 0;
+      {/* barra de ESTADO (el tic-tac): Conectado -> Buscando -> Viaje disponible.
+          En carrera en curso NO se muestra: el detalle ya está en la tarjeta de
+          arriba y ese espacio se lo damos al mapa de navegación. */}
+      {mias.length === 0 && (() => {
+        const enServicio = false;
         const hayDisp = disponibles.length > 0;
         let e;
         if (!disponible) e = { txt: "Desconectado", sub: "Toca aquí para conectarte y recibir viajes", color: "#C0392B", pulse: false };
-        else if (enServicio) e = { txt: "En servicio", sub: "Tienes una carrera en curso", color: "#187830", pulse: false };
         else if (hayDisp) e = { txt: "🚗 ¡Viaje disponible!", sub: `${disponibles.length} solicitud${disponibles.length > 1 ? "es" : ""} esperando`, color: "#F06000", pulse: true };
         else e = { txt: "Buscando viajes…", sub: "Estás conectado. Te avisamos apenas entre uno", color: "#187830", pulse: true };
         return (
@@ -5414,6 +5336,13 @@ function AdminCarrerasScreen({ navigation }) {
           <Text style={styles.headerSub}>Administracion</Text>
           <Text style={styles.headerTitle}>Carreras</Text>
         </View>
+        {/* Cerrar sesion: borra la sesion guardada y vuelve a Login (si no, al
+            reabrir la app la restauracion te devuelve a Admin). */}
+        <TouchableOpacity
+          onPress={() => confirmar("Cerrar sesión", "¿Seguro que quieres salir de tu cuenta de administrador?", async () => { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }, "Cerrar sesión")}
+          style={{ marginLeft: "auto", backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 16, paddingVertical: 7, paddingHorizontal: 13 }}>
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>🚪 Salir</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={{ flexDirection: "row", padding: 16, gap: 10 }}>
@@ -6032,7 +5961,11 @@ function ConfiguracionScreen({ navigation, route }) {
     setSubiendoFoto(tipo);
     const fd = new FormData();
     fd.append("file", { uri: r.assets[0].uri, type: "image/jpeg", name: `${tipo}.jpg` });
-    userFetch(`${API}/usuarios/${usuario.id}/foto?tipo=${tipo}`, { method: "POST", body: fd, headers: { "Content-Type": "multipart/form-data" } })
+    // OJO: NO fijar "Content-Type" a mano. En React Native (New Architecture) eso
+    // omite el boundary del multipart y la subida falla como "sin conexion". Al no
+    // ponerlo, fetch arma solo "multipart/form-data; boundary=...". userFetch agrega
+    // el X-User-Token.
+    userFetch(`${API}/usuarios/${usuario.id}/foto?tipo=${tipo}`, { method: "POST", body: fd })
       .then(res => res.json())
       .then(d => { setSubiendoFoto(null); if (d.url) setFotos(f => ({ ...f, [tipo]: d.url })); else avisar("Error", "No se pudo subir la foto."); })
       .catch(() => { setSubiendoFoto(null); avisar("Sin conexion", "Intenta de nuevo."); });
