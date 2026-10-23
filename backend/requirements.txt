@@ -7,3 +7,4 @@ psycopg2-binary
 cloudinary
 python-multipart
 python-dotenv
+sentry-sdk>=2.0,<3

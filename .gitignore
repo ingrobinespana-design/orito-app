@@ -15,3 +15,8 @@ web-build/
 # llaves secretas de Firebase (NUNCA subir)
 *firebase-adminsdk*.json
 service-account*.json
+
+# backups de la base (llevan datos reales de usuarios - NUNCA subir)
+backend/backups/
+*.sql
+*.dump

@@ -19,6 +19,24 @@ import hashlib
 
 load_dotenv()
 
+# ---- Monitoreo de errores (Sentry). Inerte si no hay SENTRY_DSN: en ese caso
+# no envia nada y la app arranca EXACTAMENTE igual que siempre. Se activa poniendo
+# la variable SENTRY_DSN en Railway (cuenta gratis en sentry.io). No manda datos
+# personales de los usuarios (send_default_pii=False), respetando Habeas Data.
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=os.environ.get("RAILWAY_ENVIRONMENT_NAME", "production"),
+            traces_sample_rate=0.0,   # solo errores, sin trazas de rendimiento (cupo gratis dura mas)
+            send_default_pii=False,   # NO enviar datos personales de usuarios
+        )
+        logging.info("Sentry activado")
+    except Exception as e:
+        logging.warning(f"Sentry no se pudo iniciar, la app sigue normal: {e}")
+
 cloudinary.config(
     cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
     api_key=os.environ.get("CLOUDINARY_API_KEY"),
