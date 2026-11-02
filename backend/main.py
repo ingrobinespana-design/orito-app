@@ -209,6 +209,45 @@ def actualizar_tarifa_municipio(nombre: str, clave: str, valor_km: int = None,
     return {"ok": True, "municipio": m.nombre, "tarifa_base": m.tarifa_base or 0,
             "valor_km": m.valor_km or 0, "tarifa_minima": m.tarifa_minima or 0}
 
+@app.put("/promo")
+def configurar_promo(clave: str, activa: str = None, pct: int = None,
+                     ciudad: str = None, texto: str = None, dias: int = None,
+                     db: Session = Depends(get_db)):
+    """Prende/apaga la promo de lanzamiento (SOLO carreras de pasajeros) con la
+    clave RESPALDO_CLAVE. activa: 'si'/'no'; pct: % de descuento (0-99);
+    ciudad: nombre exacto o 'todas'; texto: etiqueta que ve el cliente;
+    dias: a cuantos dias se apaga SOLA (0 o vacio = sin limite)."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    def _set(k, v):
+        fila = db.query(Config).filter(Config.clave == k).first()
+        if fila:
+            fila.valor = str(v)
+        else:
+            db.add(Config(clave=k, valor=str(v)))
+    if activa is not None:
+        if activa not in ("si", "no"):
+            raise HTTPException(status_code=400, detail="activa solo acepta si o no")
+        _set("promo_activa", activa)
+    if pct is not None:
+        if pct < 0 or pct >= 100:
+            raise HTTPException(status_code=400, detail="pct debe estar entre 0 y 99")
+        _set("promo_pct", pct)
+    if ciudad is not None:
+        _set("promo_ciudad", ciudad)
+    if texto is not None:
+        _set("promo_texto", texto)
+    if dias is not None:
+        _set("promo_hasta", "" if dias <= 0 else (datetime.now() + timedelta(days=dias)).isoformat())
+    db.commit()
+    return {"ok": True,
+            "promo_activa": leer_config("promo_activa", db, "no"),
+            "promo_pct": leer_config("promo_pct", db, "0"),
+            "promo_ciudad": leer_config("promo_ciudad", db, ""),
+            "promo_texto": leer_config("promo_texto", db, ""),
+            "promo_hasta": leer_config("promo_hasta", db, "")}
+
 @app.get("/diag-push")
 def diag_push(clave: str = None, telefono: str = None,
               x_admin_token: str = Header(None), db: Session = Depends(get_db)):
@@ -658,6 +697,7 @@ def municipio_dict(m: Municipio, db: Session):
         "tarifa_minima": m.tarifa_minima or 0,
         "centro_lat": m.centro_lat,
         "centro_lon": m.centro_lon,
+        "promo": promo_de(m.nombre, db),
     }
 
 @app.get("/ubicacion/municipio")
@@ -745,6 +785,36 @@ def obtener_municipios(todos: bool = False, db: Session = Depends(get_db)):
         q = q.filter(Municipio.activo == "si")
     return [municipio_dict(m, db) for m in q.order_by(Municipio.nombre).all()]
 
+def _con_descuento(valor: int, pct: int) -> int:
+    """Aplica % de descuento y redondea a $50 para que quede un numero bonito."""
+    neto = (valor or 0) * (100 - pct) / 100.0
+    return int(round(neto / 50.0)) * 50
+
+def promo_de(municipio: str, db: Session):
+    """Promo de lanzamiento para CARRERAS de pasajeros (NO acarreos). Devuelve
+    pct>0 solo si esta activa y aplica a esta ciudad. Nunca lanza error."""
+    apagada = {"activa": False, "pct": 0, "texto": ""}
+    try:
+        if leer_config("promo_activa", db, "no") != "si":
+            return apagada
+        # red de seguridad: si tiene fecha de vencimiento y ya paso, se apaga sola
+        hasta = (leer_config("promo_hasta", db, "") or "").strip()
+        if hasta:
+            try:
+                if datetime.now() > datetime.fromisoformat(hasta):
+                    return apagada
+            except Exception:
+                pass
+        pct = int(leer_config("promo_pct", db, "0") or 0)
+        if pct <= 0 or pct >= 100:
+            return apagada
+        ciudad = (leer_config("promo_ciudad", db, "") or "").strip().lower()
+        if ciudad and ciudad not in ("todas", "todos") and ciudad != (municipio or "").strip().lower():
+            return apagada
+        return {"activa": True, "pct": pct, "texto": leer_config("promo_texto", db, "")}
+    except Exception:
+        return apagada
+
 def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     """Sugerencia segun el pueblo, el vehiculo y los km. Solo orienta la oferta
     del cliente; el precio de verdad lo negocian las partes."""
@@ -776,9 +846,17 @@ def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon:
     if not m:
         raise HTTPException(status_code=404, detail="Municipio no encontrado")
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
+    sug = tarifa_sugerida(municipio, vehiculo, km, db)
+    prom = promo_de(municipio, db)
+    # el descuento SOLO aplica a carreras de pasajeros (las de carga no llevan sugerido)
+    aplica = bool(prom["activa"]) and sug is not None and vehiculo not in VEHICULOS_CARGA
+    sug_promo = _con_descuento(sug, prom["pct"]) if aplica else None
     return {
         "distancia_km": km,
-        "tarifa_sugerida": tarifa_sugerida(municipio, vehiculo, km, db),
+        # lo que el cliente ofrece por defecto: con descuento si hay promo
+        "tarifa_sugerida": sug_promo if aplica else sug,
+        "tarifa_normal": sug,                 # precio sin descuento (para tacharlo)
+        "promo": {**prom, "aplica": aplica},
         "es_sugerencia": True,
     }
 
@@ -1320,7 +1398,8 @@ def obtener_config(db: Session = Depends(get_db), admin: Usuario = Depends(solo_
 @app.put("/config")
 def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db),
                       admin: Usuario = Depends(solo_admin)):
-    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url", "whatsapp_soporte")
+    permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url", "whatsapp_soporte",
+                  "promo_activa", "promo_pct", "promo_ciudad", "promo_texto", "promo_hasta")
     if clave not in permitidas:
         raise HTTPException(status_code=400, detail="Ajuste no permitido")
     if clave == "cobro_activo" and valor not in ("si", "no"):
@@ -2061,6 +2140,11 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     # donde hay GPS se calcula distancia y tarifa sugerida; donde no, quedan vacias
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)
+    # promo de lanzamiento (solo carreras de pasajeros): el minimo sugerido que se
+    # guarda ya lleva el descuento, asi el cliente y el conductor ven lo mismo.
+    _prom = promo_de(municipio, db)
+    if _prom["activa"] and sugerida is not None and vehiculo_pedido not in VEHICULOS_CARGA:
+        sugerida = _con_descuento(sugerida, _prom["pct"])
 
     carrera = Carrera(
         cliente_id=cliente.id, cliente_nombre=cliente.nombre, cliente_telefono=cliente.telefono,

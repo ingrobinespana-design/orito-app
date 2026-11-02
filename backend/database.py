@@ -201,6 +201,17 @@ CONFIG_INICIAL = {
     # a donde manda el boton "Descargar" de la pagina /app. Se actualiza por
     # config cuando sale un APK nuevo, sin tocar el flyer ni el QR.
     "apk_url": "https://expo.dev/artifacts/eas/paW_WArt2QVsaB-YcZ8UfNUQfSnFUWTjl9D9l7Q5-_g.apk",
+    # Promo de lanzamiento: SOLO carreras de pasajeros (NO acarreos ni expresos).
+    # El pasajero ve el precio normal tachado y el de promo. Arranca APAGADA; se
+    # prende por el endpoint /promo o el panel. pct = % de descuento. ciudad vacio
+    # o "todas" = aplica en todas; si no, solo en esa ciudad.
+    "promo_activa": "no",
+    "promo_pct": "50",
+    "promo_ciudad": "Cali",
+    "promo_texto": "Lanzamiento Cali",
+    # fecha ISO en que la promo se apaga SOLA (red de seguridad: aunque nadie la
+    # apague, al pasar esta fecha todo vuelve a la normalidad). Vacio = sin limite.
+    "promo_hasta": "",
 }
 
 class Carrera(Base):
