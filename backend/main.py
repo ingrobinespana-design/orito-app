@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, Expreso, OfertaExpreso, LugarGuardado, VEHICULOS_VALIDOS, VEHICULOS_CARGA
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, Expreso, OfertaExpreso, LugarGuardado, CodigoVerificacion, VEHICULOS_VALIDOS, VEHICULOS_CARGA
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -1129,6 +1129,138 @@ def login(telefono: str, password: str, db: Session = Depends(get_db)):
             "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
             "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
             "token": usuario.token}
+
+# ===================== FASE 2 — Login por codigo (OTP) =====================
+# ADITIVO e INERTE. No toca /login ni /registro. Si no hay proveedor de
+# SMS/WhatsApp en variables de entorno, /auth/otp/estado da activo:false y
+# enviar/verificar responden 503. Se "prende" poniendo las llaves del proveedor.
+def _otp_proveedor():
+    if os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN") and os.environ.get("TWILIO_FROM"):
+        return "twilio"
+    if os.environ.get("WHATSAPP_TOKEN") and os.environ.get("WHATSAPP_PHONE_ID"):
+        return "whatsapp"
+    if os.environ.get("OTP_DEV") == "1":   # SOLO pruebas locales: el codigo va al log
+        return "dev"
+    return None
+
+def _dict_sesion(u: Usuario):
+    """La MISMA sesion que devuelve /login (para que el OTP entre igual)."""
+    return {"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
+            "restaurante_id": u.restaurante_id, "placa": u.placa, "vehiculo": u.vehiculo,
+            "disponible": u.disponible, "municipio": u.municipio,
+            "tipo_vehiculo": u.tipo_vehiculo, "token": u.token}
+
+def _otp_norm(telefono: str):
+    return "".join(ch for ch in (telefono or "") if ch.isdigit() or ch == "+")
+
+def _otp_e164(telefono: str):
+    """Para el envio: sin indicativo asume Colombia (+57)."""
+    t = _otp_norm(telefono)
+    if t.startswith("+"):
+        return t
+    t = t.lstrip("0")
+    return f"+57{t}" if len(t) == 10 else f"+{t}"
+
+def _token_registro(telefono: str):
+    """Token de un solo uso que certifica 'este numero ya verifico por OTP'."""
+    clave = (os.environ.get("SECRET_KEY") or os.environ.get("RESPALDO_CLAVE") or "tukan-otp").encode()
+    ts = str(int(datetime.now().timestamp()))
+    firma = hmac.new(clave, f"{_otp_norm(telefono)}|{ts}".encode(), hashlib.sha256).hexdigest()[:24]
+    return f"{ts}.{firma}"
+
+def verificar_token_registro(telefono: str, token: str, max_seg: int = 1800):
+    """Lo usara el registro-por-OTP cuando se construya la app (aun no se llama)."""
+    try:
+        ts, firma = (token or "").split(".")
+        clave = (os.environ.get("SECRET_KEY") or os.environ.get("RESPALDO_CLAVE") or "tukan-otp").encode()
+        esperada = hmac.new(clave, f"{_otp_norm(telefono)}|{ts}".encode(), hashlib.sha256).hexdigest()[:24]
+        return hmac.compare_digest(firma, esperada) and (datetime.now().timestamp() - int(ts)) <= max_seg
+    except Exception:
+        return False
+
+def _enviar_codigo_otp(telefono: str, codigo: str) -> bool:
+    prov = _otp_proveedor()
+    if prov == "dev":
+        logging.info(f"[OTP DEV] codigo para {telefono}: {codigo}")
+        return True
+    msg = f"Tu codigo Tukan es {codigo}. Vence en 10 minutos. No lo compartas."
+    if prov == "twilio":
+        try:
+            import urllib.request as _ur, urllib.parse as _up, base64 as _b64
+            sid = os.environ["TWILIO_ACCOUNT_SID"]; tok = os.environ["TWILIO_AUTH_TOKEN"]
+            data = _up.urlencode({"To": _otp_e164(telefono), "From": os.environ["TWILIO_FROM"], "Body": msg}).encode()
+            req = _ur.Request(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json", data=data)
+            req.add_header("Authorization", "Basic " + _b64.b64encode(f"{sid}:{tok}".encode()).decode())
+            _ur.urlopen(req, timeout=10)
+            return True
+        except Exception as e:
+            logging.warning(f"OTP twilio fallo: {e}"); return False
+    if prov == "whatsapp":
+        try:
+            import urllib.request as _ur, json as _json
+            tok = os.environ["WHATSAPP_TOKEN"]; pid = os.environ["WHATSAPP_PHONE_ID"]
+            # OJO: WhatsApp Cloud API exige PLANTILLA aprobada para iniciar la conversacion.
+            # Al activar, cambiar a type:"template"; aqui va la estructura base.
+            payload = {"messaging_product": "whatsapp", "to": _otp_norm(telefono).lstrip("+"),
+                       "type": "text", "text": {"body": msg}}
+            req = _ur.Request(f"https://graph.facebook.com/v18.0/{pid}/messages",
+                              data=_json.dumps(payload).encode(),
+                              headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+            _ur.urlopen(req, timeout=10)
+            return True
+        except Exception as e:
+            logging.warning(f"OTP whatsapp fallo: {e}"); return False
+    return False
+
+@app.get("/auth/otp/estado")
+def otp_estado():
+    """La app lo consulta al abrir Login: si es false, todo sigue igual (solo clave)."""
+    return {"activo": _otp_proveedor() is not None}
+
+@app.post("/auth/otp/enviar")
+def otp_enviar(request: Request, telefono: str, db: Session = Depends(get_db)):
+    if _otp_proveedor() is None:
+        raise HTTPException(status_code=503, detail="Canal de verificacion no configurado")
+    tel = _otp_norm(telefono)
+    if len(tel.lstrip("+")) < 7:
+        raise HTTPException(status_code=400, detail="Numero invalido")
+    # anti-abuso y anti-gasto: por numero y por IP
+    if paso_del_limite(("otp_num", tel), 3, 900):
+        raise HTTPException(status_code=429, detail="Demasiados codigos. Espera unos minutos.")
+    if paso_del_limite(("otp_ip", ip_de(request)), 20, 900):
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Espera unos minutos.")
+    codigo = f"{secrets.randbelow(1000000):06d}"
+    db.query(CodigoVerificacion).filter(CodigoVerificacion.telefono == tel,
+                                         CodigoVerificacion.usado == "no").update({"usado": "si"})
+    cv = CodigoVerificacion(telefono=tel, codigo_hash=pwd_context.hash(codigo),
+                            expira=datetime.now() + timedelta(minutes=10), intentos=0, usado="no")
+    db.add(cv); db.commit()
+    if not _enviar_codigo_otp(tel, codigo):
+        raise HTTPException(status_code=502, detail="No pudimos enviar el codigo, intenta de nuevo")
+    return {"ok": True}
+
+@app.post("/auth/otp/verificar")
+def otp_verificar(telefono: str, codigo: str, db: Session = Depends(get_db)):
+    if _otp_proveedor() is None:
+        raise HTTPException(status_code=503, detail="Canal de verificacion no configurado")
+    tel = _otp_norm(telefono); cod = (codigo or "").strip()
+    cv = db.query(CodigoVerificacion).filter(CodigoVerificacion.telefono == tel,
+                                             CodigoVerificacion.usado == "no").order_by(CodigoVerificacion.id.desc()).first()
+    invalido = HTTPException(status_code=400, detail="Codigo incorrecto o vencido")
+    if not cv or cv.expira < datetime.now() or (cv.intentos or 0) >= 5:
+        raise invalido
+    if not pwd_context.verify(cod, cv.codigo_hash):
+        cv.intentos = (cv.intentos or 0) + 1; db.commit()
+        raise invalido
+    cv.usado = "si"; db.commit()
+    u = db.query(Usuario).filter(Usuario.telefono == tel).first()
+    if u:
+        if u.activo == "no":
+            raise HTTPException(status_code=403, detail="Tu cuenta está desactivada. Comunícate con el soporte.")
+        u.token = secrets.token_urlsafe(32); db.commit()   # rota la sesion, igual que /login
+        return {"nuevo": False, **_dict_sesion(u)}
+    # numero verificado sin cuenta -> token de un solo uso para completar el registro
+    return {"nuevo": True, "telefono": tel, "token_registro": _token_registro(tel)}
 
 @app.get("/restaurantes")
 def obtener_restaurantes(db: Session = Depends(get_db)):

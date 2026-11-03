@@ -214,6 +214,19 @@ CONFIG_INICIAL = {
     "promo_hasta": "",
 }
 
+class CodigoVerificacion(Base):
+    """Fase 2 — login por codigo (OTP) + recuperacion de cuenta. Tabla ADITIVA:
+    no cambia Usuario. El codigo se guarda HASHEADO (nunca en claro). Inerte
+    mientras no haya proveedor de SMS/WhatsApp configurado."""
+    __tablename__ = "codigo_verificacion"
+    id = Column(Integer, primary_key=True, index=True)
+    telefono = Column(String, index=True)
+    codigo_hash = Column(String)              # bcrypt del codigo de 6 digitos
+    expira = Column(DateTime)                 # now + 10 min
+    intentos = Column(Integer, default=0)     # max 5
+    usado = Column(String, default="no")      # "si"/"no"
+    creado = Column(DateTime, default=datetime.now)
+
 class Carrera(Base):
     __tablename__ = "carreras"
     id = Column(Integer, primary_key=True, index=True)
