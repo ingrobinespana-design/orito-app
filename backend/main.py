@@ -2918,7 +2918,17 @@ def mis_referidos(usuario_id: int, db: Session = Depends(get_db)):
     if not u.codigo_referido:   # usuarios viejos: se les genera al primer vistazo
         u.codigo_referido = generar_codigo_referido(u); db.commit()
     invitados = db.query(Usuario).filter(Usuario.referido_por == u.codigo_referido).order_by(Usuario.id.desc()).all()
+    # cuantos de los invitados ya PIDIERON al menos una carrera (premio por uso real)
+    ids = [x.id for x in invitados]
+    con_carrera = 0
+    if ids:
+        pedidores = {cid for (cid,) in db.query(Carrera.cliente_id)
+                     .filter(Carrera.cliente_id.in_(ids)).distinct().all()}
+        con_carrera = len(pedidores)
+    META_REFERIDOS = 10
     return {"codigo": u.codigo_referido, "total": len(invitados),
+            "con_carrera": con_carrera, "meta": META_REFERIDOS,
+            "premio_listo": con_carrera >= META_REFERIDOS,
             "nombres": [x.nombre for x in invitados[:20]]}
 
 @app.post("/usuarios/{usuario_id}/foto")
