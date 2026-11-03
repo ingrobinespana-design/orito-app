@@ -283,6 +283,21 @@ class Carrera(Base):
     cancelada_en = Column(DateTime, nullable=True)
     cancelada_por = Column(String, nullable=True)          # "cliente" / "conductor" / "admin"
     motivo_cancelacion = Column(Text, nullable=True)
+    # ACARREOS: lo que el transportador necesita saber para cotizar bien
+    tipo_carga = Column(String, nullable=True)       # trasteo / mercancia / materiales / objeto / otro
+    tamano_carga = Column(String, nullable=True)     # pequena / mediana / grande / muy_grande
+    fotos_carga = Column(Text, nullable=True)        # URLs separadas por coma (max 3)
+    ayudantes = Column(Integer, nullable=True)       # 0, 1 o 2
+    piso_origen = Column(Integer, nullable=True)
+    piso_destino = Column(Integer, nullable=True)
+    ascensor_origen = Column(String, nullable=True)  # "si"/"no"
+    ascensor_destino = Column(String, nullable=True)
+    recibe_nombre = Column(String, nullable=True)    # quien recibe en el destino
+    recibe_telefono = Column(String, nullable=True)
+    # prueba de entrega (la toma el transportador al terminar)
+    entrega_foto = Column(String, nullable=True)
+    entrega_recibio = Column(String, nullable=True)
+    entregada_en = Column(DateTime, nullable=True)
 
 class Expreso(Base):
     """Viaje INTERMUNICIPAL (ciudad a ciudad), tipo expreso por cupos. Lo publica el
@@ -494,7 +509,12 @@ def crear_tablas():
                     "llego_recogida TIMESTAMP", "estrellas_conductor INTEGER", "estrellas_cliente INTEGER",
                     "comentario_conductor VARCHAR", "comentario_cliente VARCHAR",
                     "aceptada_en TIMESTAMP", "cancelada_en TIMESTAMP",
-                    "cancelada_por VARCHAR", "motivo_cancelacion VARCHAR"):
+                    "cancelada_por VARCHAR", "motivo_cancelacion VARCHAR",
+                    "tipo_carga VARCHAR", "tamano_carga VARCHAR", "fotos_carga VARCHAR",
+                    "ayudantes INTEGER", "piso_origen INTEGER", "piso_destino INTEGER",
+                    "ascensor_origen VARCHAR", "ascensor_destino VARCHAR",
+                    "recibe_nombre VARCHAR", "recibe_telefono VARCHAR",
+                    "entrega_foto VARCHAR", "entrega_recibio VARCHAR", "entregada_en TIMESTAMP"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))

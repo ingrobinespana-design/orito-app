@@ -1587,6 +1587,14 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "cancelada_por": c.cancelada_por,
         "cancelada_en": c.cancelada_en,
         "motivo_cancelacion": c.motivo_cancelacion,
+        # acarreo
+        "tipo_carga": c.tipo_carga, "tamano_carga": c.tamano_carga,
+        "fotos_carga": [u for u in (c.fotos_carga or "").split(",") if u],
+        "ayudantes": c.ayudantes, "piso_origen": c.piso_origen, "piso_destino": c.piso_destino,
+        "ascensor_origen": c.ascensor_origen, "ascensor_destino": c.ascensor_destino,
+        "recibe_nombre": c.recibe_nombre, "recibe_telefono": c.recibe_telefono,
+        "entrega_foto": c.entrega_foto, "entrega_recibio": c.entrega_recibio,
+        "entregada_en": c.entregada_en,
     }
 
 def con_conductor(carreras, db: Session):
@@ -2368,6 +2376,78 @@ def eliminar_lugar(lugar_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True}
 
+TIPOS_CARGA = ("trasteo", "mercancia", "materiales", "objeto", "otro")
+TAMANOS_CARGA = ("pequena", "mediana", "grande", "muy_grande")
+
+def _datos_acarreo(c: Carrera, tipo, tamano, fotos, ayudantes, piso_o, piso_d, asc_o, asc_d,
+                   recibe_nombre, recibe_tel):
+    """Valida y guarda los detalles del acarreo. Lo raro se ignora (no tumba el pedido)."""
+    c.tipo_carga = tipo if tipo in TIPOS_CARGA else None
+    c.tamano_carga = tamano if tamano in TAMANOS_CARGA else None
+    # solo fotos subidas por nosotros a Cloudinary, maximo 3
+    urls = [u.strip() for u in (fotos or "").split(",") if u.strip().startswith("https://res.cloudinary.com/")]
+    c.fotos_carga = ",".join(urls[:3]) or None
+    c.ayudantes = max(0, min(int(ayudantes), 3)) if ayudantes is not None else None
+    c.piso_origen = max(0, min(int(piso_o), 60)) if piso_o is not None else None
+    c.piso_destino = max(0, min(int(piso_d), 60)) if piso_d is not None else None
+    c.ascensor_origen = asc_o if asc_o in ("si", "no") else None
+    c.ascensor_destino = asc_d if asc_d in ("si", "no") else None
+    c.recibe_nombre = (recibe_nombre or "").strip()[:80] or None
+    c.recibe_telefono = _digitos(recibe_tel)[:15] or None
+
+@app.post("/cargas/foto")
+async def subir_foto_carga(file: UploadFile = File(...), actual: Usuario = Depends(usuario_actual)):
+    """Foto de lo que se va a mover, ANTES de pedir el acarreo. Devuelve la URL que
+    luego se manda en fotos_carga."""
+    contenido = await file.read()
+    if len(contenido) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="La foto es muy pesada (máx 8 MB)")
+    r = cloudinary.uploader.upload(contenido, folder="orito-app/cargas",
+                                   public_id=f"carga_{actual.id}_{secrets.token_hex(6)}")
+    return {"url": r["secure_url"]}
+
+@app.post("/carreras/{carrera_id}/entrega")
+async def registrar_entrega(carrera_id: int, tareas: BackgroundTasks, recibio: str,
+                            file: UploadFile = File(None), db: Session = Depends(get_db),
+                            actual: Usuario = Depends(usuario_actual)):
+    """Prueba de entrega del acarreo: quien recibio + foto (opcional). La pone el
+    transportador al terminar y al cliente le llega el aviso."""
+    c = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    if actual.id != c.conductor_id and actual.rol != "admin":
+        raise HTTPException(status_code=403, detail="Esta carrera no es tuya")
+    nombre = (recibio or "").strip()[:80]
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Escribe el nombre de quien recibió")
+    if file is not None:
+        contenido = await file.read()
+        if contenido:
+            r = cloudinary.uploader.upload(contenido, folder="orito-app/entregas",
+                                           public_id=f"entrega_{carrera_id}_{secrets.token_hex(4)}")
+            c.entrega_foto = r["secure_url"]
+    c.entrega_recibio = nombre
+    c.entregada_en = datetime.now()
+    db.commit()
+    tareas.add_task(avisar_entrega, c.id)
+    return {"ok": True, "entrega_foto": c.entrega_foto, "entrega_recibio": c.entrega_recibio}
+
+@nunca_falla
+def avisar_entrega(carrera_id: int):
+    db = SessionLocal()
+    mensajes = []
+    try:
+        c = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        cli = db.query(Usuario).filter(Usuario.id == c.cliente_id).first() if c else None
+        if cli and cli.push_token:
+            extra = " Mira la foto de la entrega en la app." if c.entrega_foto else ""
+            mensajes = [push.mensaje(cli.push_token, "📦 Tu acarreo fue entregado",
+                                     f"Lo recibió {c.entrega_recibio} en {c.destino}.{extra}",
+                                     {"tipo": "acarreo_entregado", "carrera_id": c.id})]
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
 @app.post("/carreras")
 def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: BackgroundTasks,
                   origen_detalle: str = None, destino_detalle: str = None,
@@ -2375,7 +2455,12 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
                   origen_lat: float = None, origen_lon: float = None,
                   destino_lat: float = None, destino_lon: float = None,
                   tarifa_ofrecida: int = None, municipio: str = None,
-                  recogida: str = None, db: Session = Depends(get_db),
+                  recogida: str = None,
+                  tipo_carga: str = None, tamano_carga: str = None, fotos_carga: str = None,
+                  ayudantes: int = None, piso_origen: int = None, piso_destino: int = None,
+                  ascensor_origen: str = None, ascensor_destino: str = None,
+                  recibe_nombre: str = None, recibe_telefono: str = None,
+                  db: Session = Depends(get_db),
                   actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, cliente_id)   # solo pides carreras para ti mismo
     cliente = db.query(Usuario).filter(Usuario.id == cliente_id).first()
@@ -2471,6 +2556,9 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         zona=zona_de_la_carrera(origen, destino, municipio, db),
         recogida=recogida_dt,
     )
+    if vehiculo_pedido in VEHICULOS_CARGA:
+        _datos_acarreo(carrera, tipo_carga, tamano_carga, fotos_carga, ayudantes, piso_origen,
+                       piso_destino, ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono)
     db.add(carrera)
     # ya no se graban lugares: origen y destino se fijan siempre por GPS/mapa,
     # asi que no hay lista pregrabada que alimentar (decision de precision)
