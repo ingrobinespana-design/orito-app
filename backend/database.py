@@ -217,6 +217,11 @@ CONFIG_INICIAL = {
     # fecha ISO en que la promo se apaga SOLA (red de seguridad: aunque nadie la
     # apague, al pasar esta fecha todo vuelve a la normalidad). Vacio = sin limite.
     "promo_hasta": "",
+    # RUTA EXCLUSIVA del dueño (fase de arranque): las carreras de/al aeropuerto de
+    # Cali le llegan SOLO a este conductor, y sus demas solicitudes se limitan a las
+    # que esten a <= exclusivo_radio_km de el. Telefono vacio = regla apagada.
+    "exclusivo_aeropuerto_tel": "3117313685",
+    "exclusivo_radio_km": "1.5",
 }
 
 class CodigoVerificacion(Base):

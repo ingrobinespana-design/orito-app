@@ -248,6 +248,35 @@ def configurar_promo(clave: str, activa: str = None, pct: int = None,
             "promo_texto": leer_config("promo_texto", db, ""),
             "promo_hasta": leer_config("promo_hasta", db, "")}
 
+@app.put("/exclusivo")
+def configurar_exclusivo(clave: str, tel: str = None, radio_km: float = None,
+                         db: Session = Depends(get_db)):
+    """Ruta exclusiva del dueño (aeropuerto + radio). Con RESPALDO_CLAVE.
+    tel vacio ('') = apagar la regla. Sin parametros = solo consulta el estado."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    def _set(k, v):
+        fila = db.query(Config).filter(Config.clave == k).first()
+        if fila:
+            fila.valor = str(v)
+        else:
+            db.add(Config(clave=k, valor=str(v)))
+    if tel is not None:
+        _set("exclusivo_aeropuerto_tel", _digitos(tel))
+    if radio_km is not None:
+        if radio_km < 0 or radio_km > 50:
+            raise HTTPException(status_code=400, detail="radio_km entre 0 y 50 (0 = sin limite)")
+        _set("exclusivo_radio_km", radio_km)
+    db.commit()
+    _cache_excl["t"] = 0.0   # que tome el cambio ya, sin esperar el cache
+    t, r, tipo = _cfg_exclusivo()
+    dueno = next((u for u in db.query(Usuario).filter(Usuario.rol == "conductor").all()
+                  if t and _digitos(u.telefono)[-10:] == t), None)
+    return {"activa": bool(t), "telefono_config": leer_config("exclusivo_aeropuerto_tel", db, ""),
+            "conductor": dueno.nombre if dueno else None, "tipo_vehiculo": tipo,
+            "municipio": dueno.municipio if dueno else None, "radio_km": r}
+
 @app.get("/diag-push")
 def diag_push(clave: str = None, telefono: str = None,
               x_admin_token: str = Header(None), db: Session = Depends(get_db)):
@@ -1571,7 +1600,8 @@ def obtener_config(db: Session = Depends(get_db), admin: Usuario = Depends(solo_
 def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db),
                       admin: Usuario = Depends(solo_admin)):
     permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url", "whatsapp_soporte",
-                  "promo_activa", "promo_pct", "promo_ciudad", "promo_texto", "promo_hasta")
+                  "promo_activa", "promo_pct", "promo_ciudad", "promo_texto", "promo_hasta",
+                  "exclusivo_aeropuerto_tel", "exclusivo_radio_km")
     if clave not in permitidas:
         raise HTTPException(status_code=400, detail="Ajuste no permitido")
     if clave == "cobro_activo" and valor not in ("si", "no"):
@@ -2142,14 +2172,76 @@ def zona_de_la_carrera(origen: str, destino: str, municipio: str, db: Session):
             return "rural"
     return "urbano"
 
-def le_sirve_la_carrera(conductor: Usuario, carrera: Carrera):
+# ---- RUTA EXCLUSIVA DEL DUEÑO (fase de arranque) ----
+# Las carreras de/al aeropuerto de Cali (Alfonso Bonilla Aragon, en Palmira) le
+# llegan SOLO a un conductor (el dueño), y sus otras solicitudes se limitan a las
+# que estan cerca de el. Se controla por config: telefono vacio = apagado.
+AEROPUERTO_CALI = (3.5432, -76.3816)
+AEROPUERTO_RADIO_KM = 3.0
+_cache_excl = {"t": 0.0, "val": ("", 0.0, None)}
+
+def _digitos(s):
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+def _cfg_exclusivo():
+    """(telefono del dueño, radio km para sus demas carreras, su tipo de vehiculo).
+    Cache de 30 s: esto se consulta por cada carrera y cada conductor."""
+    if _time.time() - _cache_excl["t"] < 30:
+        return _cache_excl["val"]
+    db = SessionLocal()
+    try:
+        tel = _digitos(leer_config("exclusivo_aeropuerto_tel", db, ""))[-10:]
+        try:
+            radio = float(leer_config("exclusivo_radio_km", db, "0") or 0)
+        except Exception:
+            radio = 0.0
+        dueno = None
+        if tel:
+            dueno = next((u for u in db.query(Usuario).filter(Usuario.rol == "conductor").all()
+                          if _digitos(u.telefono)[-10:] == tel), None)
+        val = (tel if dueno else "", radio, dueno.tipo_vehiculo if dueno else None)
+    except Exception:
+        val = ("", 0.0, None)
+    finally:
+        db.close()
+    _cache_excl.update(t=_time.time(), val=val)
+    return val
+
+def es_carrera_aeropuerto(c: Carrera):
+    """Origen o destino a <= 3 km del aeropuerto, o (solo en Cali) el texto dice
+    'aeropuerto' — en otros pueblos tambien hay aeropuerto y esos no cuentan."""
+    for lat, lon in ((c.origen_lat, c.origen_lon), (c.destino_lat, c.destino_lon)):
+        if lat is not None and lon is not None:
+            d = tarifas.distancia_km(lat, lon, *AEROPUERTO_CALI)
+            if d is not None and d <= AEROPUERTO_RADIO_KM:
+                return True
+    if c.municipio == "Cali":
+        import unicodedata
+        txt = unicodedata.normalize("NFD", f"{c.origen or ''} {c.destino or ''}").encode("ascii", "ignore").decode().lower()
+        return "aeropuerto" in txt or "bonilla aragon" in txt
+    return False
+
+def le_sirve_la_carrera(conductor: Usuario, carrera: Carrera, con_radio: bool = True):
     """Mismo municipio y el vehiculo exacto que pidio el cliente.
-    Si pidio carro es porque una moto no le sirve: no se le manda una moto."""
+    Si pidio carro es porque una moto no le sirve: no se le manda una moto.
+    + Ruta exclusiva del dueño: aeropuerto solo para el; y a el (si con_radio) sus
+    demas solicitudes solo si la recogida esta cerca. Al aceptar/contraofertar no
+    se exige el radio (pudo moverse un poco desde que la vio)."""
+    tel_excl, radio, tipo_dueno = _cfg_exclusivo()
+    es_dueno = bool(tel_excl) and _digitos(conductor.telefono)[-10:] == tel_excl
+    if tel_excl and carrera.vehiculo_pedido == tipo_dueno and es_carrera_aeropuerto(carrera):
+        return es_dueno
     if conductor.municipio != carrera.municipio:
         return False
     if not conductor.tipo_vehiculo or not carrera.vehiculo_pedido:
         return False
-    return conductor.tipo_vehiculo == carrera.vehiculo_pedido
+    if conductor.tipo_vehiculo != carrera.vehiculo_pedido:
+        return False
+    if es_dueno and con_radio and radio > 0:
+        km = km_conductor_a_recogida(conductor, carrera, datetime.now())
+        if km is not None and km > radio:
+            return False   # sin GPS reciente no se le oculta nada
+    return True
 
 @app.get("/lugares")
 def obtener_lugares(buscar: str = None, zona: str = None, municipio: str = None,
@@ -2389,7 +2481,7 @@ def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks,
     if en_curso:
         raise HTTPException(status_code=409, detail="Ya tienes una carrera en curso. Termínala antes de aceptar otra.")
     pedida = db.query(Carrera).filter(Carrera.id == carrera_id).first()
-    if pedida and not le_sirve_la_carrera(conductor, pedida):
+    if pedida and not le_sirve_la_carrera(conductor, pedida, con_radio=False):
         raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
     # el conductor toma la carrera al precio que ofrecio el cliente (o sin precio
     # si no ofrecio nada). Update condicional: si dos aceptan a la vez, solo uno
@@ -2455,7 +2547,7 @@ def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: Backgr
         raise HTTPException(status_code=404, detail="Carrera no encontrada")
     if carrera.estado != "buscando":
         raise HTTPException(status_code=409, detail="Esa carrera ya no esta disponible")
-    if not le_sirve_la_carrera(conductor, carrera):
+    if not le_sirve_la_carrera(conductor, carrera, con_radio=False):
         raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
     # una sola oferta por conductor: si ya habia, se actualiza el monto
     oferta = db.query(Oferta).filter(
