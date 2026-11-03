@@ -209,6 +209,27 @@ def actualizar_tarifa_municipio(nombre: str, clave: str, valor_km: int = None,
     return {"ok": True, "municipio": m.nombre, "tarifa_base": m.tarifa_base or 0,
             "valor_km": m.valor_km or 0, "tarifa_minima": m.tarifa_minima or 0}
 
+@app.put("/tarifa-vehiculo")
+def tarifa_por_vehiculo(clave: str, municipio: str, vehiculo: str, valor_km: int,
+                        minima: int = 0, base: int = 0, db: Session = Depends(get_db)):
+    """Crea o actualiza la tarifa de UN vehiculo en una ciudad (ej. moto en Cali),
+    con RESPALDO_CLAVE. Tiene prioridad sobre la tarifa general de la ciudad."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    if not db.query(Municipio).filter(Municipio.nombre == municipio).first():
+        raise HTTPException(status_code=404, detail="Municipio no encontrado")
+    if min(valor_km, minima, base) < 0:
+        raise HTTPException(status_code=400, detail="Los valores no pueden ser negativos")
+    t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
+    if not t:
+        t = Tarifa(municipio=municipio, vehiculo=vehiculo)
+        db.add(t)
+    t.base, t.valor_km, t.minima = base, valor_km, minima
+    db.commit()
+    return {"ok": True, "municipio": municipio, "vehiculo": vehiculo,
+            "base": t.base, "valor_km": t.valor_km, "minima": t.minima}
+
 @app.put("/promo")
 def configurar_promo(clave: str, activa: str = None, pct: int = None,
                      ciudad: str = None, texto: str = None, dias: int = None,
@@ -751,6 +772,10 @@ def municipio_dict(m: Municipio, db: Session):
         "centro_lat": m.centro_lat,
         "centro_lon": m.centro_lon,
         "promo": promo_de(m.nombre, db),
+        # tarifa propia por vehiculo (ej. moto mas barata que carro). Si un vehiculo
+        # no aparece aqui, usa la tarifa general de la ciudad (valor_km / minima)
+        "tarifas_vehiculo": {t.vehiculo: {"base": t.base or 0, "valor_km": t.valor_km or 0, "minima": t.minima or 0}
+                             for t in db.query(Tarifa).filter(Tarifa.municipio == m.nombre).all() if t.valor_km},
     }
 
 @app.get("/ubicacion/municipio")
