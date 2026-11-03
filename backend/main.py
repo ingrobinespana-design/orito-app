@@ -635,6 +635,14 @@ def generar_codigo_referido(u):
     base = "".join(ch for ch in (u.nombre or "") if ch.isalpha())[:4].upper() or "TKN"
     return f"{base}{u.id}"
 
+# Codigos que se publican en los grupos de WhatsApp de la comunidad. Mayusculas.
+CODIGOS_COMUNIDAD = {
+    "CALI20": {"rol": "cliente", "pct": 20, "dias": 7,
+               "mensaje": "🎁 ¡Bienvenido! Tienes 20% de descuento en tus carreras durante 7 días."},
+    "REDCALI": {"rol": "conductor", "fundador": True,
+                "mensaje": "🏅 ¡Eres Conductor Fundador! Usas Tukán gratis durante todo el lanzamiento."},
+}
+
 @app.post("/registro")
 def registrar_usuario(request: Request, nombre: str, telefono: str, password: str, municipio: str = "Orito",
                       tipo_vehiculo: str = None, placa: str = None, vehiculo: str = None,
@@ -667,16 +675,32 @@ def registrar_usuario(request: Request, nombre: str, telefono: str, password: st
     db.refresh(usuario)
     # referidos: codigo propio + registrar quien lo invito (si vino un codigo valido)
     usuario.codigo_referido = generar_codigo_referido(usuario)
+    beneficio = None
     if codigo:
-        ref = db.query(Usuario).filter(Usuario.codigo_referido == codigo.strip().upper()).first()
-        if ref and ref.id != usuario.id:
-            usuario.referido_por = ref.codigo_referido
+        cod = codigo.strip().upper()
+        if cod in CODIGOS_COMUNIDAD:
+            # codigo de un grupo de la comunidad: se registra de donde llego y,
+            # si le corresponde por su rol, se le da el beneficio
+            usuario.referido_por = cod
+            regla = CODIGOS_COMUNIDAD[cod]
+            if regla["rol"] == usuario.rol:
+                if regla.get("pct"):
+                    usuario.promo_bienvenida_pct = regla["pct"]
+                    usuario.promo_bienvenida_hasta = datetime.now() + timedelta(days=regla["dias"])
+                if regla.get("fundador"):
+                    usuario.fundador = "si"
+                beneficio = regla["mensaje"]
+        else:
+            ref = db.query(Usuario).filter(Usuario.codigo_referido == cod).first()
+            if ref and ref.id != usuario.id:
+                usuario.referido_por = ref.codigo_referido
     db.commit()
     return {"id": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono,
             "rol": usuario.rol, "restaurante_id": usuario.restaurante_id,
             "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
             "placa": usuario.placa, "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
-            "codigo_referido": usuario.codigo_referido, "token": usuario.token}
+            "codigo_referido": usuario.codigo_referido, "token": usuario.token,
+            "fundador": usuario.fundador, "beneficio": beneficio}
 
 def vehiculos_de(municipio: str, db: Session):
     """Que vehiculos se permiten en ese pueblo. Lista vacia = municipio desconocido."""
@@ -815,6 +839,16 @@ def promo_de(municipio: str, db: Session):
     except Exception:
         return apagada
 
+def promo_para(municipio: str, usuario, db: Session):
+    """La promo que le toca a ESTE cliente: la mayor entre la general de la ciudad y
+    su bienvenida personal (codigo CALI20). No se suman."""
+    general = promo_de(municipio, db)
+    if usuario is not None and usuario.promo_bienvenida_pct and usuario.promo_bienvenida_hasta \
+            and usuario.promo_bienvenida_hasta > datetime.now() \
+            and usuario.promo_bienvenida_pct > (general["pct"] if general["activa"] else 0):
+        return {"activa": True, "pct": int(usuario.promo_bienvenida_pct), "texto": "Bienvenida comunidad"}
+    return general
+
 def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     """Sugerencia segun el pueblo, el vehiculo y los km. Solo orienta la oferta
     del cliente; el precio de verdad lo negocian las partes."""
@@ -839,7 +873,8 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
 
 @app.get("/tarifa")
 def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon: float,
-                   destino_lat: float, destino_lon: float, db: Session = Depends(get_db)):
+                   destino_lat: float, destino_lon: float, usuario_id: int = None,
+                   db: Session = Depends(get_db)):
     """Lo que la app muestra para orientar la oferta: 'son ~3.2 km, en carro la
     gente suele pagar ~$8.000'. El cliente ofrece lo que quiera desde ahi."""
     m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
@@ -847,7 +882,8 @@ def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon:
         raise HTTPException(status_code=404, detail="Municipio no encontrado")
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     sug = tarifa_sugerida(municipio, vehiculo, km, db)
-    prom = promo_de(municipio, db)
+    cliente = db.query(Usuario).filter(Usuario.id == usuario_id).first() if usuario_id else None
+    prom = promo_para(municipio, cliente, db)
     # el descuento SOLO aplica a carreras de pasajeros (las de carga no llevan sugerido)
     aplica = bool(prom["activa"]) and sug is not None and vehiculo not in VEHICULOS_CARGA
     sug_promo = _con_descuento(sug, prom["pct"]) if aplica else None
@@ -1128,7 +1164,7 @@ def login(telefono: str, password: str, db: Session = Depends(get_db)):
             "restaurante_id": usuario.restaurante_id, "placa": usuario.placa,
             "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
             "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
-            "token": usuario.token}
+            "token": usuario.token, "fundador": usuario.fundador}
 
 # ===================== FASE 2 — Login por codigo (OTP) =====================
 # ADITIVO e INERTE. No toca /login ni /registro. Si no hay proveedor de
@@ -1148,7 +1184,7 @@ def _dict_sesion(u: Usuario):
     return {"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
             "restaurante_id": u.restaurante_id, "placa": u.placa, "vehiculo": u.vehiculo,
             "disponible": u.disponible, "municipio": u.municipio,
-            "tipo_vehiculo": u.tipo_vehiculo, "token": u.token}
+            "tipo_vehiculo": u.tipo_vehiculo, "token": u.token, "fundador": u.fundador}
 
 def _otp_norm(telefono: str):
     return "".join(ch for ch in (telefono or "") if ch.isdigit() or ch == "+")
@@ -2278,7 +2314,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)
     # promo de lanzamiento (solo carreras de pasajeros): el minimo sugerido que se
     # guarda ya lleva el descuento, asi el cliente y el conductor ven lo mismo.
-    _prom = promo_de(municipio, db)
+    _prom = promo_para(municipio, cliente, db)
     if _prom["activa"] and sugerida is not None and vehiculo_pedido not in VEHICULOS_CARGA:
         sugerida = _con_descuento(sugerida, _prom["pct"])
 
@@ -3018,6 +3054,9 @@ def estadisticas_globales(db: Session = Depends(get_db), admin: Usuario = Depend
         "visitas_total": cuenta("visita_pagina", datetime.min),
         "descargas_hoy": cuenta("descarga_apk", hoy),
         "descargas_total": cuenta("descarga_apk", datetime.min),
+        # cuantos se registraron con cada codigo de grupo (mide si los grupos funcionan)
+        "comunidad": {cod: db.query(Usuario).filter(Usuario.referido_por == cod).count()
+                      for cod in CODIGOS_COMUNIDAD},
     }
 
 @app.get("/carreras")

@@ -82,6 +82,11 @@ class Usuario(Base):
     # referidos: codigo propio para invitar + codigo de quien lo invito
     codigo_referido = Column(String, nullable=True, index=True)
     referido_por = Column(String, nullable=True)
+    # codigos de comunidad (grupos de WhatsApp): CALI20 = pasajero con % por unos
+    # dias desde que se registra; REDCALI = conductor fundador
+    promo_bienvenida_hasta = Column(DateTime, nullable=True)
+    promo_bienvenida_pct = Column(Integer, nullable=True)
+    fundador = Column(String, default="no")
 
 class LugarGuardado(Base):
     __tablename__ = "lugares_guardados"
@@ -455,7 +460,9 @@ def crear_tablas():
                     "foto_licencia VARCHAR", "foto_cedula VARCHAR", "foto_soat VARCHAR",
                     "veh_color VARCHAR", "veh_modelo VARCHAR",
                     "verificado VARCHAR DEFAULT 'no'",
-                    "codigo_referido VARCHAR", "referido_por VARCHAR"):
+                    "codigo_referido VARCHAR", "referido_por VARCHAR",
+                    "promo_bienvenida_hasta TIMESTAMP", "promo_bienvenida_pct INTEGER",
+                    "fundador VARCHAR DEFAULT 'no'"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
