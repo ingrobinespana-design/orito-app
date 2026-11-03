@@ -1492,6 +1492,10 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "conductor_calificacion": conductor.calificacion if conductor else None,
         "fecha": c.fecha,
         "token_viaje": _token_viaje(c.id),   # para el link publico de seguimiento en vivo
+        "aceptada_en": c.aceptada_en,
+        "segundos_para_cancelar": _segundos_para_cancelar(c),   # None = no aplica; 0 = ya no
+        "cancelada_por": c.cancelada_por,
+        "motivo_cancelacion": c.motivo_cancelacion,
     }
 
 def con_conductor(carreras, db: Session):
@@ -2354,7 +2358,7 @@ def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks,
     # el conductor toma la carrera al precio que ofrecio el cliente (o sin precio
     # si no ofrecio nada). Update condicional: si dos aceptan a la vez, solo uno
     # encuentra la carrera en "buscando" y el otro recibe el 409.
-    cambios = {"conductor_id": conductor_id, "estado": "aceptada"}
+    cambios = {"conductor_id": conductor_id, "estado": "aceptada", "aceptada_en": datetime.now()}
     if pedida and pedida.tarifa_ofrecida is not None:
         cambios["tarifa"] = pedida.tarifa_ofrecida
     tomada = db.query(Carrera).filter(
@@ -2463,7 +2467,8 @@ def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db:
         raise HTTPException(status_code=409, detail="Ese transportador ya está en otra carrera. Elige otra oferta o espera a que se desocupe.")
     tomada = db.query(Carrera).filter(
         Carrera.id == carrera_id, Carrera.estado == "buscando"
-    ).update({"conductor_id": oferta.conductor_id, "estado": "aceptada", "tarifa": oferta.monto},
+    ).update({"conductor_id": oferta.conductor_id, "estado": "aceptada", "tarifa": oferta.monto,
+              "aceptada_en": datetime.now()},
              synchronize_session=False)
     db.commit()
     if tomada == 0:
@@ -2836,9 +2841,19 @@ def reprogramar_expreso(expreso_id: int, salida: str = None, db: Session = Depen
     db.refresh(e)
     return expreso_dict(e)
 
+VENTANA_CANCELAR_SEG = 90   # el cliente cancela gratis hasta 1,5 min despues de que lo aceptan
+
+def _segundos_para_cancelar(c: Carrera):
+    """Cuanto le queda al cliente para cancelar. None = no aplica (aun buscando,
+    o carrera vieja sin hora de aceptacion); 0 = ya se le paso el tiempo."""
+    if c.estado not in ("aceptada", "en_sitio") or not c.aceptada_en:
+        return None
+    pasados = (datetime.now() - c.aceptada_en).total_seconds()
+    return max(0, int(VENTANA_CANCELAR_SEG - pasados))
+
 @app.put("/carreras/{carrera_id}/estado")
 def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTasks,
-                              tarifa: int = None, db: Session = Depends(get_db),
+                              tarifa: int = None, motivo: str = None, db: Session = Depends(get_db),
                               actual: Usuario = Depends(usuario_actual)):
     validos = ["buscando", "aceptada", "en_sitio", "en_camino", "finalizada", "cancelada"]
     if estado not in validos:
@@ -2851,6 +2866,15 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTa
     # con el pasajero a bordo ya no se cancela: se finaliza o se resuelve hablando
     if estado == "cancelada" and carrera.estado == "en_camino":
         raise HTTPException(status_code=400, detail="El viaje ya esta en curso y no se puede cancelar. Si hay un problema, llama al conductor.")
+    if estado == "cancelada":
+        quien = "admin" if actual.rol == "admin" else ("cliente" if actual.id == carrera.cliente_id else "conductor")
+        # el cliente tiene 1,5 min para arrepentirse despues de que lo aceptan; pasado
+        # eso el conductor ya va en camino y cancelar le cuesta. Se resuelve hablando.
+        if quien == "cliente" and _segundos_para_cancelar(carrera) == 0:
+            raise HTTPException(status_code=409, detail="FUERA_DE_TIEMPO: Ya pasó el tiempo para cancelar (1,5 min). El conductor va en camino; comunícate con él o con soporte. Puede aplicar una penalidad.")
+        carrera.cancelada_en = datetime.now()
+        carrera.cancelada_por = quien
+        carrera.motivo_cancelacion = (motivo or "").strip()[:300] or None
     # llegada al punto de recogida: se guarda el momento y se avisa al cliente
     if estado == "en_sitio" and carrera.llego_recogida is None:
         carrera.llego_recogida = datetime.now()
@@ -2905,6 +2929,29 @@ def _recalcular_calificacion(usuario_id, campo, db):
         u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
         if u:
             u.calificacion = round(sum(vals) / len(vals), 2)
+
+@app.get("/conductores/{conductor_id}/reputacion")
+def reputacion_conductor(conductor_id: int, db: Session = Depends(get_db)):
+    """Lo que el pasajero ve antes de subirse y lo que el admin usa para tomar
+    accion: promedio, comentarios recientes (sin nombre del cliente) y cancelaciones."""
+    u = db.query(Usuario).filter(Usuario.id == conductor_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    suyas = db.query(Carrera).filter(Carrera.conductor_id == conductor_id).order_by(Carrera.fecha.desc()).all()
+    calificadas = [c for c in suyas if c.estrellas_conductor is not None]
+    comentarios = [{"estrellas": c.estrellas_conductor, "comentario": c.comentario_conductor,
+                    "fecha": c.fecha} for c in calificadas if c.comentario_conductor][:15]
+    dist = {i: sum(1 for c in calificadas if c.estrellas_conductor == i) for i in range(1, 6)}
+    return {
+        "conductor_id": u.id, "nombre": u.nombre,
+        "calificacion": u.calificacion,
+        "total_calificaciones": len(calificadas),
+        "distribucion": dist,
+        "finalizadas": sum(1 for c in suyas if c.estado == "finalizada"),
+        "canceladas_por_conductor": sum(1 for c in suyas if c.estado == "cancelada" and c.cancelada_por == "conductor"),
+        "canceladas_por_cliente": sum(1 for c in suyas if c.estado == "cancelada" and c.cancelada_por == "cliente"),
+        "comentarios": comentarios,
+    }
 
 @app.get("/carreras/cliente/{cliente_id}")
 def carreras_del_cliente(cliente_id: int, db: Session = Depends(get_db)):

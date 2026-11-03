@@ -268,6 +268,11 @@ class Carrera(Base):
     comentario_conductor = Column(Text, nullable=True)     # comentario del CLIENTE sobre el conductor
     comentario_cliente = Column(Text, nullable=True)       # comentario del CONDUCTOR sobre el cliente
     fecha = Column(DateTime, default=datetime.now)
+    # cancelacion: el cliente solo puede cancelar 90 s despues de que se la aceptan
+    aceptada_en = Column(DateTime, nullable=True)
+    cancelada_en = Column(DateTime, nullable=True)
+    cancelada_por = Column(String, nullable=True)          # "cliente" / "conductor" / "admin"
+    motivo_cancelacion = Column(Text, nullable=True)
 
 class Expreso(Base):
     """Viaje INTERMUNICIPAL (ciudad a ciudad), tipo expreso por cupos. Lo publica el
@@ -475,7 +480,9 @@ def crear_tablas():
                     "destino_lat FLOAT", "destino_lon FLOAT", "distancia_km FLOAT",
                     "tarifa_sugerida INTEGER", "tarifa_ofrecida INTEGER", "recogida TIMESTAMP",
                     "llego_recogida TIMESTAMP", "estrellas_conductor INTEGER", "estrellas_cliente INTEGER",
-                    "comentario_conductor VARCHAR", "comentario_cliente VARCHAR"):
+                    "comentario_conductor VARCHAR", "comentario_cliente VARCHAR",
+                    "aceptada_en TIMESTAMP", "cancelada_en TIMESTAMP",
+                    "cancelada_por VARCHAR", "motivo_cancelacion VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE carreras ADD COLUMN {columna}"))
