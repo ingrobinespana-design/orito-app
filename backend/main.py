@@ -1560,6 +1560,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "aceptada_en": c.aceptada_en,
         "segundos_para_cancelar": _segundos_para_cancelar(c),   # None = no aplica; 0 = ya no
         "cancelada_por": c.cancelada_por,
+        "cancelada_en": c.cancelada_en,
         "motivo_cancelacion": c.motivo_cancelacion,
     }
 
