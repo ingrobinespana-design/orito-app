@@ -1864,6 +1864,30 @@ def avisar_conductor_llego(carrera_id: int):
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
 
+@nunca_falla
+def avisar_carrera_cancelada(carrera_id: int):
+    """Avisa a la OTRA parte que la carrera se cancelo, con el motivo. Si cancela el
+    pasajero -> al conductor; si cancela el conductor -> al pasajero; admin -> a ambos."""
+    db = SessionLocal()
+    mensajes = []
+    try:
+        c = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        if not c or c.estado != "cancelada":
+            return
+        motivo = c.motivo_cancelacion or "Sin motivo"
+        datos = {"tipo": "carrera_cancelada", "carrera_id": c.id}
+        conductor = db.query(Usuario).filter(Usuario.id == c.conductor_id).first() if c.conductor_id else None
+        cliente = db.query(Usuario).filter(Usuario.id == c.cliente_id).first()
+        if c.cancelada_por in ("cliente", "admin") and conductor and conductor.push_token:
+            mensajes.append(push.mensaje(conductor.push_token, "❌ El pasajero canceló la carrera",
+                                         f"{c.origen} → {c.destino}. Motivo: {motivo}", datos))
+        if c.cancelada_por in ("conductor", "admin") and cliente and cliente.push_token:
+            mensajes.append(push.mensaje(cliente.push_token, "❌ Tu conductor canceló la carrera",
+                                         f"Motivo: {motivo}. Puedes volver a pedir tu carrera.", datos))
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
+
 @app.put("/usuarios/{usuario_id}/push-token")
 def guardar_push_token(usuario_id: int, token: str, db: Session = Depends(get_db),
                        actual: Usuario = Depends(usuario_actual)):
@@ -3003,6 +3027,9 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTa
         carrera.cancelada_en = datetime.now()
         carrera.cancelada_por = quien
         carrera.motivo_cancelacion = (motivo or "").strip()[:300] or None
+        # si ya habia conductor asignado, la otra parte se entera al instante
+        if carrera.conductor_id:
+            tareas.add_task(avisar_carrera_cancelada, carrera.id)
     # llegada al punto de recogida: se guarda el momento y se avisa al cliente
     if estado == "en_sitio" and carrera.llego_recogida is None:
         carrera.llego_recogida = datetime.now()
