@@ -543,6 +543,11 @@ def pagina_terminos():
 def pagina_privacidad():
     return legal.privacidad_html()
 
+@app.get("/eliminar-cuenta", response_class=HTMLResponse)
+def pagina_eliminar_cuenta():
+    """Pagina publica de borrado de cuenta (requisito de Google Play)."""
+    return legal.eliminar_cuenta_html()
+
 @app.get("/viaje", response_class=HTMLResponse)
 def viaje_compartido(con: str = "", pla: str = "", tel: str = "", veh: str = "",
                      o: str = "", d: str = "", dlat: float = None, dlon: float = None,
@@ -1225,7 +1230,7 @@ def eliminar_mi_cuenta(usuario_id: int, db: Session = Depends(get_db),
         u.vehiculo = None
         u.veh_color = None
         u.veh_modelo = None
-        for campo in ("foto_conductor", "foto_vehiculo", "foto_tarjeta", "foto_licencia", "foto_cedula", "foto_soat"):
+        for campo in ("foto_conductor", "foto_vehiculo", "foto_tarjeta", "foto_licencia", "foto_cedula", "foto_soat", "foto_perfil"):
             if hasattr(u, campo):
                 setattr(u, campo, None)
         u.activo = "no"

@@ -14,7 +14,7 @@ CORREO = "integrarservices@gmail.com"
 WHATSAPP = "+57 315 600 9728"
 WHATSAPP_LINK = "https://wa.me/573156009728"
 LUGAR = "Orito, Putumayo, Colombia"
-ACTUALIZADO = "17 de septiembre de 2026"
+ACTUALIZADO = "4 de noviembre de 2026"
 
 
 def _pagina(titulo, cuerpo):
@@ -39,7 +39,7 @@ def _pagina(titulo, cuerpo):
   .caja-info{{background:#EAF6EC;border-radius:12px;padding:14px 16px;margin:14px 0;font-size:14px}}
 </style></head><body><div class="caja">
   <div class="top"><img src="/logo.png" alt="{MARCA}"><b>{MARCA}</b></div>
-  <div class="nav"><a href="/terminos">Términos y condiciones</a> · <a href="/privacidad">Privacidad y Habeas Data</a> · <a href="/app">Descargar</a></div>
+  <div class="nav"><a href="/terminos">Términos y condiciones</a> · <a href="/privacidad">Privacidad y Habeas Data</a> · <a href="/eliminar-cuenta">Eliminar cuenta</a> · <a href="/app">Descargar</a></div>
   {cuerpo}
   <div class="pie">{MARCA} es una marca de {RESPONSABLE_LEGAL} · {LUGAR}<br>
   Contacto: <a href="mailto:{CORREO}">{CORREO}</a> · WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a></div>
@@ -87,8 +87,9 @@ def terminos_html():
 
   <h2>6. Ubicación</h2>
   <p>Para funcionar, la App usa la ubicación del dispositivo (ver la <a href="/privacidad">Política de
-  Privacidad</a>). El Transportador comparte su ubicación mientras tiene un servicio activo para que el
-  Cliente pueda verlo llegar.</p>
+  Privacidad</a>). El Transportador comparte su ubicación mientras está <b>conectado</b> para recibir
+  solicitudes cercanas y mientras tiene un servicio activo para que el Cliente pueda verlo llegar, incluso
+  con la App en segundo plano. Al desconectarse, deja de compartirla.</p>
 
   <h2>7. Limitación de responsabilidad</h2>
   <p>{MARCA} actúa únicamente como intermediario tecnológico. En la medida permitida por la ley, no somos
@@ -129,9 +130,17 @@ def privacidad_html():
     <li><b>De registro:</b> tu nombre y número de teléfono. La contraseña se guarda <b>cifrada</b> (ni
       nosotros podemos verla).</li>
     <li><b>De ubicación:</b> la ubicación de tu dispositivo (GPS) para detectar tu municipio, marcar el
-      punto de recogida y destino, calcular distancias y —en el caso del Transportador con un servicio
-      activo— mostrar en vivo dónde va, incluso con la app en segundo plano.</li>
-    <li><b>Del servicio:</b> el origen, destino, precio acordado e historial de tus carreras o acarreos.</li>
+      punto de recogida y destino y calcular distancias. <b>Transportador:</b> mientras está
+      <b>conectado</b> (disponible) o tiene un servicio activo, la App recoge su ubicación <b>también en
+      segundo plano</b> (con la app cerrada o el teléfono bloqueado) para avisarle de solicitudes cercanas,
+      asignar primero al más cercano y que el Cliente lo vea llegar en vivo. Mientras esto ocurre, Android
+      muestra una notificación fija de "Tukán activo". Al desconectarse, se detiene.</li>
+    <li><b>Del servicio:</b> el origen, destino, precio acordado, indicaciones, calificaciones y comentarios,
+      e historial de tus carreras o acarreos.</li>
+    <li><b>Fotos (con la cámara o la galería, solo cuando tú lo eliges):</b> tu foto de perfil (opcional,
+      la ve el Transportador al recibir tu solicitud); fotos de la carga en un acarreo (las ve el
+      Transportador); y la foto de entrega que toma el Transportador como prueba (la ve el Cliente).</li>
+    <li><b>Del dispositivo:</b> un identificador para enviarte notificaciones (push) de tus servicios.</li>
     <li><b>Del Transportador:</b> tipo, placa, color y modelo del vehículo; su foto y la del vehículo (que
       el Cliente ve para identificarlo); y documentos de verificación —tarjeta de propiedad, licencia de
       conducción, cédula y SOAT— que <b>solo usa nuestro equipo para habilitarlo y NO se muestran a los
@@ -148,8 +157,9 @@ def privacidad_html():
     <li><b>Entre las partes de un servicio:</b> cuando un Transportador acepta, el Cliente ve su nombre,
       foto, placa y teléfono para poder contactarlo, y viceversa. Esto es necesario para que el servicio
       funcione y para tu seguridad.</li>
-    <li><b>Proveedores tecnológicos</b> que nos ayudan a operar: almacenamiento seguro de imágenes,
-      alojamiento del servidor y envío de notificaciones. Solo acceden a lo necesario para su función.</li>
+    <li><b>Proveedores tecnológicos</b> que nos ayudan a operar, solo con lo necesario para su función:
+      alojamiento del servidor y la base de datos (Railway), almacenamiento de imágenes (Cloudinary),
+      envío de notificaciones (Expo y Google Firebase Cloud Messaging) y mapas (Mapbox y OpenStreetMap).</li>
     <li><b>Autoridades</b>, cuando la ley lo exija.</li>
   </ul>
 
@@ -170,6 +180,12 @@ def privacidad_html():
   WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a>. Atenderemos tu solicitud en los plazos que fija la Ley
   1581 de 2012.</p>
 
+  <h2>6.1 Cómo eliminar tu cuenta</h2>
+  <p>Puedes eliminar tu cuenta y tus datos <b>desde la App</b>: Menú → Configuración → <b>"Eliminar mi
+  cuenta y mis datos"</b>. También puedes pedirlo sin la App en <a href="/eliminar-cuenta">esta página</a>.
+  Se borran tu nombre, teléfono, fotos, documentos, vehículo y lugares guardados. Si tienes viajes en el
+  historial, ese registro se conserva <b>anónimo</b> (sin datos que te identifiquen) solo para estadísticas.</p>
+
   <h2>7. Autorización</h2>
   <p>Al registrarte y usar {MARCA}, <b>autorizas de manera libre, previa, expresa e informada</b> el
   tratamiento de tus datos personales para las finalidades descritas en esta política.</p>
@@ -188,3 +204,31 @@ def privacidad_html():
   Ejerce tus derechos en <a href="mailto:{CORREO}">{CORREO}</a> o WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a>.</div>
 """
     return _pagina("Privacidad y Habeas Data", cuerpo)
+
+
+def eliminar_cuenta_html():
+    cuerpo = f"""
+  <h1>Eliminar tu cuenta de {MARCA}</h1>
+  <div class="fecha">Última actualización: {ACTUALIZADO}</div>
+  <p>Puedes eliminar tu cuenta de {MARCA} y tus datos personales cuando quieras, de dos formas:</p>
+  <h2>Opción 1: desde la App (inmediato)</h2>
+  <ol>
+    <li>Abre {MARCA} e inicia sesión.</li>
+    <li>Entra al menú y toca <b>Configuración</b>.</li>
+    <li>Al final, toca <b>"Eliminar mi cuenta y mis datos"</b> y confirma.</li>
+  </ol>
+  <h2>Opción 2: sin la App</h2>
+  <p>Escríbenos desde el número de teléfono registrado al WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a>
+  o al correo <a href="mailto:{CORREO}">{CORREO}</a> con el asunto <b>"Eliminar mi cuenta"</b> e indica tu
+  nombre y número de teléfono. La eliminamos en un máximo de 15 días hábiles (Ley 1581 de 2012).</p>
+  <h2>Qué se borra y qué se conserva</h2>
+  <ul>
+    <li><b>Se borran:</b> nombre, teléfono, contraseña, foto de perfil, fotos y documentos del vehículo y
+      del conductor, medios de pago declarados, lugares guardados y el identificador de notificaciones.</li>
+    <li><b>Se conserva de forma anónima</b> (sin nada que te identifique) el registro de los viajes ya
+      realizados, solo para estadísticas y obligaciones legales. Si no tienes viajes, la cuenta se borra
+      por completo.</li>
+  </ul>
+  <div class="caja-info">Más información en la <a href="/privacidad">Política de Privacidad</a>.</div>
+"""
+    return _pagina("Eliminar cuenta", cuerpo)
