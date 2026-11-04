@@ -975,10 +975,10 @@ RECARGO_DEFECTO = {
     "ciudades": ["cali"],
     "franjas": [
         # pico: lunes a viernes que no sean festivo
-        {"nombre": "pico", "desde": "06:00", "hasta": "08:30", "dias": "habiles", "km": 200, "minima": 1000},
-        {"nombre": "pico", "desde": "17:00", "hasta": "19:30", "dias": "habiles", "km": 200, "minima": 1000},
+        {"nombre": "pico", "desde": "06:00", "hasta": "08:30", "dias": "habiles", "km": 400, "minima": 1000},
+        {"nombre": "pico", "desde": "17:00", "hasta": "19:30", "dias": "habiles", "km": 400, "minima": 1000},
         # madrugada: todos los dias (cruza la medianoche)
-        {"nombre": "madrugada", "desde": "22:00", "hasta": "05:00", "dias": "todos", "km": 500, "minima": 2000},
+        {"nombre": "madrugada", "desde": "22:00", "hasta": "05:00", "dias": "todos", "km": 500, "minima": 3000},
     ],
     # festivos de Colombia (ese dia no hay hora pico; la madrugada si aplica)
     "festivos": [
