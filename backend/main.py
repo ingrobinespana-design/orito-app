@@ -1748,18 +1748,25 @@ def _candidatos_carrera(carrera, db):
         if le_sirve_la_carrera(c, carrera) and suscripcion_al_dia(c, db)
     ]
 
+def push_conductor(u: Usuario, titulo: str, cuerpo: str, datos: dict):
+    """Si la app del conductor sabe hacer avisos a pantalla completa, se le manda un
+    push SOLO DE DATOS (sin titulo): la app lo recibe aunque este bloqueada o cerrada
+    y lo convierte en aviso tipo llamada + Tukan al frente. Si no, el push normal."""
+    normal = push.mensaje(u.push_token, titulo, cuerpo, datos)
+    if u.push_modo == "datos":
+        # van los DOS: el normal es la red de seguridad (nunca se queda sin aviso)
+        return [normal, {"to": u.push_token, "priority": "high", "_contentAvailable": True,
+                         "data": {**datos, "titulo": titulo, "cuerpo": cuerpo}}]
+    return [normal]
+
 def _mensajes_carrera(carrera, conductores, titulo):
     aviso_zona = " (fuera del pueblo)" if carrera.zona == "rural" else ""
     oferta = f" · ofrece ${carrera.tarifa_ofrecida:,}".replace(",", ".") if carrera.tarifa_ofrecida else ""
-    return [
-        push.mensaje(
-            c.push_token,
-            f"{titulo}{aviso_zona}",
-            f"De {carrera.origen} a {carrera.destino}{oferta}",
-            {"tipo": "carrera_nueva", "carrera_id": carrera.id},
-        )
-        for c in conductores
-    ]
+    carga = carrera.vehiculo_pedido in VEHICULOS_CARGA
+    tit = ("🚚 Nuevo acarreo" if carga else f"🔔 {titulo}") + aviso_zona
+    return [m for c in conductores
+            for m in push_conductor(c, tit, f"De {carrera.origen} a {carrera.destino}{oferta}",
+                                    {"tipo": "carrera_nueva", "carrera_id": carrera.id})]
 
 @nunca_falla
 def avisar_carrera_nueva(carrera_id: int):
@@ -1913,8 +1920,8 @@ def avisar_carrera_cancelada(carrera_id: int):
         conductor = db.query(Usuario).filter(Usuario.id == c.conductor_id).first() if c.conductor_id else None
         cliente = db.query(Usuario).filter(Usuario.id == c.cliente_id).first()
         if c.cancelada_por in ("cliente", "admin") and conductor and conductor.push_token:
-            mensajes.append(push.mensaje(conductor.push_token, "❌ El pasajero canceló la carrera",
-                                         f"{c.origen} → {c.destino}. Motivo: {motivo}", datos))
+            mensajes.extend(push_conductor(conductor, "❌ El pasajero canceló la carrera",
+                                           f"{c.origen} → {c.destino}. Motivo: {motivo}", datos))
         if c.cancelada_por in ("conductor", "admin") and cliente and cliente.push_token:
             mensajes.append(push.mensaje(cliente.push_token, "❌ Tu conductor canceló la carrera",
                                          f"Motivo: {motivo}. Puedes volver a pedir tu carrera.", datos))
@@ -1923,8 +1930,8 @@ def avisar_carrera_cancelada(carrera_id: int):
     limpiar_tokens_muertos(push.enviar(mensajes))
 
 @app.put("/usuarios/{usuario_id}/push-token")
-def guardar_push_token(usuario_id: int, token: str, db: Session = Depends(get_db),
-                       actual: Usuario = Depends(usuario_actual)):
+def guardar_push_token(usuario_id: int, token: str, pantalla_completa: str = None,
+                       db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, usuario_id)
     """La app manda esto al entrar. Si el token ya estaba en otro usuario (celular
     prestado o compartido) se lo quita, para que los avisos no le lleguen al anterior."""
@@ -1934,6 +1941,8 @@ def guardar_push_token(usuario_id: int, token: str, db: Session = Depends(get_db
     db.query(Usuario).filter(Usuario.push_token == token, Usuario.id != usuario_id).update(
         {"push_token": None}, synchronize_session=False)
     usuario.push_token = token
+    if pantalla_completa is not None:
+        usuario.push_modo = "datos" if pantalla_completa == "si" else None
     db.commit()
     return {"ok": True}
 

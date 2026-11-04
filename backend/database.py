@@ -87,6 +87,9 @@ class Usuario(Base):
     promo_bienvenida_hasta = Column(DateTime, nullable=True)
     promo_bienvenida_pct = Column(Integer, nullable=True)
     fundador = Column(String, default="no")
+    # "datos" = su app (APK nuevo) convierte el push en aviso a pantalla completa;
+    # vacio = push normal (APKs viejos)
+    push_modo = Column(String, nullable=True)
 
 class LugarGuardado(Base):
     __tablename__ = "lugares_guardados"
@@ -482,7 +485,7 @@ def crear_tablas():
                     "verificado VARCHAR DEFAULT 'no'",
                     "codigo_referido VARCHAR", "referido_por VARCHAR",
                     "promo_bienvenida_hasta TIMESTAMP", "promo_bienvenida_pct INTEGER",
-                    "fundador VARCHAR DEFAULT 'no'"):
+                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
