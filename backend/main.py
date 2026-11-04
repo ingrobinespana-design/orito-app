@@ -831,6 +831,8 @@ def municipio_dict(m: Municipio, db: Session):
         "centro_lat": m.centro_lat,
         "centro_lon": m.centro_lon,
         "promo": promo_de(m.nombre, db),
+        # recargo que aplica AHORA (la app lo vuelve a pedir cada rato)
+        "recargo": recargo_actual(m.nombre, db),
         # tarifa propia por vehiculo (ej. moto mas barata que carro). Si un vehiculo
         # no aparece aqui, usa la tarifa general de la ciudad (valor_km / minima)
         "tarifas_vehiculo": {t.vehiculo: {"base": t.base or 0, "valor_km": t.valor_km or 0, "minima": t.minima or 0}
@@ -962,6 +964,113 @@ def promo_para(municipio: str, usuario, db: Session):
         return {"activa": True, "pct": int(usuario.promo_bienvenida_pct), "texto": "Bienvenida comunidad"}
     return general
 
+# ---------------- RECARGO POR HORARIO (hora pico y madrugada) ----------------
+# Solo sube el precio SUGERIDO de carreras de pasajeros (acarreos no llevan
+# sugerido). No se muestra etiqueta: el pasajero ve el precio y ofrece lo que
+# quiera. Se lee de Config "recargo_horario" (JSON) para cambiarlo sin desplegar;
+# si no existe usa RECARGO_DEFECTO. Apagado general: Config recargo_activo=no.
+import json as _json_rec
+
+RECARGO_DEFECTO = {
+    "ciudades": ["cali"],
+    "franjas": [
+        # pico: lunes a viernes que no sean festivo
+        {"nombre": "pico", "desde": "06:00", "hasta": "08:30", "dias": "habiles", "km": 200, "minima": 1000},
+        {"nombre": "pico", "desde": "17:00", "hasta": "19:30", "dias": "habiles", "km": 200, "minima": 1000},
+        # madrugada: todos los dias (cruza la medianoche)
+        {"nombre": "madrugada", "desde": "22:00", "hasta": "05:00", "dias": "todos", "km": 500, "minima": 2000},
+    ],
+    # festivos de Colombia (ese dia no hay hora pico; la madrugada si aplica)
+    "festivos": [
+        "2026-11-16", "2026-12-08", "2026-12-25",
+        "2027-01-01", "2027-01-11", "2027-03-22", "2027-03-25", "2027-03-26", "2027-05-01",
+        "2027-05-10", "2027-05-31", "2027-06-07", "2027-07-05", "2027-07-20", "2027-08-07",
+        "2027-08-16", "2027-10-18", "2027-11-01", "2027-11-15", "2027-12-08", "2027-12-25",
+    ],
+}
+
+def ahora_colombia():
+    """Hora de Colombia (UTC-5, sin horario de verano). El servidor corre en UTC."""
+    return datetime.utcnow() - timedelta(hours=5)
+
+def recargo_config(db: Session):
+    try:
+        if leer_config("recargo_activo", db, "si") != "si":
+            return None
+        crudo = (leer_config("recargo_horario", db, "") or "").strip()
+        return _json_rec.loads(crudo) if crudo else RECARGO_DEFECTO
+    except Exception:
+        return RECARGO_DEFECTO
+
+def _min_del_dia(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+def recargo_actual(municipio: str, db: Session, ahora: datetime = None):
+    """{"nombre","km","minima"} de la franja que aplica ahora en esa ciudad, o None."""
+    try:
+        cfg = recargo_config(db)
+        if not cfg:
+            return None
+        ciudades = [c.strip().lower() for c in cfg.get("ciudades", [])]
+        if (municipio or "").strip().lower() not in ciudades and "todas" not in ciudades:
+            return None
+        t = ahora or ahora_colombia()
+        minuto = t.hour * 60 + t.minute
+        habil = t.weekday() < 5 and t.strftime("%Y-%m-%d") not in cfg.get("festivos", [])
+        for f in cfg.get("franjas", []):
+            if f.get("dias") == "habiles" and not habil:
+                continue
+            ini, fin = _min_del_dia(f["desde"]), _min_del_dia(f["hasta"])
+            dentro = (ini <= minuto < fin) if ini < fin else (minuto >= ini or minuto < fin)
+            if dentro:
+                return {"nombre": f.get("nombre", ""), "km": int(f.get("km", 0)), "minima": int(f.get("minima", 0))}
+        return None
+    except Exception:
+        return None
+
+def _calcular_con_recargo(km, base, valor_km, minima, rec):
+    if rec:
+        valor_km = (valor_km or 0) + rec["km"]
+        minima = (minima or 0) + rec["minima"]
+    return tarifas.calcular_tarifa(km, base, valor_km, minima)
+
+@app.get("/recargo")
+def ver_recargo(municipio: str = "Cali", db: Session = Depends(get_db)):
+    """Que recargo aplica ahora (para revisar). Publico: no expone nada sensible."""
+    return {"hora_colombia": ahora_colombia().strftime("%Y-%m-%d %H:%M"),
+            "recargo": recargo_actual(municipio, db), "config": recargo_config(db)}
+
+@app.put("/recargo")
+def configurar_recargo(clave: str, activa: str = None, horario: str = None, db: Session = Depends(get_db)):
+    """Prender/apagar (activa=si|no) o reemplazar el horario (JSON con la forma de
+    RECARGO_DEFECTO; horario=defecto vuelve al de fabrica)."""
+    if not os.environ.get("RESPALDO_CLAVE") or not hmac.compare_digest(clave, os.environ["RESPALDO_CLAVE"]):
+        raise HTTPException(status_code=403, detail="Clave incorrecta")
+    def poner(k, v):
+        fila = db.query(Config).filter(Config.clave == k).first()
+        if fila:
+            fila.valor = v
+        else:
+            db.add(Config(clave=k, valor=v))
+    if activa is not None:
+        if activa not in ("si", "no"):
+            raise HTTPException(status_code=400, detail="activa: si o no")
+        poner("recargo_activo", activa)
+    if horario is not None:
+        if horario == "defecto":
+            poner("recargo_horario", "")
+        else:
+            try:
+                cfg = _json_rec.loads(horario)
+                for f in cfg["franjas"]:
+                    _min_del_dia(f["desde"]); _min_del_dia(f["hasta"]); int(f["km"]); int(f["minima"])
+            except Exception:
+                raise HTTPException(status_code=400, detail="horario: JSON invalido")
+            poner("recargo_horario", _json_rec.dumps(cfg))
+    db.commit()
+    return ver_recargo("Cali", db)
+
 def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     """Sugerencia segun el pueblo, el vehiculo y los km. Solo orienta la oferta
     del cliente; el precio de verdad lo negocian las partes."""
@@ -971,17 +1080,19 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     # transportador contraoferta (depende del peso, la ayuda, los pisos, etc.)
     if vehiculo in VEHICULOS_CARGA:
         return None
+    # hora pico / madrugada: suma $/km y a la minima (sin etiqueta al pasajero)
+    rec = recargo_actual(municipio, db)
     # 1) tarifa por VEHICULO si el pueblo la tiene (donde moto y carro cobran distinto)
     if vehiculo:
         t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
         if t and t.valor_km:
-            return tarifas.calcular_tarifa(km, t.base, t.valor_km, t.minima)
+            return _calcular_con_recargo(km, t.base, t.valor_km, t.minima, rec)
     # 2) respaldo: el $/km de la CIUDAD (el que se pone en el panel "Ciudades").
     #    Asi Pasto/Cali/Florencia muestran el sugerido al cliente aunque no tengan
     #    tarifa por vehiculo; es la MISMA base que ve el conductor (solo viaje aca).
     m = db.query(Municipio).filter(Municipio.nombre == municipio).first()
     if m and m.valor_km:
-        return tarifas.calcular_tarifa(km, m.tarifa_base or 0, m.valor_km, m.tarifa_minima or 0)
+        return _calcular_con_recargo(km, m.tarifa_base or 0, m.valor_km, m.tarifa_minima or 0, rec)
     return None
 
 @app.get("/tarifa")

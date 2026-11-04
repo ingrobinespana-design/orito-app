@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, forwardRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share, Dimensions } from 'react-native';
+import { View, Text as RNText, TextInput as RNTextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share, Dimensions, AppState, NativeModules } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -12,6 +12,20 @@ import { WebView } from 'react-native-webview';
 import * as Updates from 'expo-updates';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import TukanOverlay from './modules/tukan-overlay';
+
+// Letra de toda la app: Inter (la de NEXA), metida en el APK por
+// plugins/fuentes.js. En APKs viejos sin la letra, Android usa la normal.
+const FUENTE = { fontFamily: "Inter" };
+// en la vista web (solo pruebas) se carga Inter de Google Fonts
+if (Platform.OS === "web" && typeof document !== "undefined" && !document.getElementById("fuente-inter")) {
+  const l = document.createElement("link");
+  l.id = "fuente-inter"; l.rel = "stylesheet";
+  l.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap";
+  document.head.appendChild(l);
+}
+const Text = forwardRef((props, ref) => <RNText ref={ref} {...props} style={[FUENTE, props.style]} />);
+const TextInput = forwardRef((props, ref) => <RNTextInput ref={ref} {...props} style={[FUENTE, props.style]} />);
 
 // Produccion por defecto. Para probar contra un servidor local se arranca con
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
@@ -56,8 +70,17 @@ const userFetch = (url, opciones = {}) =>
 const TAREA_UBICACION = "tukan-ubicacion-carrera";
 let conductorRastreado = null;   // id del conductor; lo fija ConductorScreen
 
+let ultimoVivo = 0;
+// ¿La pantalla de Tukan esta de verdad a la vista? Cuando Android reinicia la app
+// en segundo plano (telefono bloqueado) no hay pantalla, pero AppState dice
+// "active". Solo el componente App (que se monta con pantalla) lo pone en true.
+let pantallaVisible = false;
+const alFrente = () => pantallaVisible && AppState.currentState === "active";
 let idsVistosFondo = null;   // carreras ya vistas por el servicio en segundo plano
+let activasFondo = null;     // carreras en curso del conductor (para detectar cancelaciones)
 let ultimoSonido = 0;        // anti-rebote: no sonar dos veces (fondo + pantalla)
+// solicitud que se aviso a pantalla completa: al abrir la app se muestra de una
+let solicitudDesdeFondo = null;
 
 // evita sonar dos veces seguidas (cuando app abierta corren el ping y el fondo)
 function puedeSonar() {
@@ -66,20 +89,115 @@ function puedeSonar() {
   return true;
 }
 
+// ===== AVISO A PANTALLA COMPLETA (tipo llamada) =====
+// Con Notifee (APK con pantalla completa) el aviso salta encima de todo: telefono
+// bloqueado, en segundo plano o en otra app, y abre Tukan. En APKs viejos sin esa
+// pieza nativa no existe: se usa el aviso normal de siempre (no se rompe nada).
+let notifee = null, NotifeeTipos = null;
+try {
+  if (Platform.OS === "android" && NativeModules.NotifeeApiModule) {
+    const m = require("@notifee/react-native");
+    notifee = m.default; NotifeeTipos = m;
+  }
+} catch (e) { notifee = null; }
+let canalPantallaLista = false;
+async function canalPantalla() {
+  const { AndroidImportance, AndroidVisibility } = NotifeeTipos;
+  if (!canalPantallaLista) {
+    await notifee.createChannel({
+      id: "alerta_total", name: "Avisos a pantalla completa", importance: AndroidImportance.HIGH,
+      sound: "tono", vibration: true, vibrationPattern: [300, 500, 300, 500],
+      bypassDnd: true, visibility: AndroidVisibility.PUBLIC,
+    });
+    canalPantallaLista = true;
+  }
+}
+function notifPantallaCompleta(id, titulo, cuerpo) {
+  const { AndroidImportance, AndroidVisibility, AndroidCategory } = NotifeeTipos;
+  return {
+    id, title: titulo, body: cuerpo,
+    android: {
+      channelId: "alerta_total", category: AndroidCategory.CALL, importance: AndroidImportance.HIGH,
+      visibility: AndroidVisibility.PUBLIC, sound: "tono", lightUpScreen: true, autoCancel: true,
+      fullScreenAction: { id: "default" }, pressAction: { id: "default" }, timeoutAfter: 90000,
+    },
+  };
+}
+async function avisoPantallaCompleta(id, titulo, cuerpo) {
+  if (!notifee) return false;
+  try {
+    await canalPantalla();
+    await notifee.displayNotification(notifPantallaCompleta(id, titulo, cuerpo));
+    return true;
+  } catch (e) { return false; }
+}
+function quitarAviso(id) {
+  try { if (notifee) notifee.cancelNotification(id); } catch (e) {}
+  try { if (TukanOverlay && TukanOverlay.quitarAvisos) TukanOverlay.quitarAvisos(); } catch (e) {}
+}
+// APK con receptor nativo de push (el aviso tipo llamada lo hace Android solo)
+const avisoNativo = () => { try { return !!(TukanOverlay && TukanOverlay.avisoNativo && TukanOverlay.avisoNativo()); } catch (e) { return false; } };
+
+// ===== TUKAN AL FRENTE (encima de Waze, WhatsApp...) =====
+// Con el permiso "Mostrar encima de otras apps", Android deja abrir Tukan desde
+// segundo plano: la solicitud o la cancelacion aparecen encima de lo que este usando.
+const puedeSobreponer = () => { try { return !!(TukanOverlay && TukanOverlay.puedeSobreponer()); } catch (e) { return false; } };
+function traerTukanAlFrente() {
+  try { if (TukanOverlay && TukanOverlay.puedeSobreponer()) TukanOverlay.traerAlFrente(); } catch (e) {}
+}
+
+/** Prueba: programa un aviso a pantalla completa en unos segundos para que el
+ *  conductor bloquee el telefono y vea si le sale encima de todo. */
+async function probarPantallaCompleta() {
+  if (!notifee) {
+    avisar("Falta actualizar la app", "Esta versión no trae los avisos a pantalla completa. Instala el APK nuevo desde el link de descarga.");
+    return;
+  }
+  try {
+    await canalPantalla();
+    await notifee.createTriggerNotification(
+      notifPantallaCompleta("prueba-pantalla", "🔔 Prueba de Tukán", "Si ves esto encima de todo, los avisos a pantalla completa funcionan ✅"),
+      { type: NotifeeTipos.TriggerType.TIMESTAMP, timestamp: Date.now() + 10000 });
+    avisar("Bloquea el teléfono ya 🔒", "En unos 10 segundos debe encenderse la pantalla con un aviso de prueba de Tukán.\n\nSi solo te llega una notificación normal, falta activar el permiso de pantalla completa (te mostramos cómo).");
+  } catch (e) { avisar("No se pudo programar la prueba", String((e && e.message) || e)); }
+}
+
 // SUENA fuerte aunque la app este minimizada o cerrada, SIN depender del push:
-// lo dispara el servicio en segundo plano al detectar una carrera nueva.
-function sonarCarreraFondo() {
+// lo dispara el servicio en segundo plano al detectar una carrera nueva. Si la app
+// no esta al frente, el aviso sale a pantalla completa (si el APK lo soporta).
+async function sonarCarreraFondo(c) {
   if (!puedeSonar()) return;
+  const carga = c && esCarga(c.vehiculo_pedido);
+  const titulo = carga ? "🚚 Nuevo acarreo" : "🔔 Nueva solicitud de carrera";
+  const cuerpo = c ? `${limpiaDir(c.origen)} → ${limpiaDir(c.destino)}${c.tarifa_ofrecida ? ` · ofrece $${c.tarifa_ofrecida.toLocaleString()}` : ""}` : "Toca para verla y responder.";
+  if (c && !alFrente()) {
+    solicitudDesdeFondo = c.id;
+    traerTukanAlFrente();
+    if (await avisoPantallaCompleta(`solicitud-${c.id}`, titulo, cuerpo)) return;
+  }
   try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
   Notifications.scheduleNotificationAsync({
-    content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "tono.wav" },
+    content: { title: titulo, body: cuerpo, sound: "tono.wav" },
     trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
   }).catch(() => {});
 }
 
 try {
-  TaskManager.defineTask(TAREA_UBICACION, ({ data, error }) => {
-    if (error || !conductorRastreado) return;
+  TaskManager.defineTask(TAREA_UBICACION, async ({ data, error }) => {
+    if (error) return;
+    // si Android reinicio Tukan en segundo plano (telefono bloqueado), la memoria
+    // se borra: el conductor se recupera de lo guardado en el telefono
+    if (!conductorRastreado) {
+      try { const g = await AsyncStorage.getItem("tukan_rastreo_conductor"); if (g) conductorRastreado = Number(g); } catch (e) {}
+      // respaldo: la sesion guardada (solo si es conductor)
+      if (!conductorRastreado) {
+        try { const ses = await leerSesion(); if (ses && ses.rol === "conductor" && ses.id) conductorRastreado = Number(ses.id); } catch (e) {}
+      }
+      diagFondo("rastreo_reinicio", { recuperado: conductorRastreado || null });
+      if (!conductorRastreado) return;
+    }
+    // senal de vida (1 por minuto) para depurar si Android lo deja correr bloqueado
+    if (Date.now() - ultimoVivo > 60000) { ultimoVivo = Date.now(); diagFondo("rastreo_vivo", { c: conductorRastreado }); }
     // 1) reporta la ubicacion (para el seguimiento del cliente si hay carrera activa)
     const locs = data && data.locations;
     if (locs && locs.length) {
@@ -93,28 +211,121 @@ try {
     // cercania tambien con la app cerrada.
     fetch(`${API}/carreras/disponibles?conductor_id=${conductorRastreado}`)
       .then((r) => r.json())
+      .then(async (d) => {
+        if (!Array.isArray(d)) return;
+        const alertables = d.filter((c) => c.alertar !== false);
+        const ids = alertables.map((c) => c.id);
+        // tras un reinicio de Android, lo ya visto se recupera del telefono (si no,
+        // la solicitud que llego mientras tanto se tomaria como "vista" sin sonar)
+        if (idsVistosFondo === null) {
+          try { const g = await AsyncStorage.getItem("tukan_rastreo_vistos"); if (g) idsVistosFondo = JSON.parse(g); } catch (e) {}
+        }
+        AsyncStorage.setItem("tukan_rastreo_vistos", JSON.stringify(ids)).catch(() => {});
+        if (idsVistosFondo === null) { idsVistosFondo = ids; return; }   // primera vez: solo memoriza
+        const nueva = alertables.find((c) => idsVistosFondo.indexOf(c.id) === -1);
+        idsVistosFondo = ids;
+        if (nueva) { diagFondo("rastreo_nueva", { id: nueva.id, frente: alFrente() }); sonarCarreraFondo(nueva); }
+      })
+      .catch(() => {});
+    // 3) si el pasajero le cancela una carrera en curso y la app no esta al frente,
+    // aviso a pantalla completa con el motivo (al abrir, la app muestra la ventana)
+    fetch(`${API}/carreras/conductor/${conductorRastreado}`)
+      .then((r) => r.json())
       .then((d) => {
         if (!Array.isArray(d)) return;
-        const ids = d.filter((c) => c.alertar !== false).map((c) => c.id);
-        if (idsVistosFondo === null) { idsVistosFondo = ids; return; }   // primera vez: solo memoriza
-        const hayNueva = ids.some((id) => idsVistosFondo.indexOf(id) === -1);
-        idsVistosFondo = ids;
-        if (hayNueva) sonarCarreraFondo();
+        const activas = d.filter((c) => ["aceptada", "en_sitio", "en_camino"].includes(c.estado)).map((c) => c.id);
+        if (activasFondo !== null && !alFrente()) {
+          const c = d.find((x) => activasFondo.indexOf(x.id) !== -1 && x.estado === "cancelada" && x.cancelada_por !== "conductor");
+          if (c) traerTukanAlFrente();
+          if (c) avisoPantallaCompleta(`cancelada-${c.id}`, "❌ El pasajero canceló la carrera",
+            `${limpiaDir(c.origen)} → ${limpiaDir(c.destino)}. Motivo: ${c.motivo_cancelacion || "sin motivo"}`);
+        }
+        activasFondo = activas;
       })
       .catch(() => {});
   });
 } catch (e) {}   // en web no existe TaskManager y no hace falta
 
+// ===== PUSH QUE SE CONVIERTE EN PANTALLA COMPLETA =====
+// Con el telefono bloqueado Android pausa la app y no alcanza a revisar sola; el
+// push del servidor si llega al instante. A los conductores con este APK el
+// servidor les manda un push SOLO DE DATOS: esta tarea lo recibe (app bloqueada,
+// en otra app o cerrada) y lo convierte en aviso tipo llamada + Tukan al frente.
+const TAREA_PUSH = "tukan-push-fondo";
+function datosDePush(data) {
+  const intentar = (c) => {
+    if (!c) return null;
+    if (c.tipo) return c;
+    for (const k of ["body", "dataString"]) {
+      if (typeof c[k] === "string") { try { const b = JSON.parse(c[k]); if (b && b.tipo) return b; } catch (e) {} }
+    }
+    return null;
+  };
+  try {
+    const n = data && data.notification;
+    return intentar(data && data.data) || intentar(n && n.data)
+      || intentar(n && n.request && n.request.content && n.request.content.data) || intentar(data);
+  } catch (e) { return null; }
+}
+// reporte de depuracion al servidor: que recibio la app en segundo plano y en
+// que paso quedo (se ve con GET /diag/eventos). No lleva datos personales.
+function diagFondo(paso, extra) {
+  try {
+    fetch(`${API}/diag/evento`, { method: "POST", headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ paso, app: AppState.currentState, vis: pantallaVisible, notifee: !!notifee, sobre: puedeSobreponer(), ...(extra || {}) }).slice(0, 1900) }).catch(() => {});
+  } catch (e) {}
+}
+async function manejarPushFondo(d) {
+  if (!d || !d.tipo) { diagFondo("sin_tipo"); return; }
+  if (d.tipo === "carrera_nueva") solicitudDesdeFondo = Number(d.carrera_id) || solicitudDesdeFondo;
+  if (alFrente()) { diagFondo("app_activa", { tipo: d.tipo }); return; }   // con la app al frente la maneja la pantalla
+  // APK con receptor nativo: el aviso tipo llamada ya lo mostro Android (no se duplica)
+  if (avisoNativo()) { diagFondo("nativo", { tipo: d.tipo }); return; }
+  const titulo = d.titulo || "Tukán", cuerpo = d.cuerpo || "";
+  const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : `solicitud-${d.carrera_id}`;
+  traerTukanAlFrente();
+  const ok = await avisoPantallaCompleta(id, titulo, cuerpo);
+  diagFondo("aviso", { tipo: d.tipo, ok });
+  if (!ok) {
+    Notifications.scheduleNotificationAsync({
+      content: { title: titulo, body: cuerpo, sound: "tono.wav" },
+      trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
+    }).catch(() => {});
+  }
+}
+let tareaPushLista = Promise.resolve(false);
+try {
+  if (Platform.OS === "android" && notifee) {
+    TaskManager.defineTask(TAREA_PUSH, ({ data, error }) => {
+      const d = error ? null : datosDePush(data);
+      diagFondo("push_recibido", { tipo: d && d.tipo, frente: alFrente() });
+      return error ? null : manejarPushFondo(d);
+    });
+    tareaPushLista = Notifications.registerTaskAsync(TAREA_PUSH).then(() => true).catch(() => false);
+  }
+} catch (e) {}
+
 async function iniciarRastreoFondo(conductorId) {
   try {
     conductorRastreado = conductorId;
+    AsyncStorage.setItem("tukan_rastreo_conductor", String(conductorId)).catch(() => {});
+    AsyncStorage.removeItem("tukan_rastreo_vistos").catch(() => {});
     idsVistosFondo = null;   // arranca fresco: memoriza y luego suena solo con las NUEVAS
     if (Platform.OS === "web") return false;
     const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
     if (ya) return true;
     // el permiso "todo el tiempo" es lo ideal; si no lo dan, el servicio en
     // primer plano igual funciona en la mayoria de Androids modernos
-    await Location.requestBackgroundPermissionsAsync().catch(() => {});
+    // aviso destacado ANTES de pedir "todo el tiempo" (requisito de Google Play)
+    const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
+    if (!bg || bg.status !== "granted") {
+      const acepta = await new Promise((res) => Alert.alert(
+        "📍 Ubicación en segundo plano",
+        "Tukán recoge tu ubicación mientras estás CONECTADO como conductor, incluso con la app cerrada o el teléfono bloqueado, para avisarte de solicitudes cercanas y para que el pasajero te vea llegar en vivo.\n\nVerás la notificación fija \"Tukán activo\" mientras esto ocurre. Al desconectarte, se detiene.\n\nEn la siguiente pantalla elige \"Permitir todo el tiempo\".",
+        [{ text: "Ahora no", style: "cancel", onPress: () => res(false) }, { text: "Continuar", onPress: () => res(true) }],
+        { cancelable: false }));
+      if (acepta) await Location.requestBackgroundPermissionsAsync().catch(() => {});
+    }
     await Location.startLocationUpdatesAsync(TAREA_UBICACION, {
       accuracy: Location.Accuracy.Balanced,
       timeInterval: 9000,          // cada ~9s revisa carreras y reporta ubicacion
@@ -158,16 +369,21 @@ function qs(obj) {
 const VEHICULOS = {
   moto:         { label: "Moto",         icono: "🏍️", grupo: "personas" },
   carro:        { label: "Carro",        icono: "🚗", grupo: "personas" },
-  motocarguero: { label: "Motocarguero", icono: "🛺", grupo: "carga" },
-  camion_pequeno: { label: "Camión pequeño (Piaggio)", icono: "🛻", grupo: "carga" },
-  camioneta:    { label: "Camioneta",    icono: "🛻", grupo: "carga" },
-  camion:       { label: "Camion",       icono: "🚚", grupo: "carga" },
-  furgon:       { label: "Furgon",       icono: "🚐", grupo: "carga" },
-  planchon:     { label: "Planchon",     icono: "🚛", grupo: "carga" },
-  grua:         { label: "Grua",         icono: "🏗️", grupo: "carga" },
+  motocarguero: { label: "Motocarguero", icono: "🛵", grupo: "carga" },
+  camion_pequeno: { label: "Camión pequeño (Piaggio)", icono: "🚙", grupo: "carga" },
+  camioneta:    { label: "Camioneta",    icono: "🚙", grupo: "carga" },
+  camion:       { label: "Camión",       icono: "🚚", grupo: "carga" },
+  furgon:       { label: "Furgón",       icono: "🚐", grupo: "carga" },
+  planchon:     { label: "Planchón",     icono: "🚛", grupo: "carga" },
+  grua:         { label: "Grúa",         icono: "🏗️", grupo: "carga" },
 };
 const vehLabel = (t) => (VEHICULOS[t] ? VEHICULOS[t].label : (t || ""));
 const vehIcono = (t) => (VEHICULOS[t] ? VEHICULOS[t].icono : "🚗");
+// direccion "limpia" para mostrar: sin los pines/banderas que se guardan como
+// prefijo (a veces repetidos) y con tilde en "Mi ubicación actual"
+const limpiaDir = (t) => String(t || "")
+  .replace(/^[\s\u{1F4CD}\u{1F3C1}\u{1F4CC}\u{1F7E2}\u{1F534}️]+/u, "")
+  .replace("Mi ubicacion actual", "Mi ubicación actual").trim();
 const esCarga = (t) => VEHICULOS[t] && VEHICULOS[t].grupo === "carga";
 const estadoExpreso = (e) => ({ buscando: "buscando conductor", aceptado: "✅ asignado", en_camino: "🚗 en camino", finalizado: "finalizado", cancelado: "cancelado" }[e] || e);
 // orden de aparicion: primero personas, luego carga
@@ -428,7 +644,10 @@ async function registrarNotificaciones(usuarioId) {
       return { ok: false, motivo: "Error obteniendo el token (FCM): " + msg + pista };
     }
 
-    const r = await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}`, { method: "PUT" });
+    // "si" = este APK convierte el push en aviso a pantalla completa (el servidor
+    // le manda push solo de datos); "no" = push normal
+    const pantalla = (await tareaPushLista) ? "si" : "no";
+    const r = await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}&pantalla_completa=${pantalla}`, { method: "PUT" });
     if (!r.ok) return { ok: false, motivo: "El servidor rechazo el token (HTTP " + r.status + ").", token };
     return { ok: true, motivo: "Token guardado.", token };
   } catch (e) {
@@ -508,6 +727,8 @@ function LoginScreen({ navigation }) {
         guardarLlave(data);   // habilita el panel si este usuario es el admin
         guardarSesion(data);  // queda la sesión guardada: no pide entrar cada vez
         registrarNotificaciones(data.id);
+        // entro con un codigo de grupo de la comunidad (CALI20 / REDCALI)
+        if (data.beneficio) avisar("¡Bienvenido a Tukán!", data.beneficio);
         if (data.rol === "admin") navigation.replace("Admin", { usuario: data });
         else if (data.rol === "domiciliario") navigation.replace("Domiciliario", { usuario: data });
         else if (data.rol === "restaurante") navigation.replace("Restaurante", { usuario: data });
@@ -530,15 +751,16 @@ function LoginScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <View style={[styles.header, { flexDirection: "row", alignItems: "center", gap: 14 }]}>
-          <Image source={require("./assets/icon.png")} style={{ width: 54, height: 54, borderRadius: 14 }} />
-          <View>
-            <Text style={styles.headerSub}>Bienvenido a</Text>
-            <Text style={styles.headerTitle}>Tukán</Text>
-          </View>
+      <ScrollView contentContainerStyle={{ paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
+        {/* portada: logo y nombre centrados sobre el verde de la marca */}
+        <View style={{ backgroundColor: "#187830", paddingTop: 60, paddingBottom: 70, alignItems: "center", borderBottomLeftRadius: 32, borderBottomRightRadius: 32 }}>
+          <Image source={require("./assets/icon.png")} style={{ width: 84, height: 84, borderRadius: 24, borderWidth: 3, borderColor: "rgba(255,255,255,0.9)" }} />
+          <Text style={{ color: "#fff", fontSize: 30, fontWeight: "800", marginTop: 12, letterSpacing: -0.5 }}>Tukán</Text>
+          <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 14, marginTop: 2 }}>Carreras y acarreos en tu ciudad</Text>
         </View>
-        <View style={styles.card}>
+        <View style={[styles.card, { marginHorizontal: 16, marginTop: -44, padding: 20 }]}>
+          <Text style={{ fontSize: 22, fontWeight: "800", color: "#1D1D1D", letterSpacing: -0.3 }}>{modo === "login" ? "Iniciar sesión" : "Crea tu cuenta"}</Text>
+          <Text style={{ fontSize: 13.5, color: "#8A8A8A", marginTop: 3, marginBottom: 16 }}>{modo === "login" ? "Entra con tu número de celular." : "Es gratis y toma un minuto."}</Text>
           <View style={styles.tabs}>
             <TouchableOpacity style={[styles.tab, modo === "login" && styles.tabActive]} onPress={() => setModo("login")}>
               <Text style={[styles.tabText, modo === "login" && styles.tabTextActive]}>Ingresar</Text>
@@ -550,7 +772,7 @@ function LoginScreen({ navigation }) {
           {modo === "registro" && (
             <>
               <TextInput placeholder="Tu nombre" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} />
-              <TextInput placeholder="🎁 Código de invitación (opcional)" value={form.codigo || ""} onChangeText={(t) => setForm({ ...form, codigo: t.toUpperCase() })} autoCapitalize="characters" style={styles.input} />
+              <TextInput placeholder="🎁 Código del grupo o de invitación (opcional)" value={form.codigo || ""} onChangeText={(t) => setForm({ ...form, codigo: t.toUpperCase() })} autoCapitalize="characters" style={styles.input} />
               <Text style={styles.etiqueta}>TU MUNICIPIO</Text>
               {cargandoMun ? (
                 <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#187830" /></View>
@@ -669,7 +891,7 @@ function LoginScreen({ navigation }) {
               {form.categoria !== "cliente" && form.comoMe ? (
                 <>
                   <TextInput
-                    placeholder="Placa de tu vehiculo"
+                    placeholder="Placa de tu vehículo"
                     value={form.placa}
                     onChangeText={(t) => setForm({ ...form, placa: t.toUpperCase() })}
                     style={styles.input}
@@ -680,9 +902,11 @@ function LoginScreen({ navigation }) {
               ) : null}
             </>
           )}
-          <TextInput placeholder="Telefono" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
+          <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Teléfono</Text>
+          <TextInput placeholder="Ej: 3001234567" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
+          <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Contraseña</Text>
           <View style={{ justifyContent: "center" }}>
-            <TextInput placeholder="Contrasena" value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} />
+            <TextInput placeholder="Tu contraseña" value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} />
             <TouchableOpacity style={{ position: "absolute", right: 6, padding: 10, top: 2 }} onPress={() => setVerPass(v => !v)}>
               <Text style={{ fontSize: 18 }}>{verPass ? "🙈" : "👁️"}</Text>
             </TouchableOpacity>
@@ -691,6 +915,15 @@ function LoginScreen({ navigation }) {
           <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={cargando}>
             {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{modo === "login" ? "Ingresar" : "Crear cuenta"}</Text>}
           </TouchableOpacity>
+          {modo === "login" && (
+            // recuperacion manual por WhatsApp mientras el login por codigo (Fase 2) sigue apagado
+            <TouchableOpacity style={{ marginTop: 14, alignItems: "center", padding: 6 }}
+              onPress={() => Linking.openURL(`https://wa.me/573133714915?text=${encodeURIComponent(`Hola, olvidé mi contraseña de Tukán. Mi teléfono es ${form.telefono || ""}`)}`)}>
+              <Text style={{ fontSize: 13, color: "#666" }}>¿Olvidaste tu contraseña?{" "}
+                <Text style={{ color: "#187830", fontWeight: "700" }}>Escríbenos por WhatsApp</Text>
+              </Text>
+            </TouchableOpacity>
+          )}
           {modo === "registro" && (
             <Text style={{ fontSize: 11, color: "#888", textAlign: "center", marginTop: 10, lineHeight: 16 }}>
               Al crear tu cuenta aceptas los{" "}
@@ -1554,29 +1787,317 @@ function RestauranteScreen({ navigation, route }) {
 // ============================================================ CARRERAS
 // Seccion de transporte. Comparte el login con domicilios, todo lo demas es aparte.
 
+// ===== ACARREOS: catalogos y fotos =====
+const TIPOS_CARGA = [["trasteo", "🏠 Trasteo / mudanza"], ["mercancia", "🏪 Mercancía de negocio"],
+  ["materiales", "🧱 Materiales de construcción"], ["objeto", "📦 Objeto grande / electrodoméstico"], ["otro", "➕ Otro"]];
+const TAMANOS_CARGA = [["pequena", "Pequeña", "cajas, un mueble"], ["mediana", "Mediana", "nevera, lavadora, varios muebles"],
+  ["grande", "Grande", "trasteo de 1–2 cuartos"], ["muy_grande", "Muy grande", "casa completa o mucha mercancía"]];
+const etiquetaDe = (lista, k) => (lista.find((x) => x[0] === k) || [])[1];
+// ejemplos de cada tamaño SEGUN lo que se mueve (no es lo mismo un trasteo que materiales)
+const EJEMPLOS_TAMANO = {
+  trasteo: { pequena: "cajas y un mueble", mediana: "nevera, lavadora, varios muebles", grande: "trasteo de 1–2 cuartos", muy_grande: "casa o apartamento completo" },
+  mercancia: { pequena: "unas cajas o paquetes", mediana: "varias cajas o un electrodoméstico", grande: "muchas cajas o estibas pequeñas", muy_grande: "surtido completo o carga de bodega" },
+  materiales: { pequena: "hasta 5 bultos de cemento, tubos o varillas", mediana: "10 a 20 bultos, tejas o baldosa", grande: "1 a 2 metros de arena, ladrillo por cientos", muy_grande: "varios metros de material, ladrillo por miles" },
+  objeto: { pequena: "televisor, silla o bicicleta", mediana: "nevera, lavadora o sofá", grande: "varios electrodomésticos o una cama doble", muy_grande: "maquinaria o algo muy pesado" },
+  otro: { pequena: "cabe en un motocarguero", mediana: "cabe en una camioneta", grande: "necesita un camión pequeño", muy_grande: "necesita un camión grande" },
+};
+const ejemploTamano = (tipo, tam) => (EJEMPLOS_TAMANO[tipo] || EJEMPLOS_TAMANO.otro)[tam] || "";
+
+/** Foto desde la camara (si el celular lo permite) o la galeria. Devuelve la uri o null.
+ *  Si la camara no esta disponible en esta version de la app, cae a la galeria. */
+async function tomarOElegirFoto() {
+  const galeria = async () => {
+    const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!p.granted) { avisar("Permiso requerido", "Necesitamos acceso a tus fotos."); return null; }
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.5 });
+    return r.canceled ? null : r.assets[0].uri;
+  };
+  const camara = async () => {
+    try {
+      const p = await ImagePicker.requestCameraPermissionsAsync();
+      if (!p.granted) return galeria();
+      const r = await ImagePicker.launchCameraAsync({ quality: 0.5 });
+      return r.canceled ? null : r.assets[0].uri;
+    } catch (e) { return galeria(); }
+  };
+  if (Platform.OS === "web") return galeria();
+  return new Promise((res) => {
+    Alert.alert("Agregar foto", "¿De dónde la tomas?", [
+      { text: "📷 Cámara", onPress: () => camara().then(res).catch(() => res(null)) },
+      { text: "🖼️ Galería", onPress: () => galeria().then(res).catch(() => res(null)) },
+      { text: "Cancelar", style: "cancel", onPress: () => res(null) },
+    ], { cancelable: true, onDismiss: () => res(null) });
+  });
+}
+
+/** Detalles del acarreo para quien transporta (y para el recibo): tipo, tamaño,
+ *  ayudantes, pisos, quien recibe y fotos (tocar para ampliar). */
+// foto del pasajero (o su inicial si no ha subido foto)
+function AvatarPasajero({ c, tam = 30 }) {
+  const r = tam / 2;
+  if (c && c.cliente_foto) {
+    return <Image source={{ uri: c.cliente_foto }} style={{ width: tam, height: tam, borderRadius: r, backgroundColor: "#EEE" }} />;
+  }
+  return (
+    <View style={{ width: tam, height: tam, borderRadius: r, backgroundColor: "#E7F3E9", alignItems: "center", justifyContent: "center" }}>
+      <Text style={{ fontSize: tam * 0.45, fontWeight: "700", color: "#187830" }}>{((c && c.cliente_nombre) || "?").trim().charAt(0).toUpperCase()}</Text>
+    </View>
+  );
+}
+
+// estilos de la lista y el detalle de solicitudes (estilo limpio: fondo gris
+// claro, tarjeta blanca sin borde, precio grande, un solo acento verde)
+const sl = StyleSheet.create({
+  card: { backgroundColor: "#fff", borderRadius: 20, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, marginBottom: 10,
+    shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 10, elevation: 2 },
+  cardNueva: { borderWidth: 2, borderColor: "#F06000" },
+  filaChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chip: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
+  chipVerde: { backgroundColor: "#E3F4E6" },
+  chipNaranja: { backgroundColor: "#FFEBDB" },
+  chipTxt: { fontSize: 12.5, fontWeight: "700" },
+  precio: { fontSize: 32, fontWeight: "800", color: "#111", letterSpacing: -0.5 },
+  moneda: { fontSize: 18, fontWeight: "800", color: "#111" },
+  vehBadge: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#F2F4F1", alignItems: "center", justifyContent: "center" },
+  filaRuta: { flexDirection: "row", alignItems: "flex-start", marginTop: 8 },
+  puntoHueco: { width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: "#187830", marginTop: 6, marginRight: 12 },
+  puntoLleno: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#F06000", marginTop: 6, marginRight: 12 },
+  dir: { flex: 1, fontSize: 15.5, color: "#1D1D1D", lineHeight: 21 },
+  km: { fontSize: 15.5, fontWeight: "700", color: "#1D1D1D", marginLeft: 10 },
+  pie: { flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8 },
+  pieNombre: { fontSize: 15, color: "#1D1D1D", maxWidth: 140 },
+  pieEstrella: { fontSize: 14.5, color: "#1D1D1D", fontWeight: "600" },
+  pieGris: { fontSize: 13.5, color: "#8A8A8A" },
+  // detalle (hoja que sube desde abajo)
+  fondo: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  hoja: { backgroundColor: "#fff", borderTopLeftRadius: 26, borderTopRightRadius: 26, maxHeight: "94%", overflow: "hidden" },
+  mapa: { height: 250, backgroundColor: "#EEF1EC" },
+  mapaChip: { position: "absolute", left: 12, top: 12, backgroundColor: "#187830", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7 },
+  titulo: { fontSize: 22, fontWeight: "800", color: "#111", letterSpacing: -0.3 },
+  letra: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 1 },
+  letraTxt: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  btnAceptar: { backgroundColor: "#187830", borderRadius: 16, paddingVertical: 17, alignItems: "center" },
+  btnAceptarTxt: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  btnGris: { backgroundColor: "#F1F2EF", borderRadius: 16, paddingVertical: 15, alignItems: "center" },
+  btnGrisTxt: { color: "#1D1D1D", fontSize: 16, fontWeight: "600" },
+  oferta: { backgroundColor: "#F1F2EF", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, marginRight: 8, alignItems: "center", minWidth: 104 },
+  ofertaTxt: { fontSize: 16, fontWeight: "700", color: "#1D1D1D" },
+});
+
+function DetalleAcarreo({ c, compacto }) {
+  const [ampliada, setAmpliada] = useState(null);
+  if (!esCarga(c.vehiculo_pedido)) return null;
+  const sinEmoji = (t) => (t || "").replace(/^\S+\s/, "");          // "🏠 Trasteo" -> "Trasteo"
+  const tam = TAMANOS_CARGA.find((x) => x[0] === c.tamano_carga);
+  const piso = (n, asc) => n == null ? null
+    : `${n <= 1 ? "Primer piso" : `Piso ${n}`}${n > 1 && asc === "si" ? " · con ascensor" : n > 1 && asc === "no" ? " · sin ascensor" : ""}`;
+  const fotos = c.fotos_carga || [];
+  const visor = (
+    <Modal visible={!!ampliada} transparent animationType="fade" onRequestClose={() => setAmpliada(null)}>
+      <TouchableOpacity activeOpacity={1} onPress={() => setAmpliada(null)} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", padding: 12 }}>
+        {ampliada && <Image source={{ uri: ampliada }} style={{ width: "100%", height: "80%" }} resizeMode="contain" />}
+        <Text style={{ color: "#fff", textAlign: "center", marginTop: 10 }}>Toca para cerrar</Text>
+      </TouchableOpacity>
+    </Modal>
+  );
+
+  // version compacta (avisos del conductor): pastillas en una o dos lineas
+  if (compacto) {
+    const pills = [
+      c.tipo_carga && sinEmoji(etiquetaDe(TIPOS_CARGA, c.tipo_carga)),
+      tam && tam[1],
+      c.ayudantes > 0 && `${c.ayudantes} ayudante${c.ayudantes > 1 ? "s" : ""}`,
+      (c.piso_origen > 1 || c.piso_destino > 1) && `Piso ${c.piso_origen || 1} → ${c.piso_destino || 1}`,
+    ].filter(Boolean);
+    if (!pills.length && !fotos.length) return null;
+    return (
+      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}>
+        {pills.map((t) => (
+          <View key={t} style={{ backgroundColor: "#FFF1E3", borderRadius: 20, paddingVertical: 4, paddingHorizontal: 10 }}>
+            <Text style={{ fontSize: 12, color: "#B85C00", fontWeight: "700" }}>{t}</Text>
+          </View>
+        ))}
+        {fotos.map((u) => (
+          <TouchableOpacity key={u} onPress={() => setAmpliada(u)}>
+            <Image source={{ uri: u }} style={{ width: 34, height: 34, borderRadius: 8 }} />
+          </TouchableOpacity>
+        ))}
+        {visor}
+      </View>
+    );
+  }
+
+  // ficha completa: icono en circulo + etiqueta + valor
+  const filas = [
+    c.tipo_carga && ["📦", "Qué se mueve", sinEmoji(etiquetaDe(TIPOS_CARGA, c.tipo_carga))],
+    tam && ["📐", "Tamaño", `${tam[1]} · ${ejemploTamano(c.tipo_carga, tam[0])}`],
+    c.ayudantes != null && ["🙋", "Ayuda para cargar", c.ayudantes > 0 ? `${c.ayudantes} ayudante${c.ayudantes > 1 ? "s" : ""}` : "No necesita"],
+    c.piso_origen != null && ["📤", "Recoger en", piso(c.piso_origen, c.ascensor_origen)],
+    c.piso_destino != null && ["📥", "Entregar en", piso(c.piso_destino, c.ascensor_destino)],
+    c.recibe_nombre && ["👤", "Recibe", `${c.recibe_nombre}${c.recibe_telefono ? ` · ${c.recibe_telefono}` : ""}`],
+  ].filter(Boolean);
+  if (!filas.length && !fotos.length) return null;
+  return (
+    <View style={{ backgroundColor: "#fff", borderRadius: 14, borderWidth: 1, borderColor: "#EFE7DA", paddingHorizontal: 14, paddingVertical: 10, marginTop: 14 }}>
+      <Text style={{ fontSize: 11, color: "#9A948A", fontWeight: "800", letterSpacing: 1, marginBottom: 2 }}>DETALLES DEL ACARREO</Text>
+      {filas.map(([ic, k, v], i) => (
+        <View key={k} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 9, borderTopWidth: i ? 1 : 0, borderTopColor: "#F3EEE5" }}>
+          <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: "#FFF1E3", alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 16 }}>{ic}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11.5, color: "#9A948A" }}>{k}</Text>
+            <Text style={{ fontSize: 15, color: "#1C2B22", fontWeight: "700", marginTop: 1 }}>{v}</Text>
+          </View>
+        </View>
+      ))}
+      {fotos.length > 0 && (
+        <View style={{ borderTopWidth: filas.length ? 1 : 0, borderTopColor: "#F3EEE5", paddingTop: 10, marginTop: 2 }}>
+          <Text style={{ fontSize: 11.5, color: "#9A948A", marginBottom: 8 }}>Fotos de la carga · toca para ampliar</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {fotos.map((u) => (
+              <TouchableOpacity key={u} onPress={() => setAmpliada(u)}>
+                <Image source={{ uri: u }} style={{ width: 84, height: 84, borderRadius: 12, borderWidth: 1, borderColor: "#EFE7DA" }} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+      {visor}
+    </View>
+  );
+}
+
+/** Prueba de entrega del acarreo: quien recibio, cuando y la foto (si hay). */
+function PruebaEntrega({ c }) {
+  const [ver, setVer] = useState(false);
+  if (!c || !c.entrega_recibio) return null;
+  return (
+    <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginTop: 8, flexDirection: "row", gap: 10, alignItems: "center" }}>
+      {c.entrega_foto ? (
+        <TouchableOpacity onPress={() => setVer(true)}>
+          <Image source={{ uri: c.entrega_foto }} style={{ width: 56, height: 56, borderRadius: 8 }} />
+        </TouchableOpacity>
+      ) : <Text style={{ fontSize: 30 }}>📦</Text>}
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 13.5, color: "#187830", fontWeight: "800" }}>✅ Entregado</Text>
+        <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>Recibió: {c.entrega_recibio}{c.entregada_en ? ` · ${haceCuanto(c.entregada_en)}` : ""}</Text>
+        {c.entrega_foto ? <Text style={{ fontSize: 11.5, color: "#1A56B8", fontWeight: "700", marginTop: 2 }}>Toca la foto para verla</Text> : null}
+      </View>
+      <Modal visible={ver} transparent animationType="fade" onRequestClose={() => setVer(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setVer(false)} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "center", padding: 12 }}>
+          <Image source={{ uri: c.entrega_foto }} style={{ width: "100%", height: "80%" }} resizeMode="contain" />
+          <Text style={{ color: "#fff", textAlign: "center", marginTop: 10 }}>Toca para cerrar</Text>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+}
+
+/** Icono de servicio: el emoji a color dentro del marco de Tukan (aro verde por
+ *  fuera, aro naranja por dentro, fondo crema). */
+function IconoServicio({ emoji, size = 82 }) {
+  const aro = Math.round(size * 0.075);
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: "#187830", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#0C2C1B", shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } }}>
+      <View style={{ width: size - aro * 2, height: size - aro * 2, borderRadius: size / 2, backgroundColor: "#F06000", alignItems: "center", justifyContent: "center" }}>
+        <View style={{ width: size - aro * 3.6, height: size - aro * 3.6, borderRadius: size / 2, backgroundColor: "#FFF8EE", alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ fontSize: Math.round(size * 0.46) }}>{emoji}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function ElegirServicioScreen({ navigation, route }) {
   const { usuario } = route.params;
   const insets = useSafeAreaInsets();
+  // promo de lanzamiento de su ciudad (si hay), para mostrarla en el inicio
+  const [promo, setPromo] = useState(null);
+  useEffect(() => {
+    fetch(`${API}/municipios`).then(r => r.json()).then(d => {
+      if (!Array.isArray(d)) return;
+      const m = d.find(x => x.nombre === usuario.municipio) || null;
+      if (m && m.promo && m.promo.activa) setPromo(m.promo);
+    }).catch(() => {});
+  }, []);
+  const nombre = (usuario.nombre || "").trim().split(" ")[0];
+  const ir = (modo) => navigation.navigate("PedirCarrera", { usuario, modo });
+  const tiles = [
+    ["🚕", "Carrera", "Moto o carro", "#E7F3E9", "#14672A", () => ir("carrera")],
+    ["🚚", "Acarreo", "Trasteos y carga", "#FFF1E3", "#B54A00", () => ir("acarreo")],
+    ["🍔", "Comida", "A domicilio", "#FFF6DA", "#8A5A00", () => navigation.navigate("Inicio", { usuario })],
+  ];
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerSub}>Hola, {usuario.nombre}</Text>
-        <Text style={styles.headerTitle}>Que necesitas hoy?</Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: "#F4F5F1" }]}>
+      <View style={{ backgroundColor: "#187830", paddingTop: insets.top + 18, paddingBottom: 20, paddingHorizontal: 18, borderBottomLeftRadius: 28, borderBottomRightRadius: 28 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <Image source={require("./assets/icon.png")} style={{ width: 42, height: 42, borderRadius: 13 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 14 }}>Hola{nombre ? `, ${nombre}` : ""} 👋</Text>
+            <Text style={{ color: "#fff", fontSize: 24, fontWeight: "800", letterSpacing: -0.4 }}>¿Qué necesitas hoy?</Text>
+          </View>
+        </View>
+        {/* barra tipo buscador: el atajo principal es pedir carrera */}
+        <TouchableOpacity activeOpacity={0.9} onPress={() => ir("carrera")}
+          style={{ marginTop: 18, backgroundColor: "#fff", borderRadius: 18, paddingVertical: 17, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", gap: 12,
+            shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 14, elevation: 5 }}>
+          <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: "#F06000" }} />
+          <Text style={{ flex: 1, fontSize: 17, fontWeight: "700", color: "#1D1D1D" }}>¿A dónde vas?</Text>
+          <View style={{ backgroundColor: "#F1F2EF", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: "#187830" }}>Ahora ›</Text>
+          </View>
+        </TouchableOpacity>
+
       </View>
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
-        <TouchableOpacity style={styles.servicioCard} onPress={() => navigation.navigate("Inicio", { usuario })}>
-          <Text style={{ fontSize: 44 }}>🍽️</Text>
-          <Text style={styles.servicioTitulo}>Pedir comida</Text>
-          <Text style={styles.servicioSub}>Restaurantes de Orito a domicilio</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.servicioCard, { backgroundColor: "#E7F3E9" }]} onPress={() => navigation.navigate("PedirCarrera", { usuario })}>
-          <Text style={{ fontSize: 44 }}>🚕</Text>
-          <Text style={[styles.servicioTitulo, { color: "#187830" }]}>Pedir carrera o acarreo</Text>
-          <Text style={styles.servicioSub}>Un transportador te recoge, o mueve tu carga</Text>
-        </TouchableOpacity>
+
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}>
+        {promo ? (
+          <TouchableOpacity activeOpacity={0.9} onPress={() => ir("carrera")}
+            style={{ marginTop: 16, backgroundColor: "#F06000", borderRadius: 18, padding: 16, flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <Text style={{ fontSize: 30, fontWeight: "900", color: "#fff" }}>{promo.pct}%</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>Descuento en carreras</Text>
+              <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 12.5, marginTop: 1 }}>{promo.texto || "Precio de lanzamiento por tiempo limitado"}</Text>
+            </View>
+            <Text style={{ color: "#fff", fontSize: 20 }}>›</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        <Text style={{ fontSize: 17, fontWeight: "800", color: "#1D1D1D", marginTop: 22, marginBottom: 12, letterSpacing: -0.2 }}>Servicios</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          {tiles.map(([ic, tit, sub, fondo, color, fn]) => (
+            <TouchableOpacity key={tit} activeOpacity={0.85} onPress={fn}
+              style={{ flex: 1, backgroundColor: "#fff", borderRadius: 18, paddingVertical: 16, paddingHorizontal: 10, alignItems: "center",
+                shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 10, elevation: 2 }}>
+              <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: fondo, alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ fontSize: 30 }}>{ic}</Text>
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: "800", color, marginTop: 10 }}>{tit}</Text>
+              <Text style={{ fontSize: 11.5, color: "#8A8A8A", marginTop: 2, textAlign: "center" }}>{sub}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* por que Tukan: corto, da confianza */}
+        <View style={{ backgroundColor: "#fff", borderRadius: 18, padding: 16, marginTop: 16, gap: 12 }}>
+          {[["💵", "Tú pones el precio", "Ves una tarifa sugerida y ofreces lo que quieres pagar."],
+            ["🛡️", "Conductores verificados", "Ves foto, placa y calificación antes de subirte."],
+            ["📍", "Viaje en vivo", "Comparte tu recorrido con tu familia."]].map(([ic, t, d]) => (
+            <View key={t} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+              <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: "#F1F2EF", alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ fontSize: 18 }}>{ic}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14.5, fontWeight: "700", color: "#1D1D1D" }}>{t}</Text>
+                <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 1 }}>{d}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
       </ScrollView>
-      <TouchableOpacity style={{ padding: 16, paddingBottom: 16 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
-        <Text style={{ color: "#888", fontSize: 13 }}>Salir</Text>
+      <TouchableOpacity style={{ padding: 14, paddingBottom: 14 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
+        <Text style={{ color: "#999", fontSize: 13 }}>Salir</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );
@@ -2212,7 +2733,7 @@ function ReciboModal({ visible, c, esConductor, onCerrar }) {
           <View style={{ flexDirection: "row" }}>
             <View style={{ width: 16, alignItems: "center", paddingVertical: 4 }}>
               <View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: "#187830" }} />
-              <View style={{ width: 2, flex: 1, backgroundColor: "#E2DED3", marginVertical: 3 }} />
+              <View style={{ width: 2, flex: 1, backgroundColor: "#DADDD5", marginVertical: 3 }} />
               <View style={{ width: 11, height: 11, borderRadius: 3, backgroundColor: "#F06000" }} />
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
@@ -2222,6 +2743,8 @@ function ReciboModal({ visible, c, esConductor, onCerrar }) {
               <Text style={{ fontSize: 14.5, color: "#1C2B22" }} numberOfLines={2}>{c.destino || "—"}</Text>
             </View>
           </View>
+          <DetalleAcarreo c={c} />
+          <PruebaEntrega c={c} />
 
           <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 16 }}>
             {[
@@ -2278,17 +2801,131 @@ function TarjetaHistorial({ c, esConductor }) {
           <Text style={{ fontSize: 11, color: badge.col, fontWeight: "700" }}>{badge.t}</Text>
         </View>
       </View>
-      <Text numberOfLines={1} style={{ fontSize: 13.5, color: "#333", marginTop: 5 }}>🟢 {c.origen}</Text>
-      <Text numberOfLines={1} style={{ fontSize: 13.5, color: "#333", marginTop: 1 }}>🔴 {c.destino}</Text>
+      <Text numberOfLines={1} style={{ fontSize: 13.5, color: "#333", marginTop: 5 }}>🟢 {limpiaDir(c.origen)}</Text>
+      <Text numberOfLines={1} style={{ fontSize: 13.5, color: "#333", marginTop: 1 }}>🔴 {limpiaDir(c.destino)}</Text>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
         <Text style={{ fontSize: 12.5, color: "#666" }} numberOfLines={1}>
           {contra ? `${esConductor ? "👤" : "🚕"} ${contra}` : "—"}{estrellas ? `  ·  ⭐ ${Number(estrellas).toFixed(0)}` : ""}
         </Text>
         {precio ? <Text style={{ fontSize: 16, fontWeight: "800", color: fin ? "#187830" : "#999" }}>${precio.toLocaleString()}</Text> : null}
       </View>
+      {!fin && c.motivo_cancelacion ? (
+        <Text style={{ fontSize: 12, color: "#C0392B", marginTop: 5 }} numberOfLines={2}>
+          Motivo{c.cancelada_por ? ` (${c.cancelada_por})` : ""}: {c.motivo_cancelacion}
+        </Text>
+      ) : null}
       <Text style={{ fontSize: 11, color: "#1A56B8", fontWeight: "700", marginTop: 7 }}>📄 Ver recibo ›</Text>
     </TouchableOpacity>
     <ReciboModal visible={ver} c={c} esConductor={esConductor} onCerrar={() => setVer(false)} />
+    </>
+  );
+}
+
+/** ADMIN · comportamiento de un conductor para tomar accion: promedio, reparto
+ *  de estrellas, cancelaciones y comentarios de los pasajeros. */
+function ReputacionAdminModal({ conductorId, onCerrar }) {
+  const [rep, setRep] = useState(null);
+  useEffect(() => {
+    fetch(`${API}/conductores/${conductorId}/reputacion`).then(r => r.json())
+      .then(d => { if (d && d.conductor_id) setRep(d); }).catch(() => {});
+  }, [conductorId]);
+  const alerta = rep && ((rep.calificacion != null && rep.calificacion < 3.5) || rep.canceladas_por_conductor >= 3);
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onCerrar}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+        <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 28, maxHeight: "85%" }}>
+          {!rep ? <ActivityIndicator color="#187830" /> : (
+            <ScrollView>
+              <Text style={{ fontSize: 19, fontWeight: "900", color: "#1C2B22" }}>{rep.nombre}</Text>
+              <Text style={{ fontSize: 14, color: "#555", marginTop: 4 }}>
+                ⭐ {rep.calificacion != null ? Number(rep.calificacion).toFixed(2) : "—"} · {rep.total_calificaciones} calificaciones · {rep.finalizadas} finalizadas
+              </Text>
+              {alerta && (
+                <View style={{ backgroundColor: "#FDECEA", borderRadius: 10, padding: 10, marginTop: 10 }}>
+                  <Text style={{ color: "#C0392B", fontWeight: "800", fontSize: 13 }}>⚠️ Revisar: calificación baja o muchas cancelaciones</Text>
+                </View>
+              )}
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                <View style={{ flex: 1, backgroundColor: "#FFF4E0", borderRadius: 10, padding: 10 }}>
+                  <Text style={{ fontSize: 11, color: "#8A5A00" }}>Canceló él</Text>
+                  <Text style={{ fontSize: 22, fontWeight: "900", color: "#8A5A00" }}>{rep.canceladas_por_conductor}</Text>
+                </View>
+                <View style={{ flex: 1, backgroundColor: "#F3F0E8", borderRadius: 10, padding: 10 }}>
+                  <Text style={{ fontSize: 11, color: "#666" }}>Le cancelaron</Text>
+                  <Text style={{ fontSize: 22, fontWeight: "900", color: "#666" }}>{rep.canceladas_por_cliente}</Text>
+                </View>
+              </View>
+              <Text style={[styles.etiqueta, { marginTop: 14 }]}>ESTRELLAS</Text>
+              {[5, 4, 3, 2, 1].map(n => (
+                <Text key={n} style={{ fontSize: 13, color: "#555" }}>{"⭐".repeat(n)}  {rep.distribucion[n] || 0}</Text>
+              ))}
+              <Text style={[styles.etiqueta, { marginTop: 14 }]}>COMENTARIOS</Text>
+              {rep.comentarios.length === 0 ? <Text style={{ color: "#999", fontSize: 13 }}>Sin comentarios.</Text>
+                : rep.comentarios.map((cm, i) => (
+                  <View key={i} style={{ borderTopWidth: i ? 1 : 0, borderTopColor: "#eee", paddingVertical: 8 }}>
+                    <Text style={{ fontSize: 12, color: "#B8860B", fontWeight: "700" }}>{"⭐".repeat(cm.estrellas)} · {haceCuanto(cm.fecha)}</Text>
+                    <Text style={{ fontSize: 13.5, color: "#333", marginTop: 2 }}>{cm.comentario}</Text>
+                  </View>
+                ))}
+            </ScrollView>
+          )}
+          <TouchableOpacity style={{ padding: 12, marginTop: 6 }} onPress={onCerrar}>
+            <Text style={{ textAlign: "center", color: "#888", fontWeight: "600" }}>Cerrar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Historial del conductor con filtros: periodo, estado, tipo y busqueda por
+ *  lugar o cliente. Arriba, el resumen de lo que quedo filtrado. */
+function HistorialFiltrado({ historial }) {
+  const [periodo, setPeriodo] = useState("todo");
+  const [estado, setEstado] = useState("todas");
+  const [tipo, setTipo] = useState("todos");
+  const [q, setQ] = useState("");
+  const desde = (() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    if (periodo === "hoy") return d;
+    if (periodo === "semana") { const x = new Date(d); x.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return x; }
+    if (periodo === "mes") return new Date(d.getFullYear(), d.getMonth(), 1);
+    return null;
+  })();
+  const texto = q.trim().toLowerCase();
+  const lista = historial.filter(c => {
+    if (desde && (!c.fecha || new Date(c.fecha) < desde)) return false;
+    if (estado !== "todas" && c.estado !== estado) return false;
+    if (tipo === "carreras" && esCarga(c.vehiculo_pedido)) return false;
+    if (tipo === "acarreos" && !esCarga(c.vehiculo_pedido)) return false;
+    if (texto && ![c.origen, c.destino, c.cliente_nombre].some(v => (v || "").toLowerCase().includes(texto))) return false;
+    return true;
+  });
+  const fin = lista.filter(c => c.estado === "finalizada");
+  const ganado = fin.reduce((s, c) => s + (c.tarifa || c.tarifa_ofrecida || 0), 0);
+  const Chips = ({ val, set, opts }) => (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+      {opts.map(([k, t]) => (
+        <TouchableOpacity key={k} onPress={() => set(k)}
+          style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 16, backgroundColor: val === k ? "#187830" : "#fff", borderWidth: 1, borderColor: val === k ? "#187830" : "#ddd" }}>
+          <Text style={{ fontSize: 12.5, fontWeight: "700", color: val === k ? "#fff" : "#555" }}>{t}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+  return (
+    <>
+      <Chips val={periodo} set={setPeriodo} opts={[["hoy", "Hoy"], ["semana", "Semana"], ["mes", "Mes"], ["todo", "Todo"]]} />
+      <Chips val={estado} set={setEstado} opts={[["todas", "Todas"], ["finalizada", "Finalizadas"], ["cancelada", "Canceladas"]]} />
+      <Chips val={tipo} set={setTipo} opts={[["todos", "Todo tipo"], ["carreras", "🚗 Carreras"], ["acarreos", "🚚 Acarreos"]]} />
+      <TextInput value={q} onChangeText={setQ} placeholder="🔎 Buscar por lugar o cliente" style={[styles.input, { marginBottom: 10 }]} />
+      <View style={{ flexDirection: "row", justifyContent: "space-between", backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 10 }}>
+        <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }}>{lista.length} carreras · {fin.length} finalizadas</Text>
+        <Text style={{ fontSize: 13, color: "#187830", fontWeight: "800" }}>${ganado.toLocaleString()}</Text>
+      </View>
+      {lista.length === 0 ? (
+        <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>No hay carreras con esos filtros.</Text>
+      ) : lista.map(c => <TarjetaHistorial key={c.id} c={c} esConductor={true} />)}
     </>
   );
 }
@@ -2632,6 +3269,38 @@ function PedirCarreraScreen({ navigation, route }) {
   const [carrera, setCarrera] = useState(null);
   const [form, setForm] = useState({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
   const [vehiculo, setVehiculo] = useState(null);   // sin defecto: el cliente elige
+  // desde el inicio el cliente entra por "Pedir carrera" o por "Acarreo" (separados).
+  // Sin modo (versiones viejas / otros accesos) se muestran ambos como antes.
+  const modoServicio = (route.params && route.params.modo) || null;
+  const delModo = (vs) => modoServicio === "acarreo" ? vs.filter(esCarga) : modoServicio === "carrera" ? vs.filter((v) => !esCarga(v)) : vs;
+  // detalles del acarreo
+  const [tipoCarga, setTipoCarga] = useState(null);
+  const [tamanoCarga, setTamanoCarga] = useState(null);
+  const [fotosCarga, setFotosCarga] = useState([]);       // URLs ya subidas
+  const [subiendoCarga, setSubiendoCarga] = useState(false);
+  const [ayudantes, setAyudantes] = useState(0);
+  const [pisoO, setPisoO] = useState("");
+  const [pisoD, setPisoD] = useState("");
+  const [ascO, setAscO] = useState(null);
+  const [ascD, setAscD] = useState(null);
+  const [recibeNombre, setRecibeNombre] = useState("");
+  const [recibeTel, setRecibeTel] = useState("");
+  const agregarFotoCarga = async () => {
+    if (fotosCarga.length >= 3) { avisar("Máximo 3 fotos", "Con 3 fotos el transportador ya ve bien la carga."); return; }
+    const uri = await tomarOElegirFoto();
+    if (!uri) return;
+    setSubiendoCarga(true);
+    const fd = new FormData();
+    fd.append("file", { uri, type: "image/jpeg", name: "carga.jpg" });
+    userFetch(`${API}/cargas/foto`, { method: "POST", body: fd })
+      .then((r) => r.json())
+      .then((d) => { setSubiendoCarga(false); if (d && d.url) setFotosCarga((f) => [...f, d.url]); else avisar("Error", (d && d.detail) || "No se pudo subir la foto."); })
+      .catch(() => { setSubiendoCarga(false); avisar("Sin conexión", "No se pudo subir la foto. Intenta de nuevo."); });
+  };
+  const limpiarAcarreo = () => {
+    setTipoCarga(null); setTamanoCarga(null); setFotosCarga([]); setAyudantes(0);
+    setPisoO(""); setPisoD(""); setAscO(null); setAscD(null); setRecibeNombre(""); setRecibeTel("");
+  };
   const [muni, setMuni] = useState(null);           // municipio ACTIVO de esta carrera
   const [municipios, setMunicipios] = useState([]); // todos, para elegir manual
   const [eligiendoMuni, setEligiendoMuni] = useState(false);
@@ -2782,7 +3451,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const [progHora, setProgHora] = useState(null);   // {h, m}
   const [calAbierto, setCalAbierto] = useState(false); // calendario para agendar acarreo
 
-  const vehiculosAqui = (muni && muni.vehiculos) || [];
+  const vehiculosAqui = delModo((muni && muni.vehiculos) || []);
   // hora agendada final; solo aplica a carga y cuando el cliente eligio dia+hora
   const recogidaISO = (esCarga(vehiculo) && programar && progDia && progHora)
     ? isoLocal(progDia, progHora.h, progHora.m) : null;
@@ -2790,7 +3459,7 @@ function PedirCarreraScreen({ navigation, route }) {
   // fija el municipio activo y ajusta el vehiculo si el actual no aplica alli
   const aplicarMuni = (m) => {
     setMuni(m);
-    const vs = m.vehiculos || [];
+    const vs = delModo(m.vehiculos || []);
     setVehiculo((v) => (vs.includes(v) ? v : (vs.length === 1 ? vs[0] : null)));
   };
 
@@ -2813,7 +3482,7 @@ function PedirCarreraScreen({ navigation, route }) {
   useEffect(() => {
     if (!muni || !muni.usa_gps || !origenCoords || !destinoCoords || !vehiculo) { setEstimado(null); return; }
     const p = qs({
-      municipio: muni.nombre, vehiculo,
+      municipio: muni.nombre, vehiculo, usuario_id: usuario.id,
       origen_lat: origenCoords.lat, origen_lon: origenCoords.lon,
       destino_lat: destinoCoords.lat, destino_lon: destinoCoords.lon,
     });
@@ -2950,11 +3619,14 @@ function PedirCarreraScreen({ navigation, route }) {
       avisar("Falta el destino", "Toca '🏁 Marcar a dónde vas en el mapa' para fijar el destino.");
       return;
     }
-    if (!vehiculo) { avisar("Falta el vehiculo", "Elige que necesitas: carrera o trasteo"); return; }
+    if (!vehiculo) { avisar("Falta el vehiculo", "Elige el vehículo que necesitas"); return; }
     // en trasteos, si eligio "programar" pero no completo dia y hora, se avisa
     if (esCarga(vehiculo) && programar && !recogidaISO) {
       avisar("Falta la hora", "Elige el dia y la hora de recogida, o toca 'Lo antes posible'."); return;
     }
+    if (esCarga(vehiculo) && !tipoCarga) { avisar("¿Qué vas a mover?", "Elige el tipo de acarreo: trasteo, mercancía, materiales…"); return; }
+    if (esCarga(vehiculo) && !tamanoCarga) { avisar("¿Qué tan grande es?", "Elige el tamaño de la carga para que te coticen bien."); return; }
+    if (subiendoCarga) { avisar("Un momento", "Se está subiendo una foto, espera a que termine."); return; }
     if (!oferta.trim()) { avisar("Falta tu oferta", "Escribe cuanto ofreces pagar"); return; }
     setCargando(true);
     const datos = {
@@ -2969,6 +3641,16 @@ function PedirCarreraScreen({ navigation, route }) {
     const ofertaNum = parseInt((oferta || "").replace(/\D/g, ""), 10);
     if (ofertaNum) datos.tarifa_ofrecida = ofertaNum;
     if (recogidaISO) datos.recogida = recogidaISO;
+    if (esCarga(vehiculo)) {
+      Object.assign(datos, { tipo_carga: tipoCarga, tamano_carga: tamanoCarga, ayudantes });
+      if (fotosCarga.length) datos.fotos_carga = fotosCarga.join(",");
+      if (pisoO.trim()) datos.piso_origen = parseInt(pisoO, 10) || 0;
+      if (pisoD.trim()) datos.piso_destino = parseInt(pisoD, 10) || 0;
+      if (ascO) datos.ascensor_origen = ascO;
+      if (ascD) datos.ascensor_destino = ascD;
+      if (recibeNombre.trim()) datos.recibe_nombre = recibeNombre.trim();
+      if (recibeTel.trim()) datos.recibe_telefono = recibeTel.trim();
+    }
     fetchReintento(`${API}/carreras?${qs(datos)}`, { method: "POST", headers: { "X-User-Token": llaveUsuario || "" } })
       .then(async (r) => {
         setCargando(false);
@@ -2993,18 +3675,60 @@ function PedirCarreraScreen({ navigation, route }) {
         if (!d || !d.id) { avisar("Error", "Respuesta inesperada del servidor."); return; }
         setForm({ origen: "", origen_detalle: "", destino: "", destino_detalle: "", notas: "" });
         setOrigenCoords(null); setDestinoCoords(null); setEstimado(null); setOferta("");
-        setProgramar(false); setProgDia(null); setProgHora(null);
+        setProgramar(false); setProgDia(null); setProgHora(null); limpiarAcarreo();
         setCarrera(d); setVerForm(false);   // muestra el seguimiento de la recien pedida
       })
       .catch(() => { setCargando(false); avisar("Sin conexion", "No pudimos enviar tu carrera. Verifica tu internet e intenta de nuevo."); });
   };
 
-  const cancelar = () => {
-    confirmar("Cancelar carrera", "Seguro que quieres cancelar?",
-      () => userFetch(`${API}/carreras/${carrera.id}/estado?estado=cancelada`, { method: "PUT" })
-        .then(() => { setCarrera(null); setContraofertas([]); })
-        .catch(() => avisar("Error", "No se pudo cancelar")),
-      "Si, cancelar");
+  // CANCELACION: buscando = libre; aceptada = solo 1,5 min (el servidor manda
+  // cuanto queda). Pasado ese tiempo ya no se cancela desde la app: se habla con
+  // el conductor o con soporte (puede aplicar penalidad).
+  const MOTIVOS_CANCELAR = ["El conductor tarda mucho", "Me equivoqué de dirección", "Encontré otro transporte",
+    "Ya no lo necesito", "El precio no me sirve", "Otro"];
+  const [verCancelar, setVerCancelar] = useState(false);
+  const [motivoSel, setMotivoSel] = useState(null);
+  const [motivoTxt, setMotivoTxt] = useState("");
+  const recibidoCancel = useRef({ seg: null, t: 0 });
+  const [, setTicCancel] = useState(0);
+  useEffect(() => {
+    recibidoCancel.current = { seg: carrera ? carrera.segundos_para_cancelar : null, t: Date.now() };
+  }, [carrera && carrera.id, carrera && carrera.estado, carrera && carrera.segundos_para_cancelar]);
+  const corriendoCancel = !!(carrera && ["aceptada", "en_sitio"].includes(carrera.estado) && carrera.segundos_para_cancelar > 0);
+  useEffect(() => {
+    if (!corriendoCancel) return;
+    const i = setInterval(() => setTicCancel(x => x + 1), 1000);
+    return () => clearInterval(i);
+  }, [corriendoCancel]);
+  const restanteCancel = recibidoCancel.current.seg == null ? null
+    : Math.max(0, recibidoCancel.current.seg - Math.floor((Date.now() - recibidoCancel.current.t) / 1000));
+
+  // reputacion del conductor asignado (promedio + comentarios de otros pasajeros)
+  const [rep, setRep] = useState(null);
+  const [verRep, setVerRep] = useState(false);
+  useEffect(() => {
+    setRep(null);
+    if (!carrera || !carrera.conductor_id) return;
+    fetch(`${API}/conductores/${carrera.conductor_id}/reputacion`).then(r => r.json())
+      .then(d => { if (d && d.conductor_id) setRep(d); }).catch(() => {});
+  }, [carrera && carrera.conductor_id]);
+
+  const cancelar = () => { setMotivoSel(null); setMotivoTxt(""); setVerCancelar(true); };
+  const confirmarCancelacion = () => {
+    const motivo = motivoSel === "Otro" || !motivoSel ? motivoTxt.trim() : (motivoTxt.trim() ? `${motivoSel} — ${motivoTxt.trim()}` : motivoSel);
+    if (!motivo) { avisar("Cuéntanos por qué", "Elige un motivo o escríbelo para poder cancelar."); return; }
+    userFetch(`${API}/carreras/${carrera.id}/estado?${qs({ estado: "cancelada", motivo })}`, { method: "PUT" })
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        setVerCancelar(false);
+        if (ok) { setCarrera(null); setContraofertas([]); return; }
+        // el servidor manda la ultima palabra (por si el reloj del celular va distinto)
+        if (String(d && d.detail || "").startsWith("FUERA_DE_TIEMPO")) {
+          recibidoCancel.current = { seg: 0, t: Date.now() }; setTicCancel(x => x + 1);
+          avisar("Ya no se puede cancelar", "Pasó el tiempo para cancelar (1,5 min). Comunícate con el conductor o con soporte. Puede aplicar una penalidad.");
+        } else avisar("Error", (d && d.detail) || "No se pudo cancelar");
+      })
+      .catch(() => avisar("Sin conexión", "No se pudo cancelar. Revisa tu internet."));
   };
 
   // mientras la carrera busca, se traen las contraofertas de los conductores
@@ -3058,7 +3782,7 @@ function PedirCarreraScreen({ navigation, route }) {
   if (carrera && !verForm) {
     const buscando = carrera.estado === "buscando";
     const tituloEstado = {
-      buscando: "Buscando transportador...",
+      buscando: "Buscando conductor…",
       aceptada: "Tu conductor va en camino",
       en_sitio: "Tu conductor ya llegó",
       en_camino: "En viaje a tu destino",
@@ -3109,19 +3833,26 @@ function PedirCarreraScreen({ navigation, route }) {
               ))}
             </View>
           )}
-          {!buscando && (
-            <View style={styles.pasos}>
-              {[["aceptada", "✓ Aceptada"], ["en_sitio", "📍 Llegó"], ["en_camino", "🚗 En viaje"], ["finalizada", "🏁 Fin"]].map(([est, lbl], i) => {
-                const orden = { aceptada: 0, en_sitio: 1, en_camino: 2, finalizada: 3 };
-                const activo = orden[carrera.estado] >= i;
-                return (
-                  <View key={est} style={[styles.paso, activo && styles.pasoActivo]}>
-                    <Text style={{ fontSize: 12, fontWeight: "600", color: activo ? "#fff" : "#999" }}>{lbl}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          )}
+          {!buscando && (() => {
+            // barra de progreso limpia: 4 tramos + el nombre del paso actual
+            const orden = { aceptada: 0, en_sitio: 1, en_camino: 2, finalizada: 3 };
+            const actual = orden[carrera.estado] != null ? orden[carrera.estado] : 0;
+            const nombres = ["Aceptada", "Llegó", "En viaje", "Fin"];
+            return (
+              <View style={{ marginBottom: 12 }}>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {nombres.map((n, i) => (
+                    <View key={n} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: i <= actual ? "#187830" : "#DADDD5" }} />
+                  ))}
+                </View>
+                <View style={{ flexDirection: "row", marginTop: 6 }}>
+                  {nombres.map((n, i) => (
+                    <Text key={n} style={{ flex: 1, fontSize: 11.5, textAlign: "center", fontWeight: i === actual ? "800" : "500", color: i <= actual ? "#187830" : "#9A9A9A" }}>{n}</Text>
+                  ))}
+                </View>
+              </View>
+            );
+          })()}
           {carrera.estado === "en_sitio" ? (
             <View style={{ backgroundColor: "#E7F0FF", borderRadius: 10, padding: 12, marginBottom: 12, alignItems: "center" }}>
               <Text style={{ fontSize: 15, fontWeight: "800", color: "#1A73E8" }}>📍 Tu conductor ya está en el punto</Text>
@@ -3130,13 +3861,13 @@ function PedirCarreraScreen({ navigation, route }) {
           ) : hayMapa && (info || dist != null) && (
             <View style={{ backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginBottom: 12, alignItems: "center" }}>
               <Text style={{ fontSize: 15, fontWeight: "700", color: "#187830" }}>
-                🚗 {carrera.estado === "aceptada" ? "Tu conductor esta a" : "Faltan"}{" "}
+                🚗 {carrera.estado === "aceptada" ? "Tu conductor está a" : "Faltan"}{" "}
                 {info
                   ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
                   : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
               </Text>
               {carrera.conductor_ubic_fecha && (Date.now() - new Date(carrera.conductor_ubic_fecha).getTime()) > 90000 && (
-                <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicacion de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
+                <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicación de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
               )}
             </View>
           )}
@@ -3150,41 +3881,88 @@ function PedirCarreraScreen({ navigation, route }) {
             const tarifa = carrera.tarifa || carrera.tarifa_ofrecida || carrera.tarifa_sugerida;
             const fmtKm = (k) => (k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
             return (
-              <View style={{ backgroundColor: "#FFF3E6", borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                <Text style={{ fontSize: 13, color: "#333", fontWeight: "600" }} numberOfLines={1}>🟢 {carrera.origen}</Text>
-                <Text style={{ fontSize: 13, color: "#333", fontWeight: "600", marginTop: 2 }} numberOfLines={1}>🏁 {carrera.destino}</Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                  <View style={{ backgroundColor: "#fff", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9 }}>
-                    <Text style={{ fontSize: 13, color: "#B85C00", fontWeight: "700" }}>
-                      🛣️ Viaje: {kmViaje != null ? `~${fmtKm(kmViaje)}` : "sin distancia"}
-                    </Text>
+              <View style={[styles.card, { marginBottom: 12, padding: 16 }]}>
+                <View style={sl.filaRuta}>
+                  <View style={[sl.puntoHueco, { marginTop: 5 }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={sl.dir} numberOfLines={2}>{limpiaDir(carrera.origen)}</Text>
+                    {carrera.origen_detalle ? <Text style={{ fontSize: 12.5, color: "#8A8A8A" }}>{carrera.origen_detalle}</Text> : null}
+                  </View>
+                </View>
+                <View style={[sl.filaRuta, { marginTop: 10 }]}>
+                  <View style={[sl.puntoLleno, { marginTop: 5 }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={sl.dir} numberOfLines={2}>{limpiaDir(carrera.destino)}</Text>
+                    {carrera.destino_detalle ? <Text style={{ fontSize: 12.5, color: "#8A8A8A" }}>{carrera.destino_detalle}</Text> : null}
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#EEEFEA" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11.5, color: "#8A8A8A", fontWeight: "700" }}>{vehLabel(carrera.vehiculo_pedido).toUpperCase()}</Text>
+                    <Text style={{ fontSize: 17, fontWeight: "800", color: "#1D1D1D", marginTop: 2 }}>{kmViaje != null ? `~${fmtKm(kmViaje)}` : "—"}</Text>
                   </View>
                   {tarifa ? (
-                    <View style={{ backgroundColor: "#fff", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9 }}>
-                      <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }}>💵 ${tarifa.toLocaleString()}</Text>
-                    </View>
-                  ) : null}
-                  {carrera.tarifa_sugerida && carrera.tarifa_ofrecida && carrera.tarifa_ofrecida < carrera.tarifa_sugerida ? (
-                    <View style={{ backgroundColor: "#FDECEA", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9 }}>
-                      <Text style={{ fontSize: 12.5, color: "#C0392B", fontWeight: "700" }}>Mín. sugerido ${carrera.tarifa_sugerida.toLocaleString()}</Text>
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Text style={{ fontSize: 11.5, color: "#8A8A8A", fontWeight: "700" }}>{buscando ? "TU OFERTA" : "PRECIO"}</Text>
+                      <Text style={{ fontSize: 22, fontWeight: "800", color: "#187830" }}>${tarifa.toLocaleString()}</Text>
                     </View>
                   ) : null}
                 </View>
-                {kmViaje == null && (
-                  <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 6 }}>
-                    Esta carrera se pidió sin ubicación en el mapa (antes del cambio), por eso no muestra distancia ni 🏁.
+                {buscando && carrera.tarifa_sugerida && carrera.tarifa_ofrecida && carrera.tarifa_ofrecida < carrera.tarifa_sugerida ? (
+                  <Text style={{ fontSize: 12.5, color: "#C0392B", fontWeight: "600", marginTop: 8 }}>
+                    Ofreciste menos del sugerido (${carrera.tarifa_sugerida.toLocaleString()}). Puede que tarden más en aceptarla.
                   </Text>
-                )}
+                ) : null}
               </View>
             );
           })()}
           {buscando ? (
             <>
-              <View style={[styles.card, { alignItems: "center", paddingVertical: 24 }]}>
+              {contraofertas.length > 0 && (
+                <>
+                  <Text style={[styles.seccionTitulo, { marginTop: 0 }]}>
+                    {contraofertas.length === 1 ? "1 conductor te propone" : `${contraofertas.length} conductores te proponen`}
+                  </Text>
+                  {contraofertas.map((of) => {
+                    // fresca (< 6s): resaltada con su barra de tiempo; luego sigue en la lista
+                    const restante = VENTANA_OF - (ahoraOf - (ofRecibidas.current[of.id] || 0));
+                    const fresca = restante > 0;
+                    const pct = Math.max(0, Math.min(100, (restante / VENTANA_OF) * 100));
+                    const nom = (of.conductor_nombre || "Conductor").trim();
+                    return (
+                    <View key={of.id} style={[styles.card, { marginBottom: 10, padding: 14 }, fresca && { borderWidth: 2, borderColor: "#F06000" }]}>
+                      {fresca && <View style={[styles.barraFondo, { marginTop: 0, marginBottom: 10 }]}><View style={[styles.barra, { width: `${pct}%` }]} /></View>}
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                        {of.conductor_foto ? (
+                          <Image source={{ uri: of.conductor_foto }} style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#EEE" }} />
+                        ) : (
+                          <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#E7F3E9", alignItems: "center", justifyContent: "center" }}>
+                            <Text style={{ fontSize: 22, fontWeight: "700", color: "#187830" }}>{nom.charAt(0).toUpperCase()}</Text>
+                          </View>
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: "800", fontSize: 16, color: "#1D1D1D" }} numberOfLines={1}>{nom.split(" ")[0]}</Text>
+                          <Text style={{ fontSize: 13, color: "#555", marginTop: 1 }}>★ {of.conductor_calificacion ? Number(of.conductor_calificacion).toFixed(1) : "Nuevo"}</Text>
+                          <Text style={{ fontSize: 12.5, color: "#8A8A8A", marginTop: 1 }} numberOfLines={1}>
+                            {[of.conductor_vehiculo || vehLabel(of.conductor_tipo), of.conductor_veh_color, of.conductor_placa].filter(Boolean).join(" · ")}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 24, fontWeight: "800", color: "#1D1D1D" }}>${of.monto.toLocaleString()}</Text>
+                      </View>
+                      <TouchableOpacity activeOpacity={0.9} style={{ backgroundColor: "#187830", borderRadius: 14, paddingVertical: 13, alignItems: "center", marginTop: 12 }} onPress={() => aceptarContraoferta(of)}>
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15.5 }}>Aceptar por ${of.monto.toLocaleString()}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    );
+                  })}
+                </>
+              )}
+              <View style={[styles.card, { alignItems: "center", paddingVertical: 22, marginBottom: 12 }]}>
                 <ActivityIndicator size="large" color="#187830" />
-                <Text style={{ color: "#888", marginTop: 12, textAlign: "center" }}>
+                <Text style={{ fontSize: 16.5, fontWeight: "800", color: "#1D1D1D", marginTop: 12, textAlign: "center" }}>Buscando conductores cerca de ti</Text>
+                <Text style={{ color: "#7A7A7A", marginTop: 6, textAlign: "center", fontSize: 13.5, lineHeight: 19 }}>
                   {carrera.tarifa_ofrecida
-                    ? `Ofreciste $${carrera.tarifa_ofrecida.toLocaleString()}. Esperando que un conductor acepte o te proponga otro precio.`
+                    ? "Un conductor puede aceptar tu precio o proponerte otro. Las ofertas te aparecen en esta pantalla."
                     : "Avisamos a los transportadores disponibles."}
                   {"\n"}
                   {esCarga(carrera.vehiculo_pedido)
@@ -3201,44 +3979,6 @@ function PedirCarreraScreen({ navigation, route }) {
                 <Text style={{ color: "#187830", fontWeight: "700" }}>＋ Pedir otro servicio</Text>
               </TouchableOpacity>
 
-              {contraofertas.length > 0 && (
-                <>
-                  <Text style={styles.seccionTitulo}>Precios que te proponen</Text>
-                  {contraofertas.map((of) => {
-                    // fresca (< 6s): resaltada con cuenta regresiva; luego sigue
-                    // en la lista, aceptable, sin la cuenta
-                    const restante = VENTANA_OF - (ahoraOf - (ofRecibidas.current[of.id] || 0));
-                    const fresca = restante > 0;
-                    const seg = Math.max(1, Math.ceil(restante / 1000));
-                    const pct = Math.max(0, Math.min(100, (restante / VENTANA_OF) * 100));
-                    return (
-                    <View key={of.id} style={fresca ? [styles.urgente, { padding: 14 }] : [styles.card, { marginBottom: 10 }]}>
-                      {fresca && (
-                        <>
-                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                            <Text style={{ fontSize: 12, letterSpacing: 1, color: "#B85C00", fontWeight: "800" }}>NUEVA OFERTA</Text>
-                            <View style={styles.cuenta}><Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{seg}</Text></View>
-                          </View>
-                          <View style={styles.barraFondo}><View style={[styles.barra, { width: `${pct}%` }]} /></View>
-                        </>
-                      )}
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: fresca ? 10 : 0 }}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: "600", fontSize: 15 }}>{of.conductor_nombre}</Text>
-                          <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-                            {vehIcono(of.conductor_tipo)} {of.conductor_placa || ""}
-                          </Text>
-                        </View>
-                        <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>${of.monto.toLocaleString()}</Text>
-                      </View>
-                      <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => aceptarContraoferta(of)}>
-                        <Text style={[styles.buttonText, { fontSize: 14 }]}>Aceptar a este precio</Text>
-                      </TouchableOpacity>
-                    </View>
-                    );
-                  })}
-                </>
-              )}
             </>
           ) : (
             <>
@@ -3257,6 +3997,13 @@ function PedirCarreraScreen({ navigation, route }) {
                     <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
                     <Estrellas valor={carrera.conductor_calificacion} size={14} />
                   </View>
+                  {rep && (
+                    <TouchableOpacity onPress={() => setVerRep(true)} style={{ marginTop: 3 }}>
+                      <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700" }}>
+                        {rep.total_calificaciones > 0 ? `${rep.total_calificaciones} calificaciones · ${rep.finalizadas} viajes · ver comentarios ›` : "Conductor nuevo · aún sin calificaciones"}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                   {(carrera.conductor_vehiculo || carrera.conductor_tipo_vehiculo) ? (
                     <Text style={{ fontSize: 14, color: "#555", marginTop: 2 }}>
                       {/* lidera la MARCA/linea del carro; si el conductor no la puso,
@@ -3293,7 +4040,7 @@ function PedirCarreraScreen({ navigation, route }) {
 
               {carrera.conductor_pagos && (
                 <View style={{ marginTop: 12, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 12 }}>
-                  <Text style={{ fontSize: 12, color: "#666", marginBottom: 6, fontWeight: "600" }}>COMO PAGARLE</Text>
+                  <Text style={{ fontSize: 12, color: "#666", marginBottom: 6, fontWeight: "600" }}>CÓMO PAGARLE</Text>
                   {carrera.conductor_pagos.efectivo && <Text style={styles.pagoItem}>💵 Efectivo</Text>}
                   {carrera.conductor_pagos.nequi ? <Text style={styles.pagoItem}>📱 Nequi: {carrera.conductor_pagos.nequi}</Text> : null}
                   {carrera.conductor_pagos.daviplata ? <Text style={styles.pagoItem}>📱 Daviplata: {carrera.conductor_pagos.daviplata}</Text> : null}
@@ -3305,48 +4052,113 @@ function PedirCarreraScreen({ navigation, route }) {
             </>
           )}
 
+          {/* extras del viaje (solo si hay algo que el resumen de arriba no muestra) */}
+          {(carrera.recogida || carrera.zona === "rural" || esCarga(carrera.vehiculo_pedido) || carrera.entrega_foto || carrera.entregada_en) ? (
           <View style={styles.card}>
-            {/* el cliente tambien ve el recorrido y, si va en camino, lo que falta */}
-            <View style={{ marginBottom: 10, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-              <Text style={{ fontSize: 14, fontWeight: "700", color: "#444" }}>
-                {vehIcono(carrera.vehiculo_pedido)} {vehLabel(carrera.vehiculo_pedido)}
-              </Text>
-              {carrera.distancia_km != null && (
-                <View style={{ backgroundColor: "#FFF3E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
-                  <Text style={{ fontSize: 13, color: "#B85C00", fontWeight: "700" }}>
-                    🛣️ Recorrido ~{carrera.distancia_km < 1
-                      ? `${Math.round(carrera.distancia_km * 1000)} m`
-                      : `${carrera.distancia_km.toFixed(1)} km`}
-                  </Text>
-                </View>
-              )}
-              {carrera.recogida && (
-                <View style={{ backgroundColor: "#FFF7E6", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
-                  <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>⏰ Recogida: {fmtRecogida(carrera.recogida)}</Text>
-                </View>
-              )}
-            </View>
-            <Text style={styles.etiqueta}>DESDE</Text>
-            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{carrera.origen}</Text>
-            {carrera.origen_detalle ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{carrera.origen_detalle}</Text> : null}
-            <View style={{ height: 1, backgroundColor: "#eee", marginVertical: 12 }} />
-            <Text style={styles.etiqueta}>HASTA</Text>
-            <Text style={{ fontSize: 15, fontWeight: "600", color: "#333" }}>{carrera.destino}</Text>
-            {carrera.destino_detalle ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{carrera.destino_detalle}</Text> : null}
+            {carrera.recogida && (
+              <View style={{ backgroundColor: "#FFF7E6", borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, alignSelf: "flex-start" }}>
+                <Text style={{ fontSize: 13.5, color: "#8A5A00", fontWeight: "700" }}>Recogida programada: {fmtRecogida(carrera.recogida)}</Text>
+              </View>
+            )}
             {carrera.zona === "rural" && (
               <View style={styles.avisoRural}><Text style={styles.avisoRuralTexto}>🌄 Carrera fuera del casco urbano</Text></View>
             )}
+            <DetalleAcarreo c={carrera} />
+            <PruebaEntrega c={carrera} />
           </View>
+          ) : null}
 
-          {["buscando", "aceptada"].includes(carrera.estado) ? (
-            <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", marginTop: 16 }]} onPress={cancelar}>
-              <Text style={{ color: "#C0392B", fontWeight: "600" }}>Cancelar carrera</Text>
-            </TouchableOpacity>
+          {carrera.estado === "buscando" || (carrera.estado === "aceptada" && (restanteCancel == null || restanteCancel > 0)) ? (
+            <>
+              <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", marginTop: 16 }]} onPress={cancelar}>
+                <Text style={{ color: "#C0392B", fontWeight: "600" }}>
+                  Cancelar carrera{restanteCancel != null && carrera.estado !== "buscando" ? ` · ${Math.floor(restanteCancel / 60)}:${String(restanteCancel % 60).padStart(2, "0")}` : ""}
+                </Text>
+              </TouchableOpacity>
+              {restanteCancel != null && carrera.estado !== "buscando" && (
+                <Text style={{ textAlign: "center", color: "#999", fontSize: 12, marginTop: 6 }}>
+                  Tienes 1,5 min para cancelar sin problema. Después ya no se puede desde la app.
+                </Text>
+              )}
+            </>
+          ) : ["aceptada", "en_sitio"].includes(carrera.estado) ? (
+            // se le paso el tiempo: ya no cancela desde la app; habla con el conductor o soporte
+            <View style={{ backgroundColor: "#FFF4E0", borderRadius: 12, padding: 14, marginTop: 16 }}>
+              <Text style={{ fontSize: 14, fontWeight: "800", color: "#8A5A00" }}>{carrera.estado === "en_sitio" ? "📍 Tu conductor ya llegó: ya no se puede cancelar" : "⏱️ Ya pasó el tiempo para cancelar"}</Text>
+              <Text style={{ fontSize: 12.5, color: "#8A5A00", marginTop: 4, lineHeight: 18 }}>
+                {carrera.estado === "en_sitio" ? "Te está esperando en el punto de recogida." : "El conductor ya va en camino."} Si de verdad no puedes tomar el viaje, avísale o escríbele a soporte. Puede aplicar una penalidad por cancelar tarde.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#25D366", padding: 10 }]} onPress={() => whatsapp(carrera.conductor_telefono)}>
+                  <Text style={[styles.buttonText, { fontSize: 13 }]}>💬 Conductor</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => soporteWhatsApp("3133714915", usuario)}>
+                  <Text style={[styles.buttonText, { fontSize: 13 }]}>🛟 Soporte</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ) : (
             <Text style={{ textAlign: "center", color: "#888", fontSize: 13, marginTop: 16 }}>
               El viaje esta en curso y ya no se puede cancelar.{"\n"}Si hay un problema, llama al conductor.
             </Text>
           )}
+
+          {/* motivo de la cancelacion: rapido (chips) + abierto (texto) */}
+          <Modal visible={verCancelar} transparent animationType="slide" onRequestClose={() => setVerCancelar(false)}>
+            <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+              <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 28 }}>
+                <Text style={{ fontSize: 19, fontWeight: "900", color: "#1C2B22" }}>¿Por qué cancelas?</Text>
+                <Text style={{ fontSize: 12.5, color: "#888", marginTop: 3 }}>Nos ayuda a mejorar el servicio.</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+                  {MOTIVOS_CANCELAR.map(m => (
+                    <TouchableOpacity key={m} onPress={() => setMotivoSel(m)}
+                      style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 18, borderWidth: 1.5,
+                        borderColor: motivoSel === m ? "#C0392B" : "#ddd", backgroundColor: motivoSel === m ? "#FDECEA" : "#fff" }}>
+                      <Text style={{ fontSize: 13, color: motivoSel === m ? "#C0392B" : "#555", fontWeight: "600" }}>{m}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput value={motivoTxt} onChangeText={setMotivoTxt} maxLength={300} multiline
+                  placeholder={motivoSel === "Otro" ? "Cuéntanos qué pasó" : "Algo más que quieras contarnos (opcional)"}
+                  style={[styles.input, { marginTop: 12, minHeight: 60, textAlignVertical: "top" }]} />
+                <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", marginTop: 4 }]} onPress={confirmarCancelacion}>
+                  <Text style={styles.buttonText}>Cancelar carrera</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ padding: 12 }} onPress={() => setVerCancelar(false)}>
+                  <Text style={{ textAlign: "center", color: "#888", fontWeight: "600" }}>Volver</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+
+          {/* REPUTACION del conductor: promedio + comentarios de otros pasajeros */}
+          <Modal visible={verRep} transparent animationType="slide" onRequestClose={() => setVerRep(false)}>
+            <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+              <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 28, maxHeight: "80%" }}>
+                <Text style={{ fontSize: 19, fontWeight: "900", color: "#1C2B22" }}>{rep ? rep.nombre : "Conductor"}</Text>
+                {rep ? (
+                  <>
+                    <Text style={{ fontSize: 13, color: "#666", marginTop: 4 }}>
+                      ⭐ {rep.calificacion != null ? Number(rep.calificacion).toFixed(1) : "—"} · {rep.total_calificaciones} calificaciones · {rep.finalizadas} viajes
+                    </Text>
+                    <ScrollView style={{ marginTop: 12 }}>
+                      {rep.comentarios.length === 0 ? (
+                        <Text style={{ color: "#999", fontSize: 13 }}>Aún no tiene comentarios.</Text>
+                      ) : rep.comentarios.map((cm, i) => (
+                        <View key={i} style={{ borderTopWidth: i ? 1 : 0, borderTopColor: "#eee", paddingVertical: 10 }}>
+                          <Text style={{ fontSize: 13, color: "#B8860B", fontWeight: "700" }}>{"⭐".repeat(cm.estrellas)}</Text>
+                          <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }}>{cm.comentario}</Text>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </>
+                ) : <ActivityIndicator color="#187830" style={{ marginTop: 16 }} />}
+                <TouchableOpacity style={{ padding: 12, marginTop: 6 }} onPress={() => setVerRep(false)}>
+                  <Text style={{ textAlign: "center", color: "#888", fontWeight: "600" }}>Cerrar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
         </ScrollView>
       </SafeAreaView>
     );
@@ -3365,7 +4177,7 @@ function PedirCarreraScreen({ navigation, route }) {
         <Image source={require("./assets/icon.png")} style={{ width: 40, height: 40, borderRadius: 12 }} />
         <View style={{ flex: 1 }}>
           <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "600" }}>{muni ? `Transporte en ${muni.nombre}` : "Movilidad y acarreos"}</Text>
-          <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.3, marginTop: 1 }}>Pedir carrera</Text>
+          <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.3, marginTop: 1 }}>{modoServicio === "acarreo" ? "Pedir acarreo" : "Pedir carrera"}</Text>
         </View>
         <TouchableOpacity onPress={() => setVerMenu(true)}
           style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" }}>
@@ -3407,15 +4219,33 @@ function PedirCarreraScreen({ navigation, route }) {
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
           <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 22, paddingBottom: 28 }}>
             <Text style={{ fontSize: 22, fontWeight: "900", color: "#1C2B22" }}>🎁 Invita y gana</Text>
-            <Text style={{ fontSize: 14, color: "#777", marginTop: 4 }}>Comparte tu código. Cuando alguien se registre con él, queda contado como tu invitado.</Text>
+            <Text style={{ fontSize: 14, color: "#777", marginTop: 4 }}>Comparte tu código. Cuando <Text style={{ fontWeight: "800", color: "#F06000" }}>10 invitados pidan carrera</Text>, ¡la tuya va gratis! 🎉</Text>
             <View style={{ backgroundColor: "#EAF6EC", borderRadius: 14, padding: 18, marginTop: 16, alignItems: "center" }}>
               <Text style={{ fontSize: 11, color: "#7A927F", fontWeight: "800", letterSpacing: 1 }}>TU CÓDIGO</Text>
               <Text style={{ fontSize: 30, fontWeight: "900", color: "#187830", letterSpacing: 2, marginTop: 4 }}>{referidos ? referidos.codigo : "…"}</Text>
             </View>
-            <View style={{ alignItems: "center", marginTop: 16 }}>
-              <Text style={{ fontSize: 30, fontWeight: "900", color: "#F06000" }}>{referidos ? referidos.total : 0}</Text>
-              <Text style={{ fontSize: 12.5, color: "#888" }}>personas invitadas</Text>
-            </View>
+            {/* progreso al premio: invitados que YA pidieron al menos una carrera */}
+            {(() => {
+              const meta = (referidos && referidos.meta) || 10;
+              const hechos = (referidos && referidos.con_carrera) || 0;
+              const listo = !!(referidos && referidos.premio_listo);
+              const pct = Math.min(100, Math.round((hechos / meta) * 100));
+              return (
+                <View style={{ marginTop: 18 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 6 }}>
+                    <Text style={{ fontSize: 13, color: "#555", fontWeight: "600" }}>Ya pidieron carrera</Text>
+                    <Text style={{ fontSize: 18, fontWeight: "900", color: "#F06000" }}>{hechos}<Text style={{ fontSize: 13, color: "#999" }}> / {meta}</Text></Text>
+                  </View>
+                  <View style={{ height: 10, borderRadius: 6, backgroundColor: "#EDEDED", overflow: "hidden" }}>
+                    <View style={{ width: `${pct}%`, height: 10, backgroundColor: listo ? "#2E9E49" : "#F06000" }} />
+                  </View>
+                  <Text style={{ fontSize: 12.5, color: listo ? "#2E9E49" : "#999", marginTop: 8, fontWeight: listo ? "800" : "500", textAlign: "center" }}>
+                    {listo ? "🎉 ¡Lo lograste! Tu próxima carrera va gratis." : `Te faltan ${Math.max(0, meta - hechos)} para tu carrera gratis`}
+                  </Text>
+                  <Text style={{ fontSize: 11.5, color: "#aaa", marginTop: 4, textAlign: "center" }}>{referidos ? referidos.total : 0} invitados en total</Text>
+                </View>
+              );
+            })()}
             <TouchableOpacity style={[styles.button, { backgroundColor: "#25D366", marginTop: 18 }]} onPress={compartirCodigo}>
               <Text style={styles.buttonText}>📤 Compartir mi código</Text>
             </TouchableOpacity>
@@ -3427,7 +4257,7 @@ function PedirCarreraScreen({ navigation, route }) {
       </Modal>
 
       <Modal visible={verHistorial} animationType="slide" onRequestClose={() => setVerHistorial(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: "#F3F1EA" }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#F4F5F1" }}>
           <View style={{ paddingTop: insets.top + 12, paddingBottom: 14, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#187830" }}>
             <TouchableOpacity onPress={() => setVerHistorial(false)} style={{ padding: 4 }}><Text style={{ fontSize: 24, color: "#fff" }}>←</Text></TouchableOpacity>
             <Text style={{ fontSize: 17, fontWeight: "700", color: "#fff" }}>Tus carreras</Text>
@@ -3441,7 +4271,7 @@ function PedirCarreraScreen({ navigation, route }) {
       </Modal>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 300 }} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 160 }} keyboardShouldPersistTaps="handled">
         {/* sus solicitudes siguen vivas mientras pide otra cosa */}
         {activas.length > 0 && (
           <TouchableOpacity
@@ -3455,7 +4285,7 @@ function PedirCarreraScreen({ navigation, route }) {
           </TouchableOpacity>
         )}
         {/* switch: pedir EN la ciudad, o un viaje a OTRA ciudad (expreso por cupos) */}
-        <View style={{ flexDirection: "row", backgroundColor: "#ECE7DC", borderRadius: 14, padding: 5, marginBottom: 16 }}>
+        <View style={{ flexDirection: "row", backgroundColor: "#E9EBE5", borderRadius: 14, padding: 5, marginBottom: 16 }}>
           {[["local", "🚕 En la ciudad"], ["expreso", "🚌 A otra ciudad"]].map(([mm, lbl]) => {
             const on = modo === mm;
             return (
@@ -3497,7 +4327,7 @@ function PedirCarreraScreen({ navigation, route }) {
                   ))}
                   {recs.map((l, i) => (
                     <TouchableOpacity key={"r" + i} onPress={() => usarComoDestino(l)}
-                      style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FBFAF6", borderWidth: 1, borderColor: "#EAE4D6", borderRadius: 20, paddingVertical: 9, paddingHorizontal: 14 }}>
+                      style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#F7F8F5", borderWidth: 1, borderColor: "#E6E8E2", borderRadius: 20, paddingVertical: 9, paddingHorizontal: 14 }}>
                       <Text style={{ fontSize: 14 }}>🕘</Text>
                       <Text numberOfLines={1} style={{ color: "#555", fontWeight: "600", fontSize: 13, maxWidth: 150 }}>{l.direccion || "Reciente"}</Text>
                     </TouchableOpacity>
@@ -3508,23 +4338,23 @@ function PedirCarreraScreen({ navigation, route }) {
           })()}
 
           {/* riel de puntos (recogida 🟢 -> destino 🟥). Cada fila abre el mapa. */}
-          <View style={{ flexDirection: "row", backgroundColor: "#FBFAF6", borderRadius: 14, borderWidth: 1, borderColor: "#EFEADF", paddingLeft: 14, paddingRight: 12 }}>
+          <View style={{ flexDirection: "row", backgroundColor: "#F7F8F5", borderRadius: 14, borderWidth: 1, borderColor: "#E9EBE5", paddingLeft: 14, paddingRight: 12 }}>
             <View style={{ width: 16, alignItems: "center", paddingVertical: 20 }}>
               <View style={{ width: 13, height: 13, borderRadius: 7, backgroundColor: "#187830", borderWidth: 3, borderColor: "#C7E6CF" }} />
-              <View style={{ width: 2, flex: 1, backgroundColor: "#E2DED3", marginVertical: 4 }} />
+              <View style={{ width: 2, flex: 1, backgroundColor: "#DADDD5", marginVertical: 4 }} />
               <View style={{ width: 13, height: 13, borderRadius: 3, backgroundColor: "#F06000", borderWidth: 3, borderColor: "#FAD6B8" }} />
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
-              <TouchableOpacity onPress={() => setMapaAbierto("origen")} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#EFEADF" }}>
+              <TouchableOpacity onPress={() => setMapaAbierto("origen")} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#E9EBE5" }}>
                 <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>RECOGIDA</Text>
                 <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: origenCoords ? "#1C2B22" : "#B9B3A6" }}>
-                  {origenCoords ? (form.origen || "Punto marcado en el mapa") : "Marca dónde estás"}
+                  {origenCoords ? (limpiaDir(form.origen) || "Punto marcado en el mapa") : "Marca dónde estás"}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setMapaAbierto("destino")} activeOpacity={0.6} style={{ paddingVertical: 15 }}>
                 <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>DESTINO</Text>
                 <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: destinoCoords ? "#1C2B22" : "#B9B3A6" }}>
-                  {destinoCoords ? (form.destino || "Punto marcado en el mapa") : "¿A dónde vas?"}
+                  {destinoCoords ? (limpiaDir(form.destino) || "Punto marcado en el mapa") : "¿A dónde vas?"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -3649,24 +4479,29 @@ function PedirCarreraScreen({ navigation, route }) {
           <View style={styles.card}>
             {ordenVehiculos(vehiculosAqui).some((v) => !esCarga(v)) && (
               <>
-                <Text style={styles.etiqueta}>QUE NECESITAS</Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => (
-                    <TouchableOpacity
-                      key={v}
-                      style={[styles.chip, vehiculo === v && styles.chipOn]}
-                      onPress={() => setVehiculo(v)}
-                    >
-                      <Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
-                    </TouchableOpacity>
-                  ))}
+                <Text style={styles.etiqueta}>¿EN QUÉ TE VAS?</Text>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  {ordenVehiculos(vehiculosAqui).filter((v) => !esCarga(v)).map((v) => {
+                    const on = vehiculo === v;
+                    const capacidad = v === "moto" ? "1 pasajero" : v === "carro" ? "Hasta 4 pasajeros" : "";
+                    return (
+                      <TouchableOpacity key={v} activeOpacity={0.85} onPress={() => setVehiculo(v)}
+                        style={{ flex: 1, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, borderWidth: 2,
+                          borderColor: on ? "#187830" : "#ECECE6", backgroundColor: on ? "#EEF7F0" : "#fff" }}>
+                        <Text style={{ fontSize: 30 }}>{vehIcono(v)}</Text>
+                        <Text style={{ fontSize: 16, fontWeight: "800", color: on ? "#14672A" : "#1D1D1D", marginTop: 6 }}>{vehLabel(v)}</Text>
+                        {capacidad ? <Text style={{ fontSize: 12, color: "#8A8A8A", marginTop: 1 }}>{capacidad}</Text> : null}
+                        {on ? <View style={{ position: "absolute", top: 10, right: 10, width: 20, height: 20, borderRadius: 10, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}><Text style={{ color: "#fff", fontSize: 12, fontWeight: "900" }}>✓</Text></View> : null}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </>
             )}
             {ordenVehiculos(vehiculosAqui).some(esCarga) && (
               <>
-                <Text style={[styles.etiqueta, { marginTop: 14 }]}>🚚 TRASTEO O ACARREO</Text>
-                <Text style={styles.ayuda}>Para mudanzas, mercancia o carga</Text>
+                <Text style={[styles.etiqueta, { marginTop: modoServicio === "acarreo" ? 0 : 14 }]}>{modoServicio === "acarreo" ? "🚚 ¿QUÉ VEHÍCULO NECESITAS?" : "🚚 TRASTEO O ACARREO"}</Text>
+                <Text style={styles.ayuda}>{modoServicio === "acarreo" ? "Elige según el tamaño de lo que vas a mover" : "Para mudanzas, mercancia o carga"}</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
                   {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
                     <TouchableOpacity
@@ -3674,7 +4509,7 @@ function PedirCarreraScreen({ navigation, route }) {
                       style={[styles.chip, vehiculo === v && styles.chipOn]}
                       onPress={() => setVehiculo(v)}
                     >
-                      <Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Text style={styles.chipTxt}>{vehIcono(v)}</Text><Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehLabel(v)}</Text></View>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -3686,6 +4521,27 @@ function PedirCarreraScreen({ navigation, route }) {
         {/* 2b. TRASTEO: descripcion de la carga + hora de recogida (solo carga) */}
         {muni && esCarga(vehiculo) && (
           <View style={styles.card}>
+            <Text style={styles.etiqueta}>¿QUÉ VAS A MOVER?</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {TIPOS_CARGA.map(([k, t]) => (
+                <TouchableOpacity key={k} style={[styles.chip, tipoCarga === k && styles.chipOn]} onPress={() => setTipoCarga(k)}>
+                  <Text style={[styles.chipTxt, tipoCarga === k && styles.chipTxtOn]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.etiqueta}>¿QUÉ TAN GRANDE ES?</Text>
+            <View style={{ gap: 6, marginBottom: 12 }}>
+              {TAMANOS_CARGA.map(([k, t]) => (
+                <TouchableOpacity key={k} onPress={() => setTamanoCarga(k)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, borderWidth: 1.5,
+                    borderColor: tamanoCarga === k ? "#187830" : "#E5E0D5", backgroundColor: tamanoCarga === k ? "#EAF6EC" : "#fff" }}>
+                  <Text style={{ fontSize: 14, fontWeight: "800", color: tamanoCarga === k ? "#187830" : "#333", width: 86 }}>{t}</Text>
+                  <Text style={{ fontSize: 12.5, color: "#777", flex: 1 }}>{ejemploTamano(tipoCarga, k)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <Text style={styles.etiqueta}>DESCRIPCION DE LA CARGA</Text>
             <TextInput
               ref={refCarga}
@@ -3697,6 +4553,57 @@ function PedirCarreraScreen({ navigation, route }) {
               multiline
             />
             <Text style={[styles.ayuda, { marginTop: -2 }]}>Asi el transportador sabe que va a mover y con que ayuda</Text>
+
+            <Text style={[styles.etiqueta, { marginTop: 8 }]}>FOTOS DE LA CARGA (OPCIONAL, MÁX 3)</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+              {fotosCarga.map((u) => (
+                <View key={u}>
+                  <Image source={{ uri: u }} style={{ width: 70, height: 70, borderRadius: 10 }} />
+                  <TouchableOpacity onPress={() => setFotosCarga((f) => f.filter((x) => x !== u))}
+                    style={{ position: "absolute", top: -6, right: -6, backgroundColor: "#C0392B", borderRadius: 11, width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              {fotosCarga.length < 3 && (
+                <TouchableOpacity onPress={agregarFotoCarga} disabled={subiendoCarga}
+                  style={{ width: 70, height: 70, borderRadius: 10, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#B85C00", alignItems: "center", justifyContent: "center", backgroundColor: "#FFF7EC" }}>
+                  {subiendoCarga ? <ActivityIndicator color="#B85C00" /> : <Text style={{ fontSize: 24 }}>📷</Text>}
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={[styles.ayuda, { marginTop: 10 }]}>Con fotos te cotizan más rápido y más justo</Text>
+
+            <Text style={[styles.etiqueta, { marginTop: 8 }]}>¿NECESITAS AYUDA PARA CARGAR?</Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              {[[0, "No"], [1, "1 ayudante"], [2, "2 ayudantes"]].map(([n, t]) => (
+                <TouchableOpacity key={n} style={[styles.opcion, ayudantes === n && styles.opcionActiva]} onPress={() => setAyudantes(n)}>
+                  <Text style={[styles.opcionTexto, ayudantes === n && styles.opcionTextoActivo]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.etiqueta}>PISOS (SI ES APARTAMENTO O LOCAL EN ALTURA)</Text>
+            {[["Recoger en piso", pisoO, setPisoO, ascO, setAscO], ["Entregar en piso", pisoD, setPisoD, ascD, setAscD]].map(([lbl, val, setVal, asc, setAsc]) => (
+              <View key={lbl} style={{ marginBottom: 10 }}>
+                <Text style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>{lbl}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <TextInput value={val} onChangeText={(t) => setVal(t.replace(/\D/g, "").slice(0, 2))} keyboardType="number-pad" placeholder="1"
+                    style={[styles.input, { width: 58, marginBottom: 0, textAlign: "center" }]} />
+                  {[["si", "Con ascensor"], ["no", "Sin ascensor"]].map(([k, t]) => (
+                    <TouchableOpacity key={k} onPress={() => setAsc(asc === k ? null : k)}
+                      style={{ flex: 1, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: asc === k ? "#187830" : "#E5E0D5", backgroundColor: asc === k ? "#EAF6EC" : "#fff" }}>
+                      <Text style={{ fontSize: 12.5, color: asc === k ? "#187830" : "#666", fontWeight: "700" }}>{t}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ))}
+
+            <Text style={[styles.etiqueta, { marginTop: 6 }]}>¿QUIÉN RECIBE EN EL DESTINO? (OPCIONAL)</Text>
+            <TextInput value={recibeNombre} onChangeText={setRecibeNombre} placeholder="Nombre de quien recibe" style={styles.input} maxLength={80} />
+            <TextInput value={recibeTel} onChangeText={setRecibeTel} placeholder="Teléfono de quien recibe" keyboardType="phone-pad" style={styles.input} maxLength={15} />
+            <Text style={[styles.ayuda, { marginTop: -2 }]}>Útil si envías mercancía a un cliente o a una obra</Text>
 
             <Text style={[styles.etiqueta, { marginTop: 8 }]}>PARA CUANDO</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
@@ -3743,50 +4650,100 @@ function PedirCarreraScreen({ navigation, route }) {
               Se muestra SIEMPRE que la ciudad tenga tarifa; el cliente arranca de
               ahi. El conductor puede aceptarla o contraofertar. */}
           {muni && muni.usa_gps && estimado && estimado.tarifa_sugerida ? (
-            <View style={{ backgroundColor: "#EAF6EC", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-              <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>💵 TARIFA SUGERIDA (mínimo)</Text>
-              <Text style={{ fontSize: 26, fontWeight: "800", color: "#187830", marginTop: 2 }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
-              <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>
-                Para ~{estimado.distancia_km} km. Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido.
-              </Text>
-              {String(estimado.tarifa_sugerida) !== oferta && (
-                <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#187830", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
-                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Usar ${estimado.tarifa_sugerida.toLocaleString()}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            (estimado.promo && estimado.promo.aplica) ? (
+              // PROMO de lanzamiento (solo carreras): precio normal tachado + el de promo
+              <View style={{ backgroundColor: "#FFF1E8", borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: "#F0A878" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 2 }}>
+                  <View style={{ backgroundColor: "#E8470A", borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                    <Text style={{ color: "#fff", fontSize: 12, fontWeight: "800" }}>🔥 {estimado.promo.pct}% OFF</Text>
+                  </View>
+                  {estimado.promo.texto ? <Text style={{ fontSize: 12, color: "#B8430A", fontWeight: "700" }}>{estimado.promo.texto}</Text> : null}
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 10, marginTop: 2 }}>
+                  <Text style={{ fontSize: 26, fontWeight: "800", color: "#E8470A" }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
+                  {estimado.tarifa_normal ? (
+                    <Text style={{ fontSize: 16, color: "#999", textDecorationLine: "line-through", marginBottom: 3 }}>${estimado.tarifa_normal.toLocaleString()}</Text>
+                  ) : null}
+                </View>
+                <Text style={{ fontSize: 12, color: "#9a5a3a", marginTop: 2 }}>
+                  Precio de lanzamiento para ~{estimado.distancia_km} km. ¡Aprovecha!
+                </Text>
+                {String(estimado.tarifa_sugerida) !== oferta && (
+                  <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#E8470A", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Usar ${estimado.tarifa_sugerida.toLocaleString()}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <View style={{ backgroundColor: "#EAF6EC", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>💵 TARIFA SUGERIDA (mínimo)</Text>
+                <Text style={{ fontSize: 26, fontWeight: "800", color: "#187830", marginTop: 2 }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
+                <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>
+                  Para ~{estimado.distancia_km} km. Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido.
+                </Text>
+                {String(estimado.tarifa_sugerida) !== oferta && (
+                  <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#187830", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Usar ${estimado.tarifa_sugerida.toLocaleString()}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )
           ) : (muni && muni.usa_gps && estimado && estimado.distancia_km ? (
             <View style={[styles.estimado, { marginBottom: 12 }]}>
               <Text style={{ fontSize: 13, color: "#555" }}>Distancia: ~{estimado.distancia_km} km</Text>
               <Text style={{ fontSize: 12.5, color: "#888", marginTop: 2 }}>Aún no hay tarifa para esta ciudad. Ofrece lo que consideres justo.</Text>
             </View>
           ) : null)}
-          <Text style={styles.etiqueta}>CUANTO OFRECES PAGAR</Text>
-          <View style={styles.ofertaFila}>
-            <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
-            <TextInput
-              value={oferta}
-              onChangeText={(t) => setOferta(t.replace(/\D/g, ""))}
-              placeholder="0"
-              keyboardType="number-pad"
-              style={styles.ofertaInput}
-              onFocus={() => setTimeout(() => scrollForm.current && scrollForm.current.scrollToEnd({ animated: true }), 250)}
-            />
+          <Text style={styles.etiqueta}>¿CUÁNTO OFRECES PAGAR?</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <TouchableOpacity onPress={() => setOferta(String(Math.max(0, (parseInt(oferta || "0", 10) || 0) - 500)))}
+              style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: "#F1F2EF", alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 26, fontWeight: "700", color: "#1D1D1D", marginTop: -2 }}>−</Text>
+            </TouchableOpacity>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#F7F8F5", borderRadius: 16, paddingHorizontal: 10 }}>
+              <Text style={{ fontSize: 26, fontWeight: "800", color: "#1D1D1D" }}>$</Text>
+              <TextInput
+                value={oferta ? Number(oferta).toLocaleString("es-CO") : ""}
+                onChangeText={(t) => setOferta(t.replace(/\D/g, ""))}
+                placeholder="0"
+                placeholderTextColor="#B9B9B2"
+                keyboardType="number-pad"
+                style={{ fontSize: 32, fontWeight: "800", color: "#1D1D1D", paddingVertical: 10, paddingHorizontal: 6, minWidth: 90, textAlign: "center" }}
+                onFocus={() => setTimeout(() => scrollForm.current && scrollForm.current.scrollToEnd({ animated: true }), 250)}
+              />
+            </View>
+            <TouchableOpacity onPress={() => setOferta(String((parseInt(oferta || "0", 10) || 0) + 500))}
+              style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 26, fontWeight: "700", color: "#fff", marginTop: -2 }}>+</Text>
+            </TouchableOpacity>
           </View>
           {estimado && estimado.tarifa_sugerida && oferta && Number(oferta) < estimado.tarifa_sugerida ? (
             <Text style={{ fontSize: 12.5, color: "#C0392B", fontWeight: "600", marginTop: 6 }}>
               ⚠️ Estás ofreciendo menos del sugerido (${estimado.tarifa_sugerida.toLocaleString()}). Puede que ningún conductor la tome o te propongan más.
             </Text>
           ) : (
-            <Text style={styles.ayuda}>Un conductor puede aceptar tu precio o proponerte otro, y tu eliges</Text>
+            <Text style={[styles.ayuda, { marginTop: 10, marginBottom: 0, textAlign: "center" }]}>Un conductor puede aceptar tu precio o proponerte otro, y tú eliges</Text>
           )}
         </View>
 
-        <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 16 }]} onPress={pedir} disabled={cargando}>
-          {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Pedir carrera</Text>}
-        </TouchableOpacity>
         </>)}
       </ScrollView>
+      {modo !== "expreso" && (
+        <View style={{ backgroundColor: "#fff", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 + insets.bottom, borderTopLeftRadius: 22, borderTopRightRadius: 22,
+          shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 12 }}>
+          <TouchableOpacity activeOpacity={0.9} onPress={pedir} disabled={cargando}
+            style={{ backgroundColor: "#F06000", borderRadius: 16, paddingVertical: 16, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
+            {cargando ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Text style={{ color: "#fff", fontSize: 17, fontWeight: "800", flex: 1, textAlign: oferta ? "left" : "center" }}>
+                  {(esCarga(vehiculo) || modoServicio === "acarreo") ? "Pedir acarreo" : "Pedir carrera"}
+                </Text>
+                {oferta ? <Text style={{ color: "#fff", fontSize: 17, fontWeight: "800" }}>${Number(oferta).toLocaleString("es-CO")}</Text> : null}
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
       </KeyboardAvoidingView>
 
       <MapaSelector
@@ -3808,6 +4765,32 @@ function ConductorScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const [disponibles, setDisponibles] = useState([]);
   const [mias, setMias] = useState([]);
+  const [avisoCancelada, setAvisoCancelada] = useState(null); // carrera que el pasajero cancelo
+  const [sobreOk, setSobreOk] = useState(puedeSobreponer());  // "Mostrar encima de otras apps"
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => { if (st === "active") setSobreOk(puedeSobreponer()); });
+    return () => sub.remove();
+  }, []);
+  const avisoCanceladaRef = useRef(null);
+  // cancelaciones que el conductor ya confirmo ("Entendido"); se guardan en el
+  // celular para no repetir el aviso al reabrir la app
+  const cancelVistas = useRef(null);
+  const CLAVE_CANCEL_VISTAS = `tukan_cancel_vistas_${usuario.id}`;
+  useEffect(() => {
+    AsyncStorage.getItem(CLAVE_CANCEL_VISTAS)
+      .then(v => { cancelVistas.current = new Set(v ? JSON.parse(v) : []); })
+      .catch(() => { cancelVistas.current = new Set(); });
+  }, []);
+  const cerrarAvisoCancelada = () => {
+    const c = avisoCanceladaRef.current;
+    if (c && cancelVistas.current) {
+      cancelVistas.current.add(c.id);
+      AsyncStorage.setItem(CLAVE_CANCEL_VISTAS, JSON.stringify([...cancelVistas.current].slice(-100))).catch(() => {});
+    }
+    if (c) quitarAviso(`cancelada-${c.id}`);
+    avisoCanceladaRef.current = null;
+    setAvisoCancelada(null);
+  };
   const [historial, setHistorial] = useState([]);   // carreras pasadas (finalizadas/canceladas)
   const [disponible, setDisponible] = useState(usuario.disponible === "si");
   // el setInterval de cargar() captura el 'disponible' del primer render (stale
@@ -3844,10 +4827,14 @@ function ConductorScreen({ navigation, route }) {
   const [munis, setMunis] = useState([]);
 
   useEffect(() => {
-    fetch(`${API}/municipios`)
+    // se refresca cada 5 min: trae el recargo de hora pico / madrugada vigente
+    const cargar = () => fetch(`${API}/municipios`)
       .then((r) => r.json())
       .then((d) => Array.isArray(d) && setMunis(d))
       .catch(() => {});
+    cargar();
+    const iv = setInterval(cargar, 5 * 60 * 1000);
+    return () => clearInterval(iv);
   }, []);
 
   // precio sugerido para el conductor = base + (km a la recogida + km del viaje) x $/km
@@ -3856,12 +4843,18 @@ function ConductorScreen({ navigation, route }) {
   const sugeridoConductor = (c, kmAlOrigen, kmViaje) => {
     // acarreos: sin sugerido, se negocia (peso, ayuda, pisos). Solo oferta+contra.
     if (esCarga(c.vehiculo_pedido)) return null;
-    const t = munis.find((m) => m.nombre === c.municipio);
-    if (!t || !t.valor_km) return null;
+    const m = munis.find((x) => x.nombre === c.municipio);
+    if (!m) return null;
+    // tarifa propia del vehiculo (ej. moto mas barata) o, si no tiene, la de la ciudad
+    const tv = m.tarifas_vehiculo && m.tarifas_vehiculo[c.vehiculo_pedido];
+    const t = tv ? { tarifa_base: tv.base, valor_km: tv.valor_km, tarifa_minima: tv.minima } : m;
+    if (!t.valor_km) return null;
     const km = (kmAlOrigen || 0) + (kmViaje || 0);
     if (!km) return null;
-    const bruto = (t.tarifa_base || 0) + km * t.valor_km;
-    return Math.max(Math.ceil(bruto / 1000) * 1000, t.tarifa_minima || 0);
+    // hora pico / madrugada (lo decide el servidor): mas $/km y mas minima
+    const rec = m.recargo || { km: 0, minima: 0 };
+    const bruto = (t.tarifa_base || 0) + km * (t.valor_km + (rec.km || 0));
+    return Math.max(Math.ceil(bruto / 1000) * 1000, (t.tarifa_minima || 0) + (rec.minima || 0));
   };
 
   useEffect(() => {
@@ -3899,8 +4892,10 @@ function ConductorScreen({ navigation, route }) {
   // suena un ping fuerte dentro de la app cuando llega una solicitud nueva
   // (ademas del push). Usa el mismo canal MAX, asi no depende de que el push
   // alcance a llegar mientras el conductor mira la pantalla.
-  const pingSolicitud = () => {
+  const pingSolicitud = (c) => {
     if (Platform.OS === "web") return;
+    // app NO al frente (bloqueado, otra app): aviso a pantalla completa, no el normal
+    if (c && AppState.currentState !== "active") { sonarCarreraFondo(c); return; }
     if (!puedeSonar()) return;   // anti-rebote compartido con el servicio de fondo
     // vibracion fuerte: se siente aunque el telefono este en silencio (no
     // depende del permiso de notificaciones ni de modulos nativos extra)
@@ -3949,17 +4944,45 @@ function ConductorScreen({ navigation, route }) {
           if (porAlertar.length) {
             // muestra primero la MAS cercana al cliente
             porAlertar.sort((a, b) => kmDe(a) - kmDe(b));
-            pingSolicitud();
+            pingSolicitud(porAlertar[0]);
             mostrarEntrante(porAlertar[0]);
           }
           idsAlertados.current = new Set(alertablesAhora);
         }
         animar(); setDisponibles(d);
+        // abrio Tukan desde el aviso a pantalla completa: se le muestra esa solicitud de una
+        if (solicitudDesdeFondo && AppState.currentState === "active") {
+          const c = d.find((x) => x.id === solicitudDesdeFondo);
+          solicitudDesdeFondo = null;
+          if (c && !tieneActivaRef.current) { mostrarEntrante(c); quitarAviso(`solicitud-${c.id}`); }
+        }
       }).catch(() => {});
     fetch(`${API}/carreras/conductor/${usuario.id}`).then(r => r.json())
       .then(d => {
         if (!Array.isArray(d)) return;
         const activas = d.filter(c => ["aceptada", "en_sitio", "en_camino"].includes(c.estado));
+        // el pasajero (o el admin) le cancelo una carrera que ya era suya y el
+        // conductor aun no lo ha confirmado: aviso encima de todo con el motivo.
+        // No depende de que la app haya estado abierta: sirve al volver del segundo
+        // plano o al abrirla tocando la notificacion. Se marca vista con "Entendido".
+        if (cancelVistas.current) {
+          const hace = (f) => f ? Date.now() - new Date(f).getTime() : Infinity;
+          const pendiente = d
+            .filter(c => c.estado === "cancelada" && c.cancelada_por && c.cancelada_por !== "conductor"
+              && c.aceptada_en && hace(c.cancelada_en) < 2 * 3600 * 1000 && !cancelVistas.current.has(c.id))
+            .sort((a, b) => hace(a.cancelada_en) - hace(b.cancelada_en))[0];
+          if (pendiente && (!avisoCanceladaRef.current || avisoCanceladaRef.current.id !== pendiente.id)) {
+            avisoCanceladaRef.current = pendiente;
+            setAvisoCancelada(pendiente);
+            if (AppState.currentState === "active") quitarAviso(`cancelada-${pendiente.id}`);
+            else {
+              traerTukanAlFrente();
+              avisoPantallaCompleta(`cancelada-${pendiente.id}`, "❌ El pasajero canceló la carrera",
+                `${pendiente.origen} → ${pendiente.destino}. Motivo: ${pendiente.motivo_cancelacion || "sin motivo"}`);
+            }
+            try { Vibration.vibrate([0, 600, 200, 600]); } catch (e) {}
+          }
+        }
         setMias(activas);
         tieneActivaRef.current = activas.length > 0;
         setHistorial(d.filter(c => ["finalizada", "cancelada"].includes(c.estado)));
@@ -3978,7 +5001,9 @@ function ConductorScreen({ navigation, route }) {
     const intervalo = setInterval(cargar, 3000);
     const aviso = Notifications.addNotificationReceivedListener(cargar);
     const toque = Notifications.addNotificationResponseReceivedListener(cargar);
-    return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); };
+    // al volver del segundo plano refresca YA (ej. para mostrar una cancelacion)
+    const alFrente = AppState.addEventListener("change", (s) => { if (s === "active") cargar(); });
+    return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); alFrente.remove(); };
   }, []);
 
   // reloj de la cuenta regresiva: solo tictaquea si hay alguna solicitud dentro
@@ -4069,7 +5094,35 @@ function ConductorScreen({ navigation, route }) {
 
   // llega pre-llenada con el precio ACORDADO: confirmar y listo. Solo se toca
   // si de verdad cambio (evita errores de dedo que dañan las estadisticas)
-  const finalizar = (c) => { setTarifa(c.tarifa != null ? String(c.tarifa) : ""); setCobrando(c); };
+  // ACARREO: antes de cobrar se deja la prueba de entrega (quien recibio + foto)
+  const [entregando, setEntregando] = useState(null);
+  const [recibio, setRecibio] = useState("");
+  const [fotoEntrega, setFotoEntrega] = useState(null);   // uri local
+  const [enviandoEntrega, setEnviandoEntrega] = useState(false);
+  const irACobrar = (c) => { setTarifa(c.tarifa != null ? String(c.tarifa) : ""); setCobrando(c); };
+  const finalizar = (c) => {
+    if (esCarga(c.vehiculo_pedido) && !c.entrega_recibio) {
+      setRecibio(c.recibe_nombre || ""); setFotoEntrega(null); setEntregando(c); return;
+    }
+    irACobrar(c);
+  };
+  const confirmarEntrega = () => {
+    const c = entregando;
+    if (!recibio.trim()) { avisar("Falta el nombre", "Escribe quién recibió la carga."); return; }
+    setEnviandoEntrega(true);
+    const fd = new FormData();
+    fd.append("origen", "app");   // asi el formulario nunca va vacio
+    if (fotoEntrega) fd.append("file", { uri: fotoEntrega, type: "image/jpeg", name: "entrega.jpg" });
+    userFetch(`${API}/carreras/${c.id}/entrega?${qs({ recibio: recibio.trim() })}`, { method: "POST", body: fd })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        setEnviandoEntrega(false);
+        if (!ok) { avisar("No se pudo registrar", (d && d.detail) || "Intenta de nuevo."); return; }
+        setEntregando(null);
+        irACobrar({ ...c, entrega_recibio: d.entrega_recibio, entrega_foto: d.entrega_foto });
+      })
+      .catch(() => { setEnviandoEntrega(false); avisar("Sin conexión", "No se pudo registrar la entrega. Intenta de nuevo."); });
+  };
 
   const confirmarCobro = () => {
     const t = parseInt((tarifa || "").replace(/\D/g, ""), 10);
@@ -4093,6 +5146,9 @@ function ConductorScreen({ navigation, route }) {
   // --- negociacion del lado del conductor
   const [contraofertando, setContraofertando] = useState(null);
   const [montoOferta, setMontoOferta] = useState("");
+  // solicitud abierta en detalle (tipo inDrive: lista -> toque -> mapa + todo)
+  const [detalle, setDetalle] = useState(null);
+  const [rutaDet, setRutaDet] = useState(null);   // {km,min} hasta la recogida
 
   const cargarExpresos = () => {
     fetch(`${API}/expresos/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
@@ -4187,11 +5243,12 @@ function ConductorScreen({ navigation, route }) {
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {kmAlOrigen != null && <Text style={{ fontSize: 12, color: "#187830", fontWeight: "700", marginBottom: 3 }}>📍 A ~{fmtKm(kmAlOrigen)} de ti</Text>}
-            <Text style={{ fontSize: 14, color: "#333" }} numberOfLines={1}>🟢 {c.origen}</Text>
-            <Text style={{ fontSize: 14, color: "#333", marginTop: 1 }} numberOfLines={1}>🔴 {c.destino}</Text>
+            <Text style={{ fontSize: 14, color: "#333" }} numberOfLines={1}>🟢 {limpiaDir(c.origen)}</Text>
+            <Text style={{ fontSize: 14, color: "#333", marginTop: 1 }} numberOfLines={1}>🔴 {limpiaDir(c.destino)}</Text>
           </View>
           {of ? <Text style={{ fontSize: 24, fontWeight: "800", color: "#187830", paddingLeft: 8 }}>${of.toLocaleString()}</Text> : null}
         </View>
+        <DetalleAcarreo c={c} compacto />
 
         <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 12, padding: 13 }]} onPress={() => aceptar(c)}>
           <Text style={styles.buttonText}>{of ? `Aceptar $${of.toLocaleString()}` : "Tomar"}</Text>
@@ -4220,7 +5277,68 @@ function ConductorScreen({ navigation, route }) {
     );
   };
 
-  const tarjeta = (c, propia) => {
+  // ---- LISTA de solicitudes estilo inDrive: precio grande, origen/destino con
+  // puntos y distancias a la derecha, pasajero con estrellas. Al tocar abre el
+  // detalle con mapa (abrirDetalle). Solo para solicitudes que NO son propias.
+  const fmtKmL = (k) => (k == null ? null : k < 1 ? `${Math.round(k * 1000)} m` : `${k.toFixed(1)} km`);
+  const kmsDe = (c) => {
+    const kmAlOrigen = miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : (c.km_a_recogida != null ? c.km_a_recogida : null);
+    const kmViaje = c.distancia_km != null ? c.distancia_km
+      : (c.origen_lat != null && c.destino_lat != null
+          ? kmEntre({ lat: c.origen_lat, lon: c.origen_lon }, { lat: c.destino_lat, lon: c.destino_lon }) : null);
+    return { kmAlOrigen, kmViaje };
+  };
+  const abrirDetalle = (c) => { setRutaDet(null); setDetalle(c); };
+  const tarjetaLista = (c, restante) => {
+    const nueva = restante > 0;
+    const { kmAlOrigen, kmViaje } = kmsDe(c);
+    const of = c.tarifa_ofrecida;
+    const carga = esCarga(c.vehiculo_pedido);
+    return (
+      <TouchableOpacity key={c.id} activeOpacity={0.85} onPress={() => abrirDetalle(c)}
+        style={[sl.card, nueva && sl.cardNueva]}>
+        <View style={sl.filaChips}>
+          <View style={[sl.chip, carga ? sl.chipNaranja : sl.chipVerde]}>
+            <Text style={[sl.chipTxt, { color: carga ? "#B54A00" : "#14672A" }]}>{carga ? "Acarreo" : vehLabel(c.vehiculo_pedido)}</Text>
+          </View>
+          {nueva && <View style={[sl.chip, { backgroundColor: "#F06000" }]}><Text style={[sl.chipTxt, { color: "#fff" }]}>Nueva</Text></View>}
+          {!nueva && kmAlOrigen != null && kmAlOrigen <= 1.5 && !c.mi_oferta && (
+            <View style={[sl.chip, sl.chipNaranja]}><Text style={[sl.chipTxt, { color: "#B54A00" }]}>Muy cerca</Text></View>
+          )}
+          {c.mi_oferta ? <View style={[sl.chip, { backgroundColor: "#E6EEFB" }]}><Text style={[sl.chipTxt, { color: "#1A56B8" }]}>Ofertaste ${c.mi_oferta.toLocaleString()}</Text></View> : null}
+          {c.recogida ? <View style={[sl.chip, { backgroundColor: "#FFF4DD" }]}><Text style={[sl.chipTxt, { color: "#8A5A00" }]}>Programada</Text></View> : null}
+        </View>
+
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+          <Text style={sl.precio}>
+            <Text style={sl.moneda}>$ </Text>{of ? of.toLocaleString() : "A convenir"}
+          </Text>
+          <View style={sl.vehBadge}><Text style={{ fontSize: 22 }}>{vehIcono(c.vehiculo_pedido)}</Text></View>
+        </View>
+
+        <View style={sl.filaRuta}>
+          <View style={sl.puntoHueco} />
+          <Text style={sl.dir} numberOfLines={2}>{limpiaDir(c.origen)}</Text>
+          {kmAlOrigen != null && <Text style={sl.km}>{fmtKmL(kmAlOrigen)}</Text>}
+        </View>
+        <View style={sl.filaRuta}>
+          <View style={sl.puntoLleno} />
+          <Text style={sl.dir} numberOfLines={2}>{limpiaDir(c.destino)}</Text>
+          {kmViaje != null && <Text style={sl.km}>{fmtKmL(kmViaje)}</Text>}
+        </View>
+
+        <View style={sl.pie}>
+          <AvatarPasajero c={c} tam={30} />
+          <Text style={sl.pieNombre} numberOfLines={1}>{(c.cliente_nombre || "Pasajero").split(" ")[0]}</Text>
+          <Text style={sl.pieEstrella}>★ {c.cliente_calificacion ? Number(c.cliente_calificacion).toFixed(1) : "Nuevo"}</Text>
+          <View style={{ flex: 1 }} />
+          <Text style={sl.pieGris}>{haceCuanto(c.fecha)}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const tarjeta = (c, propia, sinAccionEstado) => {
     // dos distancias para decidir ANTES de aceptar:
     //  1) del conductor al punto de recogida (con su GPS)
     //  2) el recorrido del viaje: recogida -> destino (del servidor, con factor
@@ -4266,11 +5384,12 @@ function ConductorScreen({ navigation, route }) {
 
       {/* ruta compacta origen -> destino */}
       <Text style={{ fontSize: 14, color: "#333", marginTop: 6 }} numberOfLines={1}>
-        🟢 {c.origen}
+        🟢 {limpiaDir(c.origen)}
       </Text>
       <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }} numberOfLines={1}>
-        🔴 {c.destino}
+        🔴 {limpiaDir(c.destino)}
       </Text>
+      <DetalleAcarreo c={c} />
 
       {/* las dos distancias: antes de aceptar para decidir, y DESPUES tambien
           mientras hace el servicio (no desaparecen al tomar la carrera) */}
@@ -4371,17 +5490,17 @@ function ConductorScreen({ navigation, route }) {
           </TouchableOpacity>
         )
       )}
-      {propia && c.estado === "aceptada" && (
+      {propia && !sinAccionEstado && c.estado === "aceptada" && (
         <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", marginTop: 10, padding: 11 }]} onPress={() => cambiarEstado(c, "en_sitio")}>
           <Text style={styles.buttonText}>📍 Ya estoy en el punto</Text>
         </TouchableOpacity>
       )}
-      {propia && c.estado === "en_sitio" && (
+      {propia && !sinAccionEstado && c.estado === "en_sitio" && (
         <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 10, padding: 11 }]} onPress={() => iniciarViajeLocal(c)}>
           <Text style={styles.buttonText}>🚗 Ya lo recogí — Iniciar viaje</Text>
         </TouchableOpacity>
       )}
-      {propia && c.estado === "en_camino" && (
+      {propia && !sinAccionEstado && c.estado === "en_camino" && (
         <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", marginTop: 10, padding: 11 }]} onPress={() => finalizar(c)}>
           <Text style={styles.buttonText}>🏁 Finalizar carrera</Text>
         </TouchableOpacity>
@@ -4413,10 +5532,74 @@ function ConductorScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
+      {/* ACARREO: prueba de entrega antes de cobrar */}
+      <Modal visible={!!entregando} transparent animationType="slide" onRequestClose={() => setEntregando(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, paddingBottom: 28 }}>
+            <Text style={{ fontSize: 19, fontWeight: "900", color: "#1C2B22" }}>📦 Confirmar entrega</Text>
+            <Text style={{ fontSize: 12.5, color: "#888", marginTop: 3 }}>El cliente recibe el aviso con quién recibió y la foto.</Text>
+            <Text style={[styles.etiqueta, { marginTop: 14 }]}>¿QUIÉN RECIBIÓ?</Text>
+            <TextInput value={recibio} onChangeText={setRecibio} placeholder="Nombre de quien recibió" style={styles.input} maxLength={80} />
+            <Text style={styles.etiqueta}>FOTO DE LA ENTREGA</Text>
+            {fotoEntrega ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <Image source={{ uri: fotoEntrega }} style={{ width: 80, height: 80, borderRadius: 10 }} />
+                <TouchableOpacity onPress={async () => { const u = await tomarOElegirFoto(); if (u) setFotoEntrega(u); }}>
+                  <Text style={{ color: "#1A56B8", fontWeight: "700" }}>Cambiar foto</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity onPress={async () => { const u = await tomarOElegirFoto(); if (u) setFotoEntrega(u); }}
+                style={{ borderWidth: 1.5, borderStyle: "dashed", borderColor: "#B85C00", borderRadius: 12, padding: 16, alignItems: "center", backgroundColor: "#FFF7EC", marginBottom: 12 }}>
+                <Text style={{ fontSize: 26 }}>📷</Text>
+                <Text style={{ color: "#B85C00", fontWeight: "800", marginTop: 4 }}>Tomar foto de la carga entregada</Text>
+                <Text style={{ color: "#999", fontSize: 11.5, marginTop: 2 }}>Recomendado: te protege a ti y al cliente</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830" }]} onPress={confirmarEntrega} disabled={enviandoEntrega}>
+              {enviandoEntrega ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{fotoEntrega ? "Confirmar entrega" : "Confirmar sin foto"}</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={{ padding: 12 }} onPress={() => setEntregando(null)}>
+              <Text style={{ textAlign: "center", color: "#888", fontWeight: "600" }}>Volver</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* EL PASAJERO CANCELO: aviso encima de todo con el motivo */}
+      <Modal visible={!!avisoCancelada} transparent animationType="fade" onRequestClose={cerrarAvisoCancelada}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 22 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 22, padding: 22, borderTopWidth: 6, borderTopColor: "#C0392B" }}>
+            <Text style={{ fontSize: 40, textAlign: "center" }}>❌</Text>
+            <Text style={{ fontSize: 21, fontWeight: "900", color: "#C0392B", textAlign: "center", marginTop: 4 }}>
+              {avisoCancelada && avisoCancelada.cancelada_por === "admin" ? "La carrera fue cancelada" : "El pasajero canceló la carrera"}
+            </Text>
+            {avisoCancelada && (
+              <>
+                <Text style={{ fontSize: 13.5, color: "#666", textAlign: "center", marginTop: 6 }} numberOfLines={2}>
+                  {avisoCancelada.cliente_nombre ? `${avisoCancelada.cliente_nombre} · ` : ""}{avisoCancelada.origen} → {avisoCancelada.destino}
+                </Text>
+                <View style={{ backgroundColor: "#FDECEA", borderRadius: 12, padding: 14, marginTop: 14 }}>
+                  <Text style={{ fontSize: 11.5, color: "#C0392B", fontWeight: "800", letterSpacing: 0.5 }}>MOTIVO</Text>
+                  <Text style={{ fontSize: 16, color: "#333", fontWeight: "600", marginTop: 4 }}>
+                    {avisoCancelada.motivo_cancelacion || "El pasajero no indicó un motivo"}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12.5, color: "#888", textAlign: "center", marginTop: 12 }}>
+                  Quedas libre otra vez para recibir solicitudes.
+                </Text>
+              </>
+            )}
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", marginTop: 14 }]} onPress={cerrarAvisoCancelada}>
+              <Text style={styles.buttonText}>Entendido</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, mias.length > 0 && { paddingTop: 44, paddingBottom: 9 }]}>
         <View>
-          <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕</Text>
-          <Text style={styles.headerTitle}>Carreras</Text>
+          <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕{usuario.fundador === "si" ? "  ·  🏅 Fundador" : ""}</Text>
+          <Text style={[styles.headerTitle, mias.length > 0 && { fontSize: 19, marginTop: 1 }]}>Carreras</Text>
         </View>
         <TouchableOpacity onPress={() => navigation.navigate("Configuracion", { usuario })} style={{ padding: 4 }}>
           <Text style={{ fontSize: 24 }}>⚙️</Text>
@@ -4446,6 +5629,16 @@ function ConductorScreen({ navigation, route }) {
         {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
         {tab === "solicitudes" && (
           <>
+            {TukanOverlay && !sobreOk && (
+              <TouchableOpacity
+                style={{ backgroundColor: "#EAF1FB", borderWidth: 1, borderColor: "#A9C4EA", borderRadius: 10, paddingVertical: 7, paddingHorizontal: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}
+                onPress={() => { try { TukanOverlay.pedirPermiso(); } catch (e) {} }}>
+                <Text style={{ fontSize: 15 }}>🪟</Text>
+                <Text style={{ flex: 1, fontSize: 11.5, color: "#1A56B8", fontWeight: "600" }}>
+                  Activa "Mostrar encima de otras apps" para que las solicitudes te salten aunque estés en otra app · <Text style={{ textDecorationLine: "underline" }}>tocar</Text>
+                </Text>
+              </TouchableOpacity>
+            )}
             {!permisoFondo && Platform.OS !== "web" && (
               <TouchableOpacity
                 style={{ backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D", borderRadius: 10, paddingVertical: 7, paddingHorizontal: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}
@@ -4458,7 +5651,7 @@ function ConductorScreen({ navigation, route }) {
             )}
             {mias.length > 0 && (
               <>
-                <Text style={styles.seccionTitulo}>Tu carrera en curso</Text>
+                <Text style={[styles.seccionTitulo, { marginTop: 0, marginBottom: 8, fontSize: 15 }]}>Tu carrera en curso</Text>
                 {(() => {
                   // el conductor tambien ve su ruta: al punto de recogida
                   // (aceptada) o al destino (en_camino), con su 🚗 moviendose
@@ -4475,9 +5668,10 @@ function ConductorScreen({ navigation, route }) {
                   if (!punto && !miUbic) return null;
                   const dist = punto && miUbic ? kmEntre(miUbic, punto) : null;
                   const info = rutaCond;
-                  // carrera aceptada/en curso = modo navegacion: el mapa manda y ocupa
-                  // casi toda la pantalla; nunca se achica por debajo de 380.
-                  const altoMapa = Math.max(380, Dimensions.get("window").height - 250);
+                  // carrera aceptada/en curso = modo navegacion: el mapa es grande
+                  // pero deja aire ABAJO para el panel de control (ir, ya lo recogi,
+                  // finalizar) sin tener que bajar a buscarlo. Nunca por debajo de 300.
+                  const altoMapa = Math.max(300, Dimensions.get("window").height - 430);
                   return (
                     <>
                       {c.estado === "en_sitio" && (
@@ -4496,7 +5690,7 @@ function ConductorScreen({ navigation, route }) {
                           rutaA={yendoARecoger ? "recogida" : "destino"}
                           onInfo={setRutaCond} lleno />
                       </View>
-                      <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                      <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
                         {(info || dist != null) && (
                           <View style={{ flex: 1, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, alignItems: "center", justifyContent: "center" }}>
                             <Text style={{ fontSize: 13, fontWeight: "700", color: "#187830" }}>
@@ -4517,16 +5711,34 @@ function ConductorScreen({ navigation, route }) {
                           </TouchableOpacity>
                         ) : null}
                       </View>
+                      {/* Acción principal del estado, PEGADA al mapa: el conductor la ve
+                          sin tener que bajar a buscarla. El detalle (cliente, llamar,
+                          WhatsApp) queda en la tarjeta de abajo. */}
+                      {c.estado === "aceptada" && (
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", padding: 13, marginBottom: 10 }]} onPress={() => cambiarEstado(c, "en_sitio")}>
+                          <Text style={styles.buttonText}>📍 Ya estoy en el punto de recogida</Text>
+                        </TouchableOpacity>
+                      )}
+                      {c.estado === "en_sitio" && (
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", padding: 13, marginBottom: 10 }]} onPress={() => iniciarViajeLocal(c)}>
+                          <Text style={styles.buttonText}>🚗 Ya lo recogí — Iniciar viaje</Text>
+                        </TouchableOpacity>
+                      )}
+                      {c.estado === "en_camino" && (
+                        <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", padding: 13, marginBottom: 10 }]} onPress={() => finalizar(c)}>
+                          <Text style={styles.buttonText}>🏁 Finalizar carrera</Text>
+                        </TouchableOpacity>
+                      )}
                       {c.estado === "en_camino" && !punto && (
                         <View style={{ backgroundColor: "#FFF3E6", borderRadius: 10, padding: 10, marginBottom: 10 }}>
-                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#B85C00" }}>🏁 Destino: {c.destino}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#B85C00" }}>🏁 Destino: {limpiaDir(c.destino)}</Text>
                           <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 2 }}>Este destino se pidió sin ubicación en el mapa. Usa 🧭 Navegar para ir por el nombre.</Text>
                         </View>
                       )}
                     </>
                   );
                 })()}
-                {mias.map(c => tarjeta(c, true))}
+                {mias.map(c => tarjeta(c, true, true))}
                 <View style={{ height: 8 }} />
               </>
             )}
@@ -4534,7 +5746,7 @@ function ConductorScreen({ navigation, route }) {
             {/* MAPA SIEMPRE ABIERTO (sin carrera activa): muestra donde estas y,
                 cuando hay solicitud, traza la ruta hasta la recogida para dar
                 contexto y decidir/contraofertar rapido */}
-            {mias.length === 0 && disponible && (() => {
+            {mias.length === 0 && disponible && disponibles.length === 0 && (() => {
               const foco = disponiblesOrden.find(c => c.origen_lat != null) || null;
               const punto = foco ? { lat: foco.origen_lat, lon: foco.origen_lon } : null;
               if (!miUbic) {
@@ -4604,7 +5816,7 @@ function ConductorScreen({ navigation, route }) {
                   // recien llegada (< 6s): tarjeta grande con cuenta regresiva y
                   // contraoferta rapida. Pasados los 6s baja al listado normal.
                   const restante = VENTANA - (ahora - (recibidas.current[c.id] || 0));
-                  return restante > 0 ? tarjetaUrgente(c, restante) : tarjeta(c, false);
+                  return tarjetaLista(c, restante);
                 })}
               </>
             )}
@@ -4642,7 +5854,7 @@ function ConductorScreen({ navigation, route }) {
             <Text style={styles.seccionTitulo}>📜 Historial de carreras</Text>
             {historial.length === 0 ? (
               <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>Aún no tienes carreras terminadas. Aquí quedará tu historial.</Text>
-            ) : historial.map(c => <TarjetaHistorial key={c.id} c={c} esConductor={true} />)}
+            ) : <HistorialFiltrado historial={historial} />}
           </>
         )}
 
@@ -4869,6 +6081,141 @@ function ConductorScreen({ navigation, route }) {
         onCerrar={() => setCalificarCliente(null)}
       />
 
+      {/* DETALLE de una solicitud (tipo inDrive): mapa con A/B, precio grande,
+          pasajero con foto, aceptar y ofertas de un toque */}
+      {(() => {
+        const c = detalle && disponibles.find(x => x.id === detalle.id);
+        if (!c) return null;
+        const { kmAlOrigen, kmViaje } = kmsDe(c);
+        const of = c.tarifa_ofrecida;
+        const sug = sugeridoConductor(c, kmAlOrigen, kmViaje);
+        const ofertas = [];
+        if (sug && of && sug > of) ofertas.push(sug);
+        for (const m of sugerencias(of)) if (!ofertas.includes(m)) ofertas.push(m);
+        const cerrar = () => setDetalle(null);
+        const hayMapa = c.origen_lat != null || !!miUbic;
+        return (
+          <Modal visible transparent animationType="slide" onRequestClose={cerrar}>
+            <View style={sl.fondo}>
+              <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={cerrar} />
+              <View style={sl.hoja}>
+                {hayMapa ? (
+                  <View style={sl.mapa}>
+                    <MapaSeguimiento key={"det-" + c.id}
+                      conductor={miUbic}
+                      vehiculo={usuario.tipo_vehiculo}
+                      recogida={c.origen_lat != null ? { lat: c.origen_lat, lon: c.origen_lon } : null}
+                      destino={c.destino_lat != null ? { lat: c.destino_lat, lon: c.destino_lon } : null}
+                      rutaA="recogida"
+                      onInfo={setRutaDet} lleno />
+                    {(rutaDet || kmAlOrigen != null) && (
+                      <View style={sl.mapaChip} pointerEvents="none">
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13.5 }}>
+                          {rutaDet ? `${Math.max(1, rutaDet.min)} min · ${fmtKmL(rutaDet.km)}` : `~${fmtKmL(kmAlOrigen)}`} a la recogida
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                ) : null}
+                <ScrollView contentContainerStyle={{ padding: 18, paddingBottom: 26 }}>
+                  <Text style={sl.titulo}>{esCarga(c.vehiculo_pedido) ? "Solicitud de acarreo" : "Solicitud de viaje"}</Text>
+
+                  <View style={{ flexDirection: "row", marginTop: 14 }}>
+                    <View style={{ alignItems: "center", width: 74, marginRight: 12 }}>
+                      <AvatarPasajero c={c} tam={60} />
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: "#1D1D1D", marginTop: 5 }} numberOfLines={1}>{(c.cliente_nombre || "Pasajero").split(" ")[0]}</Text>
+                      <Text style={{ fontSize: 12.5, color: "#555" }}>★ {c.cliente_calificacion ? Number(c.cliente_calificacion).toFixed(1) : "Nuevo"}</Text>
+                      <Text style={{ fontSize: 11.5, color: "#999" }}>{haceCuanto(c.fecha)}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13.5, color: "#777" }}>
+                        {vehLabel(c.vehiculo_pedido)}{kmViaje != null ? ` · viaje ${fmtKmL(kmViaje)}` : ""}
+                      </Text>
+                      <Text style={[sl.precio, { fontSize: 34 }]}><Text style={sl.moneda}>$ </Text>{of ? of.toLocaleString() : "A convenir"}</Text>
+                      <View style={[sl.filaRuta, { marginTop: 10 }]}>
+                        <View style={[sl.letra, { backgroundColor: "#187830" }]}><Text style={sl.letraTxt}>A</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={sl.dir}>{limpiaDir(c.origen)}</Text>
+                          {c.origen_detalle ? <Text style={{ fontSize: 13, color: "#777", marginTop: 1 }}>{c.origen_detalle}</Text> : null}
+                        </View>
+                      </View>
+                      <View style={[sl.filaRuta, { marginTop: 10 }]}>
+                        <View style={[sl.letra, { backgroundColor: "#F06000" }]}><Text style={sl.letraTxt}>B</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={sl.dir}>{limpiaDir(c.destino)}</Text>
+                          {c.destino_detalle ? <Text style={{ fontSize: 13, color: "#777", marginTop: 1 }}>{c.destino_detalle}</Text> : null}
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {c.recogida ? (
+                    <View style={{ backgroundColor: "#FFF4DD", borderRadius: 12, padding: 10, marginTop: 12 }}>
+                      <Text style={{ fontSize: 13.5, color: "#8A5A00", fontWeight: "700" }}>Recogida programada: {fmtRecogida(c.recogida)}</Text>
+                    </View>
+                  ) : null}
+                  {c.notas ? (
+                    <View style={{ backgroundColor: "#F6F7F4", borderRadius: 12, padding: 10, marginTop: 12 }}>
+                      <Text style={{ fontSize: 13.5, color: "#444" }}>{c.notas}</Text>
+                    </View>
+                  ) : null}
+                  <DetalleAcarreo c={c} />
+                  {sug != null && (
+                    <Text style={{ fontSize: 13, color: "#777", marginTop: 12 }}>Precio sugerido por distancia: <Text style={{ fontWeight: "800", color: "#1D1D1D" }}>${sug.toLocaleString()}</Text></Text>
+                  )}
+
+                  <View style={{ marginTop: 16 }}>
+                    {tieneCarreraActiva ? (
+                      <View style={{ backgroundColor: "#FFF4E0", borderRadius: 12, padding: 12 }}>
+                        <Text style={{ fontSize: 13.5, color: "#8A5A00", fontWeight: "700", textAlign: "center" }}>Termina tu carrera actual para aceptar esta</Text>
+                      </View>
+                    ) : c.mi_oferta ? (
+                      <>
+                        <View style={{ backgroundColor: "#E6EEFB", borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                          <Text style={{ fontSize: 14, color: "#1A56B8", fontWeight: "700" }}>Ya ofertaste ${c.mi_oferta.toLocaleString()}</Text>
+                          <Text style={{ fontSize: 12.5, color: "#5a7a9a", marginTop: 2 }}>Esperando que el pasajero acepte tu precio.</Text>
+                        </View>
+                        <TouchableOpacity style={sl.btnGris} onPress={() => { cerrar(); setMontoOferta(String(c.mi_oferta)); setContraofertando(c); }}>
+                          <Text style={sl.btnGrisTxt}>Cambiar mi oferta</Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity style={sl.btnAceptar} onPress={() => { cerrar(); aceptar(c); }}>
+                          <Text style={sl.btnAceptarTxt}>{of ? `Aceptar por $${of.toLocaleString()}` : "Tomar solicitud"}</Text>
+                        </TouchableOpacity>
+                        {of ? (
+                          <>
+                            <Text style={{ textAlign: "center", color: "#777", fontSize: 14.5, marginTop: 14, marginBottom: 8 }}>Ofrece tu tarifa</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                              {ofertas.map(m => (
+                                <TouchableOpacity key={m} style={sl.oferta} onPress={() => { cerrar(); enviarOferta(c.id, m); }}>
+                                  <Text style={sl.ofertaTxt}>${m.toLocaleString()}</Text>
+                                </TouchableOpacity>
+                              ))}
+                              <TouchableOpacity style={sl.oferta} onPress={() => { cerrar(); setMontoOferta(String(sug || of || "")); setContraofertando(c); }}>
+                                <Text style={sl.ofertaTxt}>Otro valor</Text>
+                              </TouchableOpacity>
+                            </ScrollView>
+                          </>
+                        ) : (
+                          <TouchableOpacity style={[sl.btnGris, { marginTop: 10 }]} onPress={() => { cerrar(); setMontoOferta(String(sug || "")); setContraofertando(c); }}>
+                            <Text style={sl.btnGrisTxt}>Proponer precio</Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    )}
+                    <TouchableOpacity style={[sl.btnGris, { marginTop: 12 }]} onPress={cerrar}>
+                      <Text style={sl.btnGrisTxt}>Cerrar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
+        );
+      })()}
+
       {/* RECUADRO tipo Uber: salta cuando entra una solicitud, con barra de 10s */}
       <Modal visible={!!entrante} transparent animationType="fade" onRequestClose={cerrarEntrante}>
         <View style={styles.entranteFondo}>
@@ -4893,8 +6240,9 @@ function ConductorScreen({ navigation, route }) {
                   <Text style={{ fontSize: 15, fontWeight: "700", color: "#444", marginTop: 8 }}>
                     {vehIcono(c.vehiculo_pedido)} {vehLabel(c.vehiculo_pedido)}{esCarga(c.vehiculo_pedido) ? " · trasteo" : ""}{c.zona === "rural" ? " · 🌄 vereda" : ""}
                   </Text>
-                  <Text style={{ fontSize: 15, color: "#333", marginTop: 8 }} numberOfLines={1}>🟢 {c.origen}</Text>
-                  <Text style={{ fontSize: 15, color: "#333", marginTop: 2 }} numberOfLines={1}>🏁 {c.destino}</Text>
+                  <Text style={{ fontSize: 15, color: "#333", marginTop: 8 }} numberOfLines={1}>🟢 {limpiaDir(c.origen)}</Text>
+                  <Text style={{ fontSize: 15, color: "#333", marginTop: 2 }} numberOfLines={1}>🏁 {limpiaDir(c.destino)}</Text>
+                  <DetalleAcarreo c={c} compacto />
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                     {kmAlOrigen != null && (
                       <View style={{ backgroundColor: "#EAF6EC", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 9 }}>
@@ -5249,6 +6597,7 @@ function AdminCarrerasScreen({ navigation }) {
       .catch(() => avisar("Error", "No hay conexión."));
   };
 
+  const [repAdmin, setRepAdmin] = useState(null);   // id del conductor cuya reputacion se mira
   // tarjeta de un usuario, con sus acciones. Se usa en la busqueda (pestaña
   // Carreras) y en la lista de la pestaña Usuarios.
   const tarjetaUsuario = (u) => (
@@ -5269,6 +6618,12 @@ function AdminCarrerasScreen({ navigation }) {
             <Text style={{ color: "#F06000", fontWeight: "700", fontSize: 12 }}>🔔 Probar tono</Text>
           </TouchableOpacity>
         )}
+        {u.rol === "conductor" && (
+          <TouchableOpacity onPress={() => setRepAdmin(u.id)}>
+            <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 12 }}>⭐ Reputación</Text>
+          </TouchableOpacity>
+        )}
+        {repAdmin === u.id && <ReputacionAdminModal conductorId={u.id} onCerrar={() => setRepAdmin(null)} />}
         {u.activas > 0 && (
           <TouchableOpacity onPress={() => liberarUsuario(u.telefono)}>
             <Text style={{ color: "#B85C00", fontWeight: "700", fontSize: 12 }}>🔓 Liberar carreras</Text>
@@ -5376,6 +6731,11 @@ function AdminCarrerasScreen({ navigation }) {
                 ))}
               </View>
               <Text style={[styles.ayuda, { textAlign: "center", marginTop: 8 }]}>Embudo: quien visita la página → descarga el APK → se registra</Text>
+              {gStats.comunidad && (
+                <Text style={{ textAlign: "center", marginTop: 8, fontSize: 12.5, color: "#1A56B8", fontWeight: "700" }}>
+                  👥 Llegaron por los grupos: {Object.entries(gStats.comunidad).map(([k, v]) => `${k} ${v}`).join("  ·  ")}
+                </Text>
+              )}
             </View>
 
             <View style={[styles.card, { marginBottom: 12 }]}>
@@ -5573,7 +6933,7 @@ function AdminCarrerasScreen({ navigation }) {
               <Text style={{ fontWeight: "600" }}>#{c.id} · {c.cliente_nombre}</Text>
               <Text style={{ fontSize: 11, color: "#888" }}>{({ en_sitio: "en el punto", en_camino: "en viaje" }[c.estado]) || c.estado}</Text>
             </View>
-            <Text style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{c.origen} → {c.destino}</Text>
+            <Text style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{limpiaDir(c.origen)} → {limpiaDir(c.destino)}</Text>
             {c.conductor_nombre ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🚕 {c.conductor_nombre}</Text> : null}
             {c.tarifa ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>${c.tarifa.toLocaleString()}</Text> : null}
           </View>
@@ -5846,6 +7206,12 @@ const METODOS_PAGO = [
 function ConfiguracionScreen({ navigation, route }) {
   const { usuario } = route.params;
   const esConductor = usuario.rol === "conductor";
+  // permiso "Mostrar encima de otras apps": se re-lee al volver de los ajustes
+  const [sobreOk, setSobreOk] = useState(puedeSobreponer());
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => { if (st === "active") setSobreOk(puedeSobreponer()); });
+    return () => sub.remove();
+  }, []);
   const [pagos, setPagos] = useState({ efectivo: true, nequi: "", daviplata: "", bancolombia: "", breb: "" });
   const [activos, setActivos] = useState({ efectivo: true });   // cuales estan marcados
   const [fotos, setFotos] = useState({ conductor: null, vehiculo: null, tarjeta: null, licencia: null, cedula: null, soat: null });
@@ -5955,7 +7321,7 @@ function ConfiguracionScreen({ navigation, route }) {
     if (!permiso.granted) { avisar("Permiso requerido", "Necesitamos acceso a tus fotos."); return; }
     const r = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true,
-      aspect: tipo === "conductor" ? [1, 1] : [4, 3], quality: 0.6,
+      aspect: (tipo === "conductor" || tipo === "perfil") ? [1, 1] : [4, 3], quality: 0.6,
     });
     if (r.canceled) return;
     setSubiendoFoto(tipo);
@@ -5967,7 +7333,7 @@ function ConfiguracionScreen({ navigation, route }) {
     // el X-User-Token.
     userFetch(`${API}/usuarios/${usuario.id}/foto?tipo=${tipo}`, { method: "POST", body: fd })
       .then(res => res.json())
-      .then(d => { setSubiendoFoto(null); if (d.url) setFotos(f => ({ ...f, [tipo]: d.url })); else avisar("Error", "No se pudo subir la foto."); })
+      .then(d => { setSubiendoFoto(null); if (d.url) { setFotos(f => ({ ...f, [tipo]: d.url })); if (tipo === "perfil") { usuario.foto_perfil = d.url; guardarSesion(usuario); } } else avisar("Error", "No se pudo subir la foto."); })
       .catch(() => { setSubiendoFoto(null); avisar("Sin conexion", "Intenta de nuevo."); });
   };
 
@@ -6002,6 +7368,23 @@ function ConfiguracionScreen({ navigation, route }) {
       </View>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <View style={[styles.card, { marginBottom: 14 }]}>
+          {!esConductor && (
+            <TouchableOpacity onPress={() => subirFoto("perfil")} style={{ flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 }}>
+              {(fotos.perfil || usuario.foto_perfil) ? (
+                <Image source={{ uri: fotos.perfil || usuario.foto_perfil }} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: "#EEE" }} />
+              ) : (
+                <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: "#E7F3E9", alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ fontSize: 26, fontWeight: "700", color: "#187830" }}>{(usuario.nombre || "?").trim().charAt(0).toUpperCase()}</Text>
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: "#187830" }}>
+                  {subiendoFoto === "perfil" ? "Subiendo foto…" : (fotos.perfil || usuario.foto_perfil) ? "Cambiar mi foto" : "Agregar mi foto"}
+                </Text>
+                <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>El conductor la ve al recibir tu solicitud. Da más confianza y te aceptan más rápido.</Text>
+              </View>
+            </TouchableOpacity>
+          )}
           <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>{usuario.nombre}</Text>
           <Text style={{ fontSize: 13, color: "#888", marginTop: 4 }}>📞 {usuario.telefono}</Text>
           {usuario.municipio ? <Text style={{ fontSize: 13, color: "#888", marginTop: 2 }}>📍 {usuario.municipio}</Text> : null}
@@ -6013,6 +7396,40 @@ function ConfiguracionScreen({ navigation, route }) {
           <Text style={{ fontSize: 11, color: "#bbb", marginTop: 6 }}>
             Version: {Updates.updateId ? `${Updates.updateId.slice(0, 8)} · ${Updates.createdAt ? new Date(Updates.createdAt).toLocaleString() : ""}` : "base (sin actualizaciones aun)"}
           </Text>
+          {usuario.rol === "conductor" && Platform.OS === "android" && (
+            <View style={{ marginTop: 14, backgroundColor: "#EAF1FB", borderRadius: 12, padding: 12 }}>
+              <Text style={{ fontSize: 13.5, fontWeight: "800", color: "#1A56B8" }}>🔔 Avisos a pantalla completa</Text>
+              <Text style={{ fontSize: 12, color: "#4A6A8A", marginTop: 3 }}>
+                Las solicitudes y cancelaciones te saltan encima de todo, aunque el teléfono esté bloqueado o estés en otra app.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <TouchableOpacity onPress={probarPantallaCompleta} style={{ flex: 1, backgroundColor: "#1A56B8", borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Probar ahora</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => Linking.openSettings().catch(() => {})} style={{ flex: 1, backgroundColor: "#fff", borderRadius: 10, paddingVertical: 10, alignItems: "center", borderWidth: 1, borderColor: "#1A56B8" }}>
+                  <Text style={{ color: "#1A56B8", fontWeight: "800", fontSize: 13 }}>Abrir permisos</Text>
+                </TouchableOpacity>
+              </View>
+              {TukanOverlay ? (
+                <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: "#D5E2F2", paddingTop: 10 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#1A56B8" }}>
+                    🪟 Mostrar encima de otras apps: {sobreOk ? "✅ activo" : "❌ desactivado"}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: "#4A6A8A", marginTop: 3 }}>
+                    Así, si estás en Waze o WhatsApp, Tukán salta al frente con la solicitud o la cancelación.
+                  </Text>
+                  {!sobreOk && (
+                    <TouchableOpacity onPress={() => { try { TukanOverlay.pedirPermiso(); } catch (e) {} }} style={{ marginTop: 8, backgroundColor: "#1A56B8", borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Activar (busca Tukán y enciéndelo)</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : null}
+              <Text style={{ fontSize: 11, color: "#6A7F95", marginTop: 8 }}>
+                Si solo te llega una notificación normal: en "Abrir permisos" → Notificaciones, activa "Pantalla completa" / "Pantalla de bloqueo". En Huawei también "Mostrar encima de otras apps" y quita la optimización de batería.
+              </Text>
+            </View>
+          )}
           <TouchableOpacity onPress={() => confirmar("Cerrar sesión", "¿Seguro que quieres salir de tu cuenta?", async () => { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }, "Cerrar sesión")}
             style={{ marginTop: 14, alignSelf: "flex-start", backgroundColor: "#FDECEA", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 16 }}>
             <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>🚪 Cerrar sesión</Text>
@@ -6222,6 +7639,12 @@ function ConfiguracionScreen({ navigation, route }) {
 
 export default function App() {
   const [listo, setListo] = useState(false);
+  // marca que hay pantalla de verdad (ver alFrente)
+  useEffect(() => {
+    pantallaVisible = AppState.currentState === "active";
+    const sub = AppState.addEventListener("change", (st) => { pantallaVisible = st === "active"; });
+    return () => { sub.remove(); pantallaVisible = false; };
+  }, []);
 
   // al abrir, busca la ultima version y la aplica ANTES de mostrar la app, para
   // que nadie quede atrasado con actualizaciones que no alcanzaron a bajar
@@ -6280,18 +7703,18 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F6F1E6" },
+  container: { flex: 1, backgroundColor: "#F4F5F1" },
   scroll: { padding: 16 },
   header: { backgroundColor: "#187830", padding: 20, paddingTop: 50 },
   headerSub: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
   headerTitle: { color: "#fff", fontSize: 24, fontWeight: "bold", marginTop: 4 },
   card: { backgroundColor: "#fff", borderRadius: 18, padding: 18, shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.07, shadowRadius: 16, elevation: 3 },
-  tabs: { flexDirection: "row", backgroundColor: "#F6F1E6", borderRadius: 8, padding: 4, marginBottom: 20 },
-  tab: { flex: 1, padding: 8, borderRadius: 6, alignItems: "center" },
+  tabs: { flexDirection: "row", backgroundColor: "#F1F2EF", borderRadius: 12, padding: 4, marginBottom: 18 },
+  tab: { flex: 1, padding: 9, borderRadius: 9, alignItems: "center" },
   tabActive: { backgroundColor: "#fff" },
   tabText: { color: "#888", fontSize: 14 },
   tabTextActive: { color: "#333", fontWeight: "500" },
-  input: { borderWidth: 1, borderColor: "#EAE4D6", borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 12, fontSize: 15, backgroundColor: "#FBFAF6", color: "#222" },
+  input: { borderWidth: 1, borderColor: "#E6E8E2", borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 12, fontSize: 15, backgroundColor: "#F7F8F5", color: "#222" },
   error: { color: "red", fontSize: 12, marginBottom: 12 },
   button: { backgroundColor: "#F06000", borderRadius: 14, padding: 15, alignItems: "center", justifyContent: "center", shadowColor: "#F06000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.26, shadowRadius: 12, elevation: 4 },
   buttonText: { color: "#fff", fontWeight: "800", fontSize: 16, letterSpacing: 0.2 },
@@ -6344,17 +7767,17 @@ const styles = StyleSheet.create({
   ofertaFila: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#187830", borderRadius: 10, paddingHorizontal: 12, backgroundColor: "#F1F8F1" },
   ofertaInput: { flex: 1, fontSize: 22, fontWeight: "bold", color: "#187830", padding: 12 },
   ofertaCliente: { backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, marginTop: 10, alignItems: "center" },
-  opcion: { flex: 1, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 12, borderWidth: 1, borderColor: "#EAE4D6", alignItems: "center", backgroundColor: "#FBFAF6" },
+  opcion: { flex: 1, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 12, borderWidth: 1, borderColor: "#E6E8E2", alignItems: "center", backgroundColor: "#F7F8F5" },
   opcionActiva: { backgroundColor: "#E7F3E9", borderColor: "#187830" },
   opcionTexto: { fontSize: 13, color: "#888" },
   opcionTextoActivo: { color: "#187830", fontWeight: "600" },
   // chips de ancho automatico para el scroll horizontal de dia/hora
-  chip: { paddingVertical: 9, paddingHorizontal: 15, borderRadius: 22, borderWidth: 1, borderColor: "#EAE4D6", backgroundColor: "#FBFAF6" },
+  chip: { paddingVertical: 9, paddingHorizontal: 15, borderRadius: 22, borderWidth: 1, borderColor: "#E6E8E2", backgroundColor: "#F7F8F5" },
   chipOn: { backgroundColor: "#187830", borderColor: "#187830" },
   chipTxt: { fontSize: 13, color: "#555" },
   chipTxtOn: { color: "#fff", fontWeight: "700" },
   // tarjetas de categoria del registro (cliente / carreras / acarreos)
-  catBoton: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#EAE4D6", borderRadius: 14, padding: 14, backgroundColor: "#fff" },
+  catBoton: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#E6E8E2", borderRadius: 14, padding: 14, backgroundColor: "#fff" },
   catBotonOn: { borderColor: "#187830", backgroundColor: "#EAF6EC", borderWidth: 2 },
   catEmoji: { fontSize: 26 },
   catTitulo: { fontSize: 15, fontWeight: "700", color: "#333" },
