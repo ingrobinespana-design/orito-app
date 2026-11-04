@@ -2735,6 +2735,10 @@ def oferta_dict(o: Oferta, conductor: Usuario = None):
         "conductor_placa": conductor.placa if conductor else None,
         "conductor_vehiculo": conductor.vehiculo if conductor else None,
         "conductor_tipo": conductor.tipo_vehiculo if conductor else None,
+        # para que el pasajero decida con confianza (como en inDrive)
+        "conductor_foto": conductor.foto_conductor if conductor else None,
+        "conductor_calificacion": conductor.calificacion if conductor else None,
+        "conductor_veh_color": conductor.veh_color if conductor else None,
     }
 
 @app.post("/carreras/{carrera_id}/ofertas")
