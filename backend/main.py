@@ -1793,11 +1793,8 @@ def push_conductor(u: Usuario, titulo: str, cuerpo: str, datos: dict):
     push SOLO DE DATOS (sin titulo): la app lo recibe aunque este bloqueada o cerrada
     y lo convierte en aviso tipo llamada + Tukan al frente. Si no, el push normal."""
     normal = push.mensaje(u.push_token, titulo, cuerpo, datos)
-    # APAGADO 2026-11-04: el push de datos no saca la pantalla completa (Android
-    # congela el JS y lo procesa al abrir) y podia estorbar al aviso del rastreo en
-    # segundo plano, que es el que SI funcionaba. Se reactiva con PUSH_DATOS=si
-    # cuando el APK traiga el receptor nativo.
-    if u.push_modo == "datos" and os.environ.get("PUSH_DATOS") == "si":
+    # se puede apagar sin redesplegar codigo poniendo PUSH_DATOS=no en Railway
+    if u.push_modo == "datos" and os.environ.get("PUSH_DATOS") != "no":
         # van los DOS: el normal es la red de seguridad (nunca se queda sin aviso)
         return [normal, {"to": u.push_token, "priority": "high", "_contentAvailable": True,
                          "data": {**datos, "titulo": titulo, "cuerpo": cuerpo}}]
