@@ -182,6 +182,26 @@ def actualizar_apk_url(clave: str, valor: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "apk_url": valor}
 
+@app.get("/diag/push")
+def diagnostico_push(clave: str, tel: str, probar: str = "no", db: Session = Depends(get_db)):
+    """Diagnostico de avisos de un conductor (clave RESPALDO_CLAVE): como quedo
+    registrado su telefono y, con probar=si, le manda un aviso de PRUEBA por el
+    mismo camino que una solicitud real (push normal + push de datos)."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    u = db.query(Usuario).filter(Usuario.telefono.like(f"%{_digitos(tel)[-10:]}")).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="No existe")
+    info = {"id": u.id, "nombre": u.nombre, "rol": u.rol, "disponible": u.disponible,
+            "tiene_token": bool(u.push_token), "token_inicio": (u.push_token or "")[:28],
+            "push_modo": u.push_modo, "ubic_fecha": u.ubic_fecha, "municipio": u.municipio}
+    if probar == "si" and u.push_token:
+        msgs = push_conductor(u, "🔔 Prueba de solicitud", "Aviso de prueba desde el servidor",
+                              {"tipo": "carrera_nueva", "carrera_id": 0})
+        info["envio"] = push.enviar(msgs)
+    return info
+
 @app.put("/municipio-tarifa/{nombre}")
 def actualizar_tarifa_municipio(nombre: str, clave: str, valor_km: int = None,
                                 tarifa_minima: int = None, tarifa_base: int = None,
