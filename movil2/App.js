@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, forwardRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text as RNText, TextInput as RNTextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share, Dimensions, AppState, NativeModules } from 'react-native';
+import { View, Text as RNText, TextInput as RNTextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share, Dimensions, AppState, NativeModules, Keyboard } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -2187,6 +2187,11 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   const [encontrado, setEncontrado] = useState(null);   // nombre del sitio hallado, para confirmar "es aqui"
   const [sugerencias, setSugerencias] = useState([]);    // autocompletar Mapbox (tipo Uber)
   const [sinRes, setSinRes] = useState(false);           // busco pero no encontro en la zona
+  const [cargandoSug, setCargandoSug] = useState(false);
+  // cada vez que se abre, la busqueda se sesga hacia donde abre el mapa (la ciudad
+  // del usuario), no hacia el primer centro que tuvo (podia quedar en Orito)
+  useEffect(() => { if (visible) setCoords(inicial); }, [visible]);
+  const saltarAuto = useRef(false);                     // al elegir una sugerencia no se vuelve a buscar
 
   // AUTOCOMPLETAR (tipo Uber): mientras escribes, el backend sugiere direcciones con
   // Mapbox (mucho mejor que Nominatim para nomenclatura de ciudades). Se sesga hacia
@@ -2194,22 +2199,29 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   // (Nominatim) o marca en el mapa — nunca se queda sin poder ubicar.
   useEffect(() => {
     const t = busqueda.trim();
-    if (t.length < 3) { setSugerencias([]); setSinRes(false); return; }
+    if (saltarAuto.current) { saltarAuto.current = false; return; }
+    if (t.length < 3) { setSugerencias([]); setSinRes(false); setCargandoSug(false); return; }
+    setCargandoSug(true);
     const timer = setTimeout(() => {
       const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
-      fetch(`${API}/ubicacion/autocompletar?texto=${encodeURIComponent(t)}${cerca}`)
+      const muni = municipio ? `&municipio=${encodeURIComponent(municipio)}` : "";
+      fetch(`${API}/ubicacion/autocompletar?texto=${encodeURIComponent(t)}${cerca}${muni}`)
         .then(r => r.json())
-        .then(d => { if (Array.isArray(d)) { setSugerencias(d); setSinRes(d.length === 0); } }).catch(() => {});
+        .then(d => { if (Array.isArray(d)) { setSugerencias(d); setSinRes(d.length === 0); } })
+        .catch(() => {})
+        .finally(() => setCargandoSug(false));
     }, 350);   // espera a que deje de escribir, para no llamar en cada tecla
     return () => clearTimeout(timer);
   }, [busqueda]);
 
   const elegirSugerencia = (s) => {
     setCoords({ lat: s.lat, lon: s.lon });
-    setBusqueda(s.nombre.split(",").slice(0, 2).join(", ").trim());
+    saltarAuto.current = true;   // poner el texto elegido NO debe abrir otra vez la lista
+    setBusqueda(s.titulo || s.nombre.split(",")[0].trim());
     setSugerencias([]);
     setSinRes(false);
-    setEncontrado(s.nombre.split(",").slice(0, 3).join(",").trim());
+    Keyboard.dismiss();
+    setEncontrado(s.titulo ? [s.titulo, (s.detalle || "").split(",")[0]].filter(Boolean).join(", ") : s.nombre.split(",").slice(0, 3).join(",").trim());
     webRef.current && webRef.current.injectJavaScript(`irA(${s.lat}, ${s.lon}); true;`);
   };
 
@@ -2263,45 +2275,40 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
           <TouchableOpacity onPress={onCerrar}><Text style={{ fontSize: 22 }}>←</Text></TouchableOpacity>
           <Text style={{ fontSize: 16, fontWeight: "600", color: "#333" }}>{titulo}</Text>
         </View>
-        <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingTop: 10 }}>
-          <TextInput
-            value={busqueda}
-            onChangeText={setBusqueda}
-            placeholder="🔎 Escribe la dirección (ej. Carrera 39 #10, Cali)"
-            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-            onSubmitEditing={buscarLugar}
-            returnKeyType="search"
-          />
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", paddingHorizontal: 16, justifyContent: "center" }]} onPress={buscarLugar} disabled={buscandoLugar}>
-            {buscandoLugar ? <ActivityIndicator color="#fff" /> : <Text style={[styles.buttonText, { fontSize: 14 }]}>Buscar</Text>}
-          </TouchableOpacity>
-        </View>
-        {sugerencias.length > 0 ? (
-          <View style={{ marginHorizontal: 14, marginTop: 6, backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#eee", overflow: "hidden" }}>
-            {sugerencias.map((s, i) => (
-              <TouchableOpacity key={i} onPress={() => elegirSugerencia(s)}
-                style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: i < sugerencias.length - 1 ? 0.5 : 0, borderBottomColor: "#f0f0f0", flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Text style={{ fontSize: 15 }}>📍</Text>
-                <Text style={{ flex: 1, fontSize: 13, color: "#333" }} numberOfLines={2}>{s.nombre}</Text>
+        <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", height: 50, backgroundColor: "#F4F5F1", borderRadius: 14, borderWidth: 1, borderColor: "#E2E5DE", overflow: "hidden" }}>
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: "#187830", marginLeft: 14 }} />
+            <TextInput
+              value={busqueda}
+              onChangeText={setBusqueda}
+              placeholder="Busca un sitio, barrio o dirección"
+              placeholderTextColor="#9A9A9A"
+              style={{ flex: 1, height: 50, paddingHorizontal: 10, fontSize: 15, color: "#1D1D1D" }}
+              onSubmitEditing={buscarLugar}
+              returnKeyType="search"
+              autoCorrect={false}
+            />
+            {cargandoSug ? <ActivityIndicator size="small" color="#187830" style={{ marginRight: 10 }} /> : null}
+            {busqueda && !cargandoSug ? (
+              <TouchableOpacity onPress={() => { setBusqueda(""); setSugerencias([]); setSinRes(false); setEncontrado(null); }} style={{ paddingHorizontal: 10, height: 50, justifyContent: "center" }}>
+                <Text style={{ fontSize: 15, color: "#9A9A9A", fontWeight: "700" }}>✕</Text>
               </TouchableOpacity>
-            ))}
+            ) : null}
+            <TouchableOpacity onPress={buscarLugar} disabled={buscandoLugar} activeOpacity={0.85}
+              style={{ backgroundColor: "#187830", height: 50, paddingHorizontal: 16, justifyContent: "center" }}>
+              {buscandoLugar ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>Buscar</Text>}
+            </TouchableOpacity>
           </View>
-        ) : null}
-        {sinRes && sugerencias.length === 0 ? (
-          <View style={{ marginHorizontal: 14, marginTop: 6, backgroundColor: "#FFF4E0", borderRadius: 10, padding: 10 }}>
-            <Text style={{ fontSize: 12.5, color: "#8A5A00", fontWeight: "600" }}>
-              No encontramos "{busqueda.trim()}" por aquí. Prueba con otro nombre (una calle o un sitio conocido cercano) o marca el punto en el mapa. 👇
-            </Text>
-          </View>
-        ) : null}
-        {encontrado ? (
-          <View style={{ marginHorizontal: 14, marginTop: 8, backgroundColor: "#EAF6EC", borderRadius: 10, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={{ fontSize: 16 }}>📍</Text>
-            <Text style={{ flex: 1, fontSize: 13, color: "#187830", fontWeight: "600" }} numberOfLines={2}>
-              {encontrado}  ·  ¿es aquí? Ajusta el pin si hace falta y confirma abajo.
-            </Text>
-          </View>
-        ) : null}
+          {!busqueda ? (
+            <Text style={{ fontSize: 12, color: "#9A9A9A", marginTop: 6, marginLeft: 4 }}>Ej: Unicentro · barrio San Fernando · Calle 5 con Carrera 66</Text>
+          ) : null}
+          {encontrado ? (
+            <View style={{ marginTop: 8, backgroundColor: "#EAF6EC", borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12 }}>
+              <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }} numberOfLines={1}>{encontrado}</Text>
+              <Text style={{ fontSize: 12, color: "#3F7A4D", marginTop: 1 }}>¿Es aquí? Ajusta el pin si hace falta y confirma abajo.</Text>
+            </View>
+          ) : null}
+        </View>
         <View style={{ flex: 1 }}>
           <WebView
             ref={webRef}
@@ -2317,6 +2324,36 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             androidLayerType="hardware"
             style={{ flex: 1 }}
           />
+          {/* la lista flota SOBRE el mapa (no lo empuja hacia abajo) */}
+          {sugerencias.length > 0 ? (
+            <View style={{ position: "absolute", top: 0, left: 14, right: 14, backgroundColor: "#fff", borderRadius: 14, overflow: "hidden", elevation: 8, shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
+              <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 330 }}>
+                {sugerencias.map((s, i) => {
+                  const tit = s.titulo || s.nombre.split(",")[0];
+                  const det = s.titulo ? (s.detalle || "") : s.nombre.split(",").slice(1).join(",").trim();
+                  return (
+                    <TouchableOpacity key={i} onPress={() => elegirSugerencia(s)} activeOpacity={0.7}
+                      style={{ paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: i < sugerencias.length - 1 ? 1 : 0, borderBottomColor: "#F0F1EE", flexDirection: "row", gap: 12, alignItems: "center" }}>
+                      <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: "#EEF1EC", alignItems: "center", justifyContent: "center" }}>
+                        <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: "#187830" }} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14.5, fontWeight: "700", color: "#1D1D1D" }} numberOfLines={1}>{tit}</Text>
+                        {det ? <Text style={{ fontSize: 12.5, color: "#8A8A8A", marginTop: 1 }} numberOfLines={1}>{det}</Text> : null}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : null}
+          {sinRes && sugerencias.length === 0 && !cargandoSug ? (
+            <View style={{ position: "absolute", top: 0, left: 14, right: 14, backgroundColor: "#FFF4E0", borderRadius: 12, padding: 12, elevation: 6 }}>
+              <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "600" }}>
+                No encontramos "{busqueda.trim()}" por aquí. Prueba con el nombre de un sitio cercano o una calle, o toca el mapa para marcar el punto.
+              </Text>
+            </View>
+          ) : null}
           <Text style={{ textAlign: "center", fontSize: 12, color: "#888", paddingVertical: 6 }}>
             Toca el mapa para poner el pin, o arrastralo al punto exacto
           </Text>
@@ -3255,7 +3292,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
         onCerrar={() => setMapaOpen(false)} />
 
       <MapaSelector visible={mapaDestOpen} titulo={`Marca el destino${destino ? ` en ${destino}` : ""}`}
-        centro={pinDest || destCentro || gpsRapido || null}
+        centro={pinDest || destCentro || pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
         municipio={destino || "Colombia"}
         onConfirmar={(c) => { setPinDest({ lat: c.lat, lon: c.lon }); setMapaDestOpen(false); }}
         onCerrar={() => setMapaDestOpen(false)} />

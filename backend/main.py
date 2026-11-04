@@ -2279,14 +2279,23 @@ def _mapbox_searchbox(t, cerca_lat, cerca_lon):
             if "longitude" in co and "latitude" in co:
                 c = [co["longitude"], co["latitude"]]
         if c and len(c) == 2:
-            nombre = props.get("full_address") or props.get("name_preferred") or props.get("name")
-            pf = props.get("place_formatted")
-            # si el nombre es corto (solo "Unicentro") y no es direccion completa, le
-            # pega la ciudad para que se entienda cual es
-            if nombre and pf and not props.get("full_address") and pf not in nombre:
-                nombre = f"{nombre}, {pf}"
-            if nombre:
-                out.append({"nombre": nombre, "lat": c[1], "lon": c[0]})
+            nom = (props.get("name_preferred") or props.get("name") or "").strip()
+            direccion = (props.get("full_address") or props.get("place_formatted") or "").strip()
+            if props.get("feature_type") == "poi" and nom:
+                # sitio con nombre (Unicentro, Univalle): el NOMBRE va primero y la
+                # direccion de detalle. Antes solo salia "Cra. 100 #5-169" y la gente
+                # creia que no lo habia encontrado.
+                titulo, detalle = nom, direccion
+            else:
+                titulo = direccion or nom
+                detalle = ""
+                if "," in titulo:
+                    titulo, detalle = titulo.split(",", 1)
+                    titulo, detalle = titulo.strip(), detalle.strip()
+            if titulo:
+                nombre = f"{titulo}, {detalle}" if detalle else titulo
+                out.append({"nombre": nombre, "titulo": titulo, "detalle": detalle,
+                            "lat": c[1], "lon": c[0]})
     return out
 
 def _nominatim_geo(t, cerca_lat, cerca_lon):
@@ -2314,51 +2323,126 @@ def _nominatim_geo(t, cerca_lat, cerca_lon):
         out.append({"nombre": nombre, "lat": lat, "lon": lon})
     return out
 
+import re as _re_bus
+import unicodedata as _ud_bus
+
+_VIAS = r"(calle|cl|cll|carrera|cra|cr|kr|kra|avenida|av|diagonal|dg|transversal|tv|tr)"
+_RX_CRUCE = _re_bus.compile(
+    r"^\s*" + _VIAS + r"\.?\s*(\d+\s*[a-z]?(?:\s*(?:bis|norte|sur|n|s|oeste|este))?)\s+(?:con|y|x|&|#|n[o°º]\.?)\s*"
+    + r"(?:" + _VIAS + r"\.?\s*)?(\d+\s*[a-z]?)\s*(?:-\s*(\d+))?\s*$", _re_bus.I)
+
+def _normalizar_busqueda(t: str) -> str:
+    """'barrio San Fernando' -> 'San Fernando'; 'Calle 5 con Carrera 66' (la forma
+    como hablamos en Colombia) -> 'Calle 5 # 66-00', que Mapbox SI ubica en la esquina."""
+    t = (t or "").strip()
+    t = _re_bus.sub(r"^(barrio|br|b/|urbanizacion|urbanización|conjunto)\s+", "", t, flags=_re_bus.I)
+    m = _RX_CRUCE.match(t)
+    if m:
+        via, num, _via2, num2, placa = m.groups()
+        via_l = via.lower()
+        via = {"cl": "Calle", "cll": "Calle", "cra": "Carrera", "cr": "Carrera", "kr": "Carrera",
+               "kra": "Carrera", "av": "Avenida", "dg": "Diagonal", "tv": "Transversal",
+               "tr": "Transversal"}.get(via_l, via.capitalize())
+        t = f"{via} {num.strip()} # {num2.replace(' ', '')}-{placa or '00'}"
+    return t
+
+def _es_basura(nombre: str) -> bool:
+    """Resultados que confunden: letras de otros alfabetos (ቺፒቻፔ) o 'first floor'."""
+    n = (nombre or "").strip()
+    if not n:
+        return True
+    for ch in n:
+        if ch.isalpha() and ord(ch) > 0x24F:
+            return True
+    return n.lower().split(",")[0].strip() in ("first floor", "ground floor", "second floor", "piso 1")
+
+def _ciudad_cercana(lat, lon, db: Session):
+    """Nombre de la ciudad (Municipio) cuyo centro esta mas cerca de (lat, lon)."""
+    if lat is None or lon is None:
+        return None
+    mejor, dist = None, 1e9
+    for m in db.query(Municipio).filter(Municipio.centro_lat.isnot(None)).all():
+        d = tarifas.distancia_km(lat, lon, m.centro_lat, m.centro_lon) or 1e9
+        if d < dist:
+            mejor, dist = m.nombre, d
+    return mejor if dist <= 60 else None
+
+RADIO_BUSQUEDA_KM = 40   # area metropolitana (Cali-Jamundi-Yumbo-Palmira/aeropuerto)
+
 @app.get("/ubicacion/autocompletar")
-def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: float = None):
-    """Autocompletar acotado a la ZONA, combinando lo mejor de dos mundos GRATIS:
-    Mapbox para NOMENCLATURA (Carrera/Calle) + OpenStreetMap para SITIOS/negocios
-    (Unicentro, parque, terminal). Devuelve [{nombre,lat,lon}]. Falla en silencio."""
-    t = (texto or "").strip()
-    if len(t) < 3:
+def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: float = None,
+                            municipio: str = None, db: Session = Depends(get_db)):
+    """Autocompletar acotado a la ZONA: Search Box (sitios con nombre, vias) +
+    Geocoding v6 (nomenclatura) + OpenStreetMap con la ciudad (terminal, parques).
+    Devuelve [{nombre, titulo, detalle, lat, lon}]. Falla en silencio."""
+    original = (texto or "").strip()
+    if len(original) < 3:
         return []
+    t = _normalizar_busqueda(original)
+    es_cruce = t != original and "#" in t
+    # red de seguridad: si el punto que manda la app esta lejos de la ciudad del
+    # usuario (mapa abierto con el centro por defecto), se busca alrededor de la ciudad
+    if municipio:
+        mu = db.query(Municipio).filter(Municipio.nombre == municipio).first()
+        if mu and mu.centro_lat is not None:
+            lejos = cerca_lat is None or cerca_lon is None or                 (tarifas.distancia_km(cerca_lat, cerca_lon, mu.centro_lat, mu.centro_lon) or 0) > 60
+            if lejos:
+                cerca_lat, cerca_lon = mu.centro_lat, mu.centro_lon
     resultados, vistos = [], set()
 
     def agregar(items):
         for r in items:
-            if not r.get("nombre"):
+            tit = (r.get("titulo") or r["nombre"].split(",")[0]).strip()
+            # basura o solo codigo postal ("760041 Santiago de Cali"): no ubica nada
+            if not r.get("nombre") or _es_basura(tit) or _re_bus.match(r"^\d{5,6}\s", tit):
                 continue
-            # guarda GENEROSA: descarta solo lo muy lejano (otra ciudad/departamento),
-            # pero deja todo el area metropolitana. Mapbox ya ordena lo cercano primero.
+            # solo la zona metropolitana: nada de otra ciudad/departamento
             if cerca_lat is not None and cerca_lon is not None:
                 km = tarifas.distancia_km(cerca_lat, cerca_lon, r["lat"], r["lon"])
-                if km is not None and km > 80:
+                if km is not None and km > RADIO_BUSQUEDA_KM:
                     continue
-            k = (round(r["lat"], 5), round(r["lon"], 5))
+            k = (round(r["lat"], 4), round(r["lon"], 4))
             if k in vistos:
                 continue
             vistos.add(k)
+            if not r.get("titulo"):
+                partes = [x.strip() for x in r["nombre"].split(",")]
+                r = {**r, "titulo": partes[0], "detalle": ", ".join(partes[1:])}
+            # detalle sin pedazos raros ("ቺፒቻፔ", "first floor")
+            limpio = ", ".join(x.strip() for x in (r.get("detalle") or "").split(",") if x.strip() and not _es_basura(x))
+            r = {**r, "detalle": limpio, "nombre": f"{r['titulo']}, {limpio}" if limpio else r["titulo"]}
+            # mismo nombre y misma direccion = repetido (aunque el punto varie unos metros)
+            kn = r["nombre"].lower()
+            if kn in vistos:
+                continue
+            vistos.add(kn)
             resultados.append(r)
 
-    # Search Box PRIMERO (mejor en vias con nombre y POIs), luego Geocoding v6
-    # (nomenclatura) y por ultimo OSM (negocios). Cada uno en try/except: si falla o
-    # queda corto, cae al siguiente -> EN EL PEOR CASO queda igual que antes (Search
-    # Box fuera = v6 + OSM, lo de hoy). Timeouts cortos: no cuelga los workers.
-    try:
-        agregar(_mapbox_searchbox(t, cerca_lat, cerca_lon))
-    except Exception:
-        pass
-    if len(resultados) < 3:
+    def intentar(fn, *a):
         try:
-            agregar(_mapbox_geo(t, cerca_lat, cerca_lon))
+            agregar(fn(*a))
         except Exception:
             pass
-    if len(resultados) < 3:
+
+    # una esquina ("Calle 5 con 66") la ubica mejor la nomenclatura (v6); lo demas,
+    # el Search Box. Cada fuente en try/except: si una falla, siguen las otras.
+    if es_cruce:
+        # de la nomenclatura solo sirven las que traen placa ("Calle 5 66-10"); un
+        # "Calle 5" pelado de otro pueblo no ubica la esquina
         try:
-            agregar(_nominatim_geo(t, cerca_lat, cerca_lon))
+            agregar([r for r in _mapbox_geo(t, cerca_lat, cerca_lon) if "-" in r["nombre"].split(",")[0]])
         except Exception:
             pass
-    return resultados[:6]
+        intentar(_mapbox_searchbox, original, cerca_lat, cerca_lon)
+    else:
+        intentar(_mapbox_searchbox, t, cerca_lat, cerca_lon)
+        if len(resultados) < 4:
+            intentar(_mapbox_geo, t, cerca_lat, cerca_lon)
+    if len(resultados) < 4:
+        ciudad = municipio or _ciudad_cercana(cerca_lat, cerca_lon, db)
+        # OSM encuentra mejor los sitios si se le dice la ciudad ("Terminal ... Cali")
+        intentar(_nominatim_geo, f"{t}, {ciudad}" if ciudad else t, cerca_lat, cerca_lon)
+    return resultados[:7]
 
 @app.get("/ubicacion/buscar")
 def buscar_coordenadas(texto: str, municipio: str = "Orito",
@@ -2372,19 +2456,16 @@ def buscar_coordenadas(texto: str, municipio: str = "Orito",
     conocido = buscar_lugar(texto, municipio, db)
     if conocido and conocido.lat is not None:
         return {"lat": conocido.lat, "lon": conocido.lon, "fuente": "lugar"}
-    # 2) Mapbox Search Box (POIs, vias con nombre, nomenclatura) sesgado a donde mira
-    #    el usuario; toma el mas cercano. Aditivo: si no trae nada, sigue con OSM.
+    # 2) lo mismo que muestra el autocompletar (primera sugerencia): asi "Buscar" y
+    #    la lista nunca se contradicen. Si no trae nada, siguen los respaldos de OSM.
     if cerca_lat is not None and cerca_lon is not None:
         try:
-            cand = _mapbox_searchbox(texto, cerca_lat, cerca_lon)
+            cand = autocompletar_direccion(texto, cerca_lat, cerca_lon, municipio, db)
         except Exception:
             cand = []
         if cand:
-            cand.sort(key=lambda r: tarifas.distancia_km(cerca_lat, cerca_lon, r["lat"], r["lon"]) or 1e9)
             m = cand[0]
-            km = tarifas.distancia_km(cerca_lat, cerca_lon, m["lat"], m["lon"])
-            if km is None or km <= 80:
-                return {"lat": m["lat"], "lon": m["lon"], "nombre": m["nombre"], "fuente": "mapbox"}
+            return {"lat": m["lat"], "lon": m["lon"], "nombre": m["nombre"], "fuente": "mapbox"}
     # 3) acotado a DONDE MIRA el usuario (lo mas confiable: su GPS/centro del mapa;
     #    no depende de que el centro de la ciudad este bien configurado)
     if cerca_lat is not None and cerca_lon is not None:
