@@ -1218,7 +1218,7 @@ def login(telefono: str, password: str, db: Session = Depends(get_db)):
             "restaurante_id": usuario.restaurante_id, "placa": usuario.placa,
             "vehiculo": usuario.vehiculo, "disponible": usuario.disponible,
             "municipio": usuario.municipio, "tipo_vehiculo": usuario.tipo_vehiculo,
-            "token": usuario.token, "fundador": usuario.fundador}
+            "token": usuario.token, "fundador": usuario.fundador, "foto_perfil": usuario.foto_perfil}
 
 # ===================== FASE 2 — Login por codigo (OTP) =====================
 # ADITIVO e INERTE. No toca /login ni /registro. Si no hay proveedor de
@@ -1238,7 +1238,7 @@ def _dict_sesion(u: Usuario):
     return {"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
             "restaurante_id": u.restaurante_id, "placa": u.placa, "vehiculo": u.vehiculo,
             "disponible": u.disponible, "municipio": u.municipio,
-            "tipo_vehiculo": u.tipo_vehiculo, "token": u.token, "fundador": u.fundador}
+            "tipo_vehiculo": u.tipo_vehiculo, "token": u.token, "fundador": u.fundador, "foto_perfil": u.foto_perfil}
 
 def _otp_norm(telefono: str):
     return "".join(ch for ch in (telefono or "") if ch.isdigit() or ch == "+")
@@ -2595,9 +2595,18 @@ def carreras_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
         # ya le toca el aviso fuerte (cercano, o ya paso la ventana). La app ordena
         # por cercania y solo suena/salta por las que tienen 'alertar'.
         ahora = datetime.now()
+        # pasajero: estrellas + foto de perfil (lo ve el conductor antes de aceptar)
+        ids_cli = {c.cliente_id for c in carreras if c.cliente_id}
+        rep = {}
+        if ids_cli:
+            for u in db.query(Usuario).filter(Usuario.id.in_(ids_cli)).all():
+                rep[u.id] = (u.calificacion, u.foto_perfil)
         salida = []
         for c in carreras:
             d = carrera_dict(c)
+            r = rep.get(c.cliente_id)
+            d["cliente_calificacion"] = r[0] if r else None
+            d["cliente_foto"] = r[1] if r else None
             km = km_conductor_a_recogida(conductor, c, ahora)
             d["km_a_recogida"] = round(km, 2) if km is not None else None
             d["mi_oferta"] = mis_ofertas.get(c.id)
@@ -3319,10 +3328,10 @@ def medios_pago(u: Usuario):
 def fotos_de(u: Usuario):
     return {"conductor": u.foto_conductor, "vehiculo": u.foto_vehiculo,
             "tarjeta": u.foto_tarjeta, "licencia": u.foto_licencia,
-            "cedula": u.foto_cedula, "soat": u.foto_soat}
+            "cedula": u.foto_cedula, "soat": u.foto_soat, "perfil": u.foto_perfil}
 
 # tipos de foto/documento validos para el endpoint de subida
-TIPOS_FOTO = ("conductor", "vehiculo", "tarjeta", "licencia", "cedula", "soat")
+TIPOS_FOTO = ("conductor", "vehiculo", "tarjeta", "licencia", "cedula", "soat", "perfil")
 
 @app.get("/usuarios/{usuario_id}/perfil")
 def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
