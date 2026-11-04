@@ -202,6 +202,26 @@ def diagnostico_push(clave: str, tel: str, probar: str = "no", db: Session = Dep
         info["envio"] = push.enviar(msgs)
     return info
 
+_DIAG_EVENTOS = []   # ultimos reportes de la app (en memoria, se borran al reiniciar)
+
+@app.post("/diag/evento")
+async def diag_evento(request: Request):
+    """La app reporta que paso con un aviso en segundo plano (para depurar)."""
+    try:
+        cuerpo = (await request.body())[:2000].decode("utf-8", "replace")
+    except Exception:
+        cuerpo = ""
+    _DIAG_EVENTOS.append({"t": datetime.now().isoformat(timespec="seconds"), "e": cuerpo})
+    del _DIAG_EVENTOS[:-60]
+    return {"ok": True}
+
+@app.get("/diag/eventos")
+def diag_eventos(clave: str):
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    return _DIAG_EVENTOS
+
 @app.put("/municipio-tarifa/{nombre}")
 def actualizar_tarifa_municipio(nombre: str, clave: str, valor_km: int = None,
                                 tarifa_minima: int = None, tarifa_base: int = None,
