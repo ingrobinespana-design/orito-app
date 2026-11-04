@@ -222,6 +222,20 @@ def diag_eventos(clave: str):
         raise HTTPException(status_code=403, detail="Clave invalida")
     return _DIAG_EVENTOS
 
+@app.put("/verificar-con-clave")
+def verificar_con_clave(clave: str, tel: str, valor: str = "si", db: Session = Depends(get_db)):
+    """Verifica (habilita) un conductor por telefono con la clave RESPALDO_CLAVE,
+    sin la sesion del admin (p. ej. las cuentas de prueba para Google Play)."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    u = db.query(Usuario).filter(Usuario.telefono == _digitos(tel), Usuario.rol == "conductor").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Conductor no encontrado")
+    u.verificado = "si" if valor == "si" else "no"
+    db.commit()
+    return {"ok": True, "id": u.id, "verificado": u.verificado}
+
 @app.put("/municipio-tarifa/{nombre}")
 def actualizar_tarifa_municipio(nombre: str, clave: str, valor_km: int = None,
                                 tarifa_minima: int = None, tarifa_base: int = None,
