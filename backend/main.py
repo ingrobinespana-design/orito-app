@@ -3130,7 +3130,11 @@ VENTANA_CANCELAR_SEG = 90   # el cliente cancela gratis hasta 1,5 min despues de
 def _segundos_para_cancelar(c: Carrera):
     """Cuanto le queda al cliente para cancelar. None = no aplica (aun buscando,
     o carrera vieja sin hora de aceptacion); 0 = ya se le paso el tiempo."""
-    if c.estado not in ("aceptada", "en_sitio") or not c.aceptada_en:
+    # el conductor ya llego al punto: se acabo el tiempo de cancelar, aunque no
+    # hayan pasado los 1,5 min (p. ej. la carrera estaba a 20 m)
+    if c.estado == "en_sitio":
+        return 0
+    if c.estado != "aceptada" or not c.aceptada_en:
         return None
     pasados = (datetime.now() - c.aceptada_en).total_seconds()
     return max(0, int(VENTANA_CANCELAR_SEG - pasados))
@@ -3154,6 +3158,8 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTa
         quien = "admin" if actual.rol == "admin" else ("cliente" if actual.id == carrera.cliente_id else "conductor")
         # el cliente tiene 1,5 min para arrepentirse despues de que lo aceptan; pasado
         # eso el conductor ya va en camino y cancelar le cuesta. Se resuelve hablando.
+        if quien == "cliente" and carrera.estado == "en_sitio":
+            raise HTTPException(status_code=409, detail="FUERA_DE_TIEMPO: El conductor ya está en el punto de recogida, ya no se puede cancelar. Comunícate con él o con soporte. Puede aplicar una penalidad.")
         if quien == "cliente" and _segundos_para_cancelar(carrera) == 0:
             raise HTTPException(status_code=409, detail="FUERA_DE_TIEMPO: Ya pasó el tiempo para cancelar (1,5 min). El conductor va en camino; comunícate con él o con soporte. Puede aplicar una penalidad.")
         carrera.cancelada_en = datetime.now()
