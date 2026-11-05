@@ -3282,6 +3282,9 @@ def avisar_entrega(carrera_id: int):
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
 
+# cuentas que Google usa para revisar la app en Play Store (ver CUENTAS-PRUEBA-GOOGLE-PLAY.txt)
+CUENTAS_PRUEBA_PLAY = {"3000000101", "3000000102"}
+
 @app.post("/carreras")
 def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: BackgroundTasks,
                   origen_detalle: str = None, destino_detalle: str = None,
@@ -3371,6 +3374,14 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
             if g:
                 destino_lat, destino_lon = g[0], g[1]
     # donde hay GPS se calcula distancia y tarifa sugerida; donde no, quedan vacias
+    # la recogida debe estar en la ciudad (o su area): nadie pide desde otro pais.
+    # Las cuentas de prueba de Google Play (revision desde EE. UU.) quedan por fuera.
+    _muni_c = db.query(Municipio).filter(Municipio.nombre == municipio).first()
+    if (origen_lat is not None and _muni_c and _muni_c.centro_lat is not None
+            and _digitos(cliente.telefono)[-10:] not in CUENTAS_PRUEBA_PLAY):
+        _km_c = tarifas.distancia_km(origen_lat, origen_lon, _muni_c.centro_lat, _muni_c.centro_lon) or 0
+        if _km_c > 80:
+            raise HTTPException(status_code=400, detail=f"Tu punto de recogida está fuera de {municipio}. Tukán todavía no opera ahí: marca la recogida dentro de la ciudad.")
     km = tarifas.distancia_por_calle(origen_lat, origen_lon, destino_lat, destino_lon)
     sugerida = tarifa_sugerida(municipio, vehiculo_pedido, km, db)
     # promo de lanzamiento (solo carreras de pasajeros): el minimo sugerido que se
