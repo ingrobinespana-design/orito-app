@@ -2069,6 +2069,8 @@ function IconoServicio({ emoji, size = 82 }) {
   );
 }
 
+const MOSTRAR_COMIDA = false;   // domicilios de comida: apagado hasta que el modulo este listo
+
 function ElegirServicioScreen({ navigation, route }) {
   const { usuario } = route.params;
   const insets = useSafeAreaInsets();
@@ -2086,7 +2088,9 @@ function ElegirServicioScreen({ navigation, route }) {
   const tiles = [
     ["🚕", "Carrera", "Moto o carro", "#E7F3E9", "#14672A", () => ir("carrera")],
     ["🚚", "Acarreo", "Trasteos y carga", "#FFF1E3", "#B54A00", () => ir("acarreo")],
-    ["🍔", "Comida", "A domicilio", "#FFF6DA", "#8A5A00", () => navigation.navigate("Inicio", { usuario })],
+    // COMIDA oculta: el modulo de domicilios (pensado para Putumayo) aun no esta listo.
+    // Para volver a mostrarla, poner MOSTRAR_COMIDA = true.
+    ...(MOSTRAR_COMIDA ? [["🍔", "Comida", "A domicilio", "#FFF6DA", "#8A5A00", () => navigation.navigate("Inicio", { usuario })]] : []),
   ];
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: "#F4F5F1" }]}>
