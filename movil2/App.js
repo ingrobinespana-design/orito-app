@@ -25,7 +25,8 @@ if (Platform.OS === "web" && typeof document !== "undefined" && !document.getEle
   document.head.appendChild(l);
 }
 const Text = forwardRef((props, ref) => <RNText ref={ref} {...props} style={[FUENTE, props.style]} />);
-const TextInput = forwardRef((props, ref) => <RNTextInput ref={ref} {...props} style={[FUENTE, props.style]} />);
+const COLOR_GUIA = "#7C8278";   // texto guia de los campos: legible tambien con el celular en modo oscuro
+const TextInput = forwardRef((props, ref) => <RNTextInput ref={ref} placeholderTextColor={COLOR_GUIA} {...props} style={[FUENTE, props.style]} />);
 
 // Produccion por defecto. Para probar contra un servidor local se arranca con
 // EXPO_PUBLIC_API_URL=http://localhost:8000 y asi nunca queda un localhost publicado.
@@ -664,11 +665,28 @@ async function registrarNotificaciones(usuarioId) {
   }
 }
 
+// etiqueta encima de cada campo del registro
+const estEtiqueta = { fontSize: 14, fontWeight: "800", color: "#2E2E2E", marginBottom: 6 };
+// nombres bonitos (en la base algunos quedaron sin tilde)
+const NOMBRES_CIUDAD = { "Puerto Asis": "Puerto Asís", "Villgarzon": "Villagarzón", "Villagarzon": "Villagarzón", "Popayan": "Popayán" };
+const nombreCiudad = (n) => NOMBRES_CIUDAD[n] || n;
+// orden de las zonas: el sur del pais, empezando por Putumayo (donde nacio Tukan)
+const ORDEN_DEPTOS = ["Putumayo", "Nariño", "Cauca", "Valle del Cauca", "Caquetá", "Huila"];
+const zonasOrdenadas = (munis) => {
+  const g = {};
+  (munis || []).forEach((m) => { const d = m.departamento || "Otros"; (g[d] = g[d] || []).push(m); });
+  const pos = (d) => { const i = ORDEN_DEPTOS.indexOf(d); return i === -1 ? 99 : i; };
+  return Object.entries(g)
+    .sort((a, b) => pos(a[0]) - pos(b[0]) || a[0].localeCompare(b[0]))
+    .map(([d, l]) => [d, l.slice().sort((x, y) => nombreCiudad(x.nombre).localeCompare(nombreCiudad(y.nombre)))]);
+};
+
 function LoginScreen({ navigation }) {
   const [modo, setModo] = useState("login");
   // categoria: que va a hacer -> "cliente" | "carreras" (personas) | "acarreos" (carga)
   // comoMe: el vehiculo exacto (o "cliente"). Se elige en 2 pasos.
-  const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "Orito", categoria: "cliente", comoMe: "cliente", placa: "" });
+  const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "", categoria: "cliente", comoMe: "cliente", placa: "" });
+  const [zonaAbierta, setZonaAbierta] = useState(false);
   const [municipios, setMunicipios] = useState([]);
   const [cargandoMun, setCargandoMun] = useState(true);
   const [verPass, setVerPass] = useState(false);   // mostrar/ocultar la contraseña
@@ -712,6 +730,8 @@ function LoginScreen({ navigation }) {
   };
 
   const handleSubmit = () => {
+    if (modo === "registro" && !form.nombre.trim()) { setError("Escribe tu nombre"); return; }
+    if (modo === "registro" && !form.municipio) { setError("Escoge tu zona (la ciudad donde usarás Tukán)"); return; }
     // si eligio ser conductor/acarreador, tiene que decir con que vehiculo
     if (modo === "registro" && form.categoria !== "cliente" && !form.comoMe) {
       setError(form.categoria === "carreras"
@@ -726,8 +746,7 @@ function LoginScreen({ navigation }) {
       : `${API}/registro?nombre=${form.nombre}&telefono=${form.telefono}&password=${form.password}`
         + `&municipio=${encodeURIComponent(form.municipio)}`
         + (form.comoMe === "cliente" || !form.comoMe ? "" :
-           `&tipo_vehiculo=${form.comoMe}&placa=${encodeURIComponent(form.placa)}`)
-        + (form.codigo && form.codigo.trim() ? `&codigo=${encodeURIComponent(form.codigo.trim().toUpperCase())}` : "");
+           `&tipo_vehiculo=${form.comoMe}&placa=${encodeURIComponent(form.placa)}`);
     fetchReintento(url, { method: "POST" })
       .then((res) => res.json())
       .then((data) => {
@@ -780,9 +799,12 @@ function LoginScreen({ navigation }) {
           </View>
           {modo === "registro" && (
             <>
-              <TextInput placeholder="Tu nombre" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} />
-              <TextInput placeholder="🎁 Código del grupo o de invitación (opcional)" value={form.codigo || ""} onChangeText={(t) => setForm({ ...form, codigo: t.toUpperCase() })} autoCapitalize="characters" style={styles.input} />
-              <Text style={styles.etiqueta}>TU MUNICIPIO</Text>
+              <Text style={estEtiqueta}>Tu nombre</Text>
+              <TextInput placeholder="Escribe aquí tu nombre y apellido" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} autoCapitalize="words" />
+
+              {/* ZONA: lista desplegable por departamento */}
+              <Text style={{ fontSize: 17, fontWeight: "800", color: "#187830", marginTop: 6, marginBottom: 2 }}>📍 Escoge tu zona</Text>
+              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 8 }}>La ciudad donde vas a usar Tukán.</Text>
               {cargandoMun ? (
                 <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#187830" /></View>
               ) : municipios.length === 0 ? (
@@ -790,47 +812,60 @@ function LoginScreen({ navigation }) {
                   <Text style={{ color: "#C0392B", fontSize: 13 }}>Sin conexion. Toca para reintentar</Text>
                 </TouchableOpacity>
               ) : (
-                <View style={{ marginBottom: 12 }}>
-                  {/* ciudades por departamento, pastillas que fluyen a varias filas */}
-                  {Object.entries(
-                    municipios.reduce((acc, m) => {
-                      const d = m.departamento || "Otros";
-                      (acc[d] = acc[d] || []).push(m);
-                      return acc;
-                    }, {})
-                  )
-                    .sort((a, b) => a[0].localeCompare(b[0]))
-                    .map(([depto, lista]) => (
-                      <View key={depto} style={{ marginBottom: 10 }}>
-                        <Text style={{ fontSize: 10.5, color: "#9a9a9a", fontWeight: "800", letterSpacing: 0.5, marginBottom: 5, textTransform: "uppercase" }}>{depto}</Text>
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                          {lista
-                            .slice()
-                            .sort((a, b) => a.nombre.localeCompare(b.nombre))
-                            .map(m => {
-                              const activa = form.municipio === m.nombre;
-                              return (
-                                <TouchableOpacity
-                                  key={m.nombre}
-                                  style={[styles.chip, activa && styles.chipOn]}
-                                  onPress={() => {
-                                    // al cambiar de pueblo, si el vehiculo elegido no existe alla, se limpia
-                                    const permite = (m.vehiculos || []).includes(form.comoMe);
-                                    setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : (form.categoria === "cliente" ? "cliente" : "") });
-                                  }}
-                                >
-                                  <Text style={[styles.chipTxt, activa && styles.chipTxtOn]}>{m.nombre}</Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                        </View>
+                <>
+                  <TouchableOpacity activeOpacity={0.85} onPress={() => setZonaAbierta(true)}
+                    style={{ flexDirection: "row", alignItems: "center", borderWidth: 1.5, borderColor: form.municipio ? "#187830" : "#D3D8CE", backgroundColor: form.municipio ? "#EAF6EC" : "#F1F4EE", borderRadius: 12, paddingVertical: 14, paddingHorizontal: 14, marginBottom: 14 }}>
+                    <View style={{ flex: 1 }}>
+                      {form.municipio ? (
+                        <>
+                          <Text style={{ fontSize: 16, fontWeight: "800", color: "#187830" }}>{nombreCiudad(form.municipio)}</Text>
+                          <Text style={{ fontSize: 12.5, color: "#3F7A4D", marginTop: 1 }}>{(municipios.find(m => m.nombre === form.municipio) || {}).departamento || ""}</Text>
+                        </>
+                      ) : (
+                        <Text style={{ fontSize: 15, color: COLOR_GUIA }}>Toca aquí para elegir tu ciudad</Text>
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 18, color: "#187830", fontWeight: "800" }}>▾</Text>
+                  </TouchableOpacity>
+                  <Modal visible={zonaAbierta} transparent animationType="slide" onRequestClose={() => setZonaAbierta(false)}>
+                    <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+                      <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", paddingBottom: 18 }}>
+                        <View style={{ alignItems: "center", paddingTop: 10 }}><View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: "#DADDD5" }} /></View>
+                        <Text style={{ fontSize: 20, fontWeight: "800", color: "#1D1D1D", paddingHorizontal: 20, paddingTop: 12, paddingBottom: 6 }}>📍 Escoge tu zona</Text>
+                        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 10 }}>
+                          {zonasOrdenadas(municipios).map(([depto, lista]) => (
+                            <View key={depto} style={{ marginTop: 12 }}>
+                              <Text style={{ fontSize: 12, color: "#8A8A8A", fontWeight: "800", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>{depto}</Text>
+                              {lista.map(m => {
+                                const activa = form.municipio === m.nombre;
+                                return (
+                                  <TouchableOpacity key={m.nombre} activeOpacity={0.7}
+                                    onPress={() => {
+                                      // al cambiar de ciudad, si el vehiculo elegido no existe alla, se limpia
+                                      const permite = (m.vehiculos || []).includes(form.comoMe);
+                                      setForm({ ...form, municipio: m.nombre, comoMe: permite ? form.comoMe : (form.categoria === "cliente" ? "cliente" : "") });
+                                      setZonaAbierta(false);
+                                    }}
+                                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: "#F0F1EE" }}>
+                                    <Text style={{ flex: 1, fontSize: 16, color: activa ? "#187830" : "#1D1D1D", fontWeight: activa ? "800" : "500" }}>{nombreCiudad(m.nombre)}</Text>
+                                    {activa ? <Text style={{ color: "#187830", fontSize: 16, fontWeight: "800" }}>✓</Text> : null}
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </ScrollView>
+                        <TouchableOpacity onPress={() => setZonaAbierta(false)} style={{ marginHorizontal: 20, marginTop: 6, paddingVertical: 13, alignItems: "center", borderRadius: 12, backgroundColor: "#F1F2EF" }}>
+                          <Text style={{ fontWeight: "700", color: "#555" }}>Cerrar</Text>
+                        </TouchableOpacity>
                       </View>
-                    ))}
-                </View>
+                    </View>
+                  </Modal>
+                </>
               )}
 
               {/* PASO 1: que va a hacer */}
-              <Text style={styles.etiqueta}>QUE VAS A HACER</Text>
+              <Text style={estEtiqueta}>¿Qué vas a hacer?</Text>
               <View style={{ gap: 8, marginBottom: 12 }}>
                 <TouchableOpacity
                   style={[styles.catBoton, form.categoria === "cliente" && styles.catBotonOn]}
@@ -899,8 +934,9 @@ function LoginScreen({ navigation }) {
               )}
               {form.categoria !== "cliente" && form.comoMe ? (
                 <>
+                  <Text style={estEtiqueta}>Placa de tu vehículo</Text>
                   <TextInput
-                    placeholder="Placa de tu vehículo"
+                    placeholder="Escribe aquí la placa (ej: ABC123)"
                     value={form.placa}
                     onChangeText={(t) => setForm({ ...form, placa: t.toUpperCase() })}
                     style={styles.input}
@@ -911,11 +947,11 @@ function LoginScreen({ navigation }) {
               ) : null}
             </>
           )}
-          <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Teléfono</Text>
-          <TextInput placeholder="Ej: 3001234567" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
-          <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Contraseña</Text>
+          <Text style={estEtiqueta}>Tu número de celular</Text>
+          <TextInput placeholder="Escribe aquí tu celular (ej: 3001234567)" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
+          <Text style={estEtiqueta}>{modo === "login" ? "Tu contraseña" : "Crea una contraseña"}</Text>
           <View style={{ justifyContent: "center" }}>
-            <TextInput placeholder="Tu contraseña" value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} />
+            <TextInput placeholder={modo === "login" ? "Escribe aquí tu contraseña" : "Mínimo 6 caracteres, que no olvides"} value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} />
             <TouchableOpacity style={{ position: "absolute", right: 6, padding: 10, top: 2 }} onPress={() => setVerPass(v => !v)}>
               <Text style={{ fontSize: 18 }}>{verPass ? "🙈" : "👁️"}</Text>
             </TouchableOpacity>
@@ -7875,7 +7911,7 @@ const styles = StyleSheet.create({
   tabActive: { backgroundColor: "#fff" },
   tabText: { color: "#888", fontSize: 14 },
   tabTextActive: { color: "#333", fontWeight: "500" },
-  input: { borderWidth: 1, borderColor: "#E6E8E2", borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 12, fontSize: 15, backgroundColor: "#F7F8F5", color: "#222" },
+  input: { borderWidth: 1.5, borderColor: "#D3D8CE", borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 12, fontSize: 15, backgroundColor: "#F1F4EE", color: "#1D1D1D" },
   error: { color: "red", fontSize: 12, marginBottom: 12 },
   button: { backgroundColor: "#F06000", borderRadius: 14, padding: 15, alignItems: "center", justifyContent: "center", shadowColor: "#F06000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.26, shadowRadius: 12, elevation: 4 },
   buttonText: { color: "#fff", fontWeight: "800", fontSize: 16, letterSpacing: 0.2 },
