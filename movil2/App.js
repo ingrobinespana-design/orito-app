@@ -2893,7 +2893,7 @@ function mapaSeguimientoHTML() {
   function alCargar(){
     if(esperaGL) clearTimeout(esperaGL);
     map.addSource('ctx',{type:'geojson',data:line([])});
-    map.addLayer({id:'ctx',type:'line',source:'ctx',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#C0392B','line-width':4,'line-opacity':0.5,'line-dasharray':[1,3]}});
+    map.addLayer({id:'ctx',type:'line',source:'ctx',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#F06000','line-width':5,'line-opacity':0.9}});
     map.addSource('ruta',{type:'geojson',data:line([])});
     map.addLayer({id:'ruta',type:'line',source:'ruta',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#187830','line-width':6,'line-opacity':0.9}});
     ready=true; map.resize(); var q=cola; cola=[]; q.forEach(function(f){ try{f();}catch(e){} });
@@ -2931,7 +2931,9 @@ function mapaSeguimientoHTML() {
   }
   function dibujarContexto(){
     if(recLat==null||destLat==null||!map.getSource('ctx')) return;
-    map.setPaintProperty('ctx','line-color','#C0392B'); map.setPaintProperty('ctx','line-width',4); map.setPaintProperty('ctx','line-opacity',0.5); map.setPaintProperty('ctx','line-dasharray',[1,3]);
+    // ya en viaje al destino: la ruta verde (que se va consumiendo) es la unica que se ve
+    if(metaRuta==='destino'){ map.getSource('ctx').setData(line([])); return; }
+    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',5); map.setPaintProperty('ctx','line-opacity',0.9);
     fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
       map.getSource('ctx').setData(line(d.routes[0].geometry.coordinates));
@@ -2951,6 +2953,11 @@ function mapaSeguimientoHTML() {
     }).catch(function(){ if(map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
   }
 
+  function recortarRuta(lng,lat){
+    if(!rutaPts||rutaPts.length<2||!map.getSource('ruta')) return;
+    var k=nearestIdx(lng,lat);
+    map.getSource('ruta').setData(line([[lng,lat]].concat(rutaPts.slice(k+1))));
+  }
   function nearestIdx(lng,lat){ if(!rutaPts) return 0; var best=0,bd=Infinity; for(var i=0;i<rutaPts.length;i++){ var dx=rutaPts[i][0]-lng,dy=rutaPts[i][1]-lat,d=dx*dx+dy*dy; if(d<bd){bd=d;best=i;} } return best; }
   function moverEnRuta(la,lo){
     var c=carro.getLngLat(); var a=[c.lng,c.lat];
@@ -2963,7 +2970,8 @@ function mapaSeguimientoHTML() {
     if(pts.length<2){ if(carro) carro.setLngLat(pts[0]); return; }
     var i=0,t0=performance.now(),segDur=1300/(pts.length-1);
     function paso(now){ var t=Math.min(1,(now-t0)/segDur); var a=pts[i],b=pts[i+1];
-      carro.setLngLat([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]); carro.setRotation(rumbo(a,b));
+      var pl=a[0]+(b[0]-a[0])*t, pa=a[1]+(b[1]-a[1])*t;
+      carro.setLngLat([pl,pa]); carro.setRotation(rumbo(a,b)); recortarRuta(pl,pa);
       if(seguir){ map.setCenter(carro.getLngLat()); }
       if(t>=1){ i++; if(i<pts.length-1){ t0=now; animId=requestAnimationFrame(paso); } } else { animId=requestAnimationFrame(paso); }
     }
@@ -2978,7 +2986,7 @@ function mapaSeguimientoHTML() {
     } else { moverEnRuta(la,lo); }
     var mover=!ultimaRuta||Math.sqrt(Math.pow(la-ultimaRuta[0],2)+Math.pow(lo-ultimaRuta[1],2))>0.0008; if(mover) pedirRuta(la,lo);
   }
-  function _rutaA(cual){ metaRuta=cual; aplicarMeta(); ultimaRuta=null; if(carro&&dLat!=null){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
+  function _rutaA(cual){ metaRuta=cual; aplicarMeta(); ultimaRuta=null; dibujarContexto(); if(carro&&dLat!=null){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
   function recogida(la,lo){ ultimos.rec=[la,lo]; enListo(function(){_recogida(la,lo);}); }
   function punto(la,lo){ recogida(la,lo); }
   function destino(la,lo){ ultimos.dest=[la,lo]; enListo(function(){_destino(la,lo);}); }
