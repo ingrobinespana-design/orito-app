@@ -2074,6 +2074,150 @@ function IconoServicio({ emoji, size = 82 }) {
 
 const MOSTRAR_COMIDA = false;   // domicilios de comida: apagado hasta que el modulo este listo
 
+/* ============ ANUNCIO DE PROMO POR TEMAS (facil de cambiar de motivo) ============
+ * Cada tema es una ficha: colores, figuras que caen, adorno que rebota, luces y textos.
+ * El tema lo elige el SERVIDOR (PUT /promo?tema=navidad), asi se cambia de motivo sin
+ * publicar app. Para un motivo NUEVO solo se agrega una ficha aqui (y sale por OTA).
+ * {n} = nombre del usuario, {pct} = descuento, {hasta} = fecha de fin.               */
+const TEMAS_PROMO = {
+  navidad: {
+    fondo: "rgba(10,25,40,0.72)", cabecera: "#C62828", franja: "#1B5E20", boton: "#1B5E20",
+    textoCabecera: "#FFFFFF", suave: "#FFD6D6",
+    etiqueta: "🎄 ESPECIAL DE NAVIDAD 🎄",
+    titulo: "¡Feliz Navidad, {n}!", tituloSinNombre: "¡Feliz Navidad!",
+    mensaje: "Tukán te regala {pct}% de descuento en todas tus carreras{hasta}. Tú pones el precio y le pagas directo al conductor.",
+    textoBoton: "🎁 Pedir mi carrera",
+    caen: ["❄️", "❄️", "⭐", "🎁", "❄️", "✨", "🎄", "❄️"],
+    adorno: "🎅", luces: ["#FF3B30", "#FFD60A", "#34C759", "#0A84FF", "#FF9F0A"],
+  },
+  lanzamiento: {
+    fondo: "rgba(8,30,18,0.62)", cabecera: "#F06000", franja: "#B84800", boton: "#187830",
+    textoCabecera: "#FFFFFF", suave: "#FFE3CC",
+    etiqueta: "🔥 LANZAMIENTO",
+    titulo: "¡{n}, aprovecha!", tituloSinNombre: "¡Aprovecha!",
+    mensaje: "Todas tus carreras con {pct}% de descuento{hasta}. Tú pones el precio y le pagas directo al conductor.",
+    textoBoton: "Pedir mi carrera",
+    caen: ["🎉", "✨", "🔥", "🎊", "⭐"],
+    adorno: "🚕", luces: null,
+  },
+  // ejemplo para despues: amor y amistad, madres, padres, fin de ano...
+  // amor: { ...copiar una ficha y cambiar colores/emojis/textos... },
+};
+
+let promoAnunciada = false;   // una vez por apertura de la app
+
+function Particula({ emoji, x, ancho, alto, duracion, retraso, vaiven }) {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const anim = Animated.loop(Animated.timing(v, { toValue: 1, duration: duracion, delay: retraso, useNativeDriver: true }));
+    anim.start();
+    return () => anim.stop();
+  }, []);
+  return (
+    <Animated.Text pointerEvents="none" style={{ position: "absolute", top: -40, left: x, fontSize: ancho,
+      transform: [
+        { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, alto + 80] }) },
+        { translateX: v.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, vaiven, 0, -vaiven, 0] }) },
+        { rotate: v.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) },
+      ] }}>{emoji}</Animated.Text>
+  );
+}
+
+function AnuncioPromo({ promo, nombre, onPedir }) {
+  const [visible, setVisible] = useState(false);
+  const fondo = useRef(new Animated.Value(0)).current;
+  const escala = useRef(new Animated.Value(0.4)).current;
+  const late = useRef(new Animated.Value(1)).current;
+  const brinco = useRef(new Animated.Value(0)).current;
+  const titila = useRef(new Animated.Value(0)).current;
+  const { width: ancho, height: alto } = Dimensions.get("window");
+  const tema = TEMAS_PROMO[(promo && promo.tema) || "navidad"] || TEMAS_PROMO.navidad;
+  const caen = useMemo(() => Array.from({ length: 26 }, (_, i) => ({
+    emoji: tema.caen[i % tema.caen.length], x: Math.random() * (ancho - 20),
+    ancho: 14 + Math.random() * 16, duracion: 5000 + Math.random() * 5000,
+    retraso: Math.random() * 4000, vaiven: 10 + Math.random() * 25,
+  })), [tema]);
+  useEffect(() => {
+    if (!promo || promoAnunciada) return;
+    promoAnunciada = true;
+    const t = setTimeout(() => {
+      setVisible(true);
+      Animated.parallel([
+        Animated.timing(fondo, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(escala, { toValue: 1, friction: 4, tension: 70, useNativeDriver: true }),
+      ]).start();
+      Animated.loop(Animated.sequence([
+        Animated.timing(late, { toValue: 1.14, duration: 480, useNativeDriver: true }),
+        Animated.timing(late, { toValue: 1, duration: 480, useNativeDriver: true }),
+      ])).start();
+      Animated.loop(Animated.sequence([
+        Animated.timing(brinco, { toValue: 1, duration: 420, useNativeDriver: true }),
+        Animated.timing(brinco, { toValue: 0, duration: 420, useNativeDriver: true }),
+        Animated.delay(500),
+      ])).start();
+      Animated.loop(Animated.sequence([
+        Animated.timing(titila, { toValue: 1, duration: 450, useNativeDriver: true }),
+        Animated.timing(titila, { toValue: 0, duration: 450, useNativeDriver: true }),
+      ])).start();
+    }, 700);
+    return () => clearTimeout(t);
+  }, [promo]);
+  if (!visible) return null;
+  const cerrar = (luego) => {
+    Animated.timing(fondo, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => { setVisible(false); luego && luego(); });
+  };
+  const rellenar = (t) => (t || "").replace("{n}", nombre || "").replace("{pct}", promo.pct)
+    .replace("{hasta}", promo.hasta ? ` hasta el ${promo.hasta}` : "");
+  const luces = tema.luces ? Array.from({ length: 13 }, (_, i) => tema.luces[i % tema.luces.length]) : null;
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={() => cerrar()}>
+      <Animated.View style={{ flex: 1, backgroundColor: tema.fondo, opacity: fondo, alignItems: "center", justifyContent: "center", padding: 22 }}>
+        {caen.map((c, i) => <Particula key={i} {...c} alto={alto} />)}
+        <Animated.View style={{ width: "100%", maxWidth: 360, transform: [{ scale: escala }] }}>
+          {/* adorno que rebota encima de la tarjeta */}
+          <Animated.Text style={{ position: "absolute", top: -46, alignSelf: "center", fontSize: 54, zIndex: 3,
+            transform: [{ translateY: brinco.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) },
+                        { rotate: brinco.interpolate({ inputRange: [0, 1], outputRange: ["-8deg", "8deg"] }) }] }}>{tema.adorno}</Animated.Text>
+          <View style={{ backgroundColor: "#fff", borderRadius: 26, overflow: "hidden" }}>
+            <View style={{ backgroundColor: tema.cabecera, paddingTop: 30, paddingBottom: 18, alignItems: "center" }}>
+              {luces ? (
+                <View style={{ position: "absolute", top: 8, left: 14, right: 14, flexDirection: "row", justifyContent: "space-between" }}>
+                  {luces.map((c, i) => (
+                    <Animated.View key={i} style={{ width: 9, height: 13, borderRadius: 5, backgroundColor: c,
+                      opacity: i % 2 ? titila : titila.interpolate({ inputRange: [0, 1], outputRange: [1, 0.25] }) }} />
+                  ))}
+                </View>
+              ) : null}
+              <Text style={{ color: tema.suave, fontSize: 12.5, fontWeight: "800", letterSpacing: 1.5, marginTop: 6 }}>{tema.etiqueta}</Text>
+              <Animated.Text style={{ color: tema.textoCabecera, fontSize: 78, fontWeight: "900", letterSpacing: -2, marginTop: 0, fontFamily: "Inter", transform: [{ scale: late }] }}>{promo.pct}%</Animated.Text>
+              <Text style={{ color: tema.textoCabecera, fontSize: 18.5, fontWeight: "800", marginTop: -6 }}>de descuento en carreras</Text>
+            </View>
+            <View style={{ height: 8, backgroundColor: tema.franja }} />
+            <View style={{ padding: 22, alignItems: "center" }}>
+              <Text style={{ fontSize: 19, fontWeight: "800", color: "#1D1D1D", textAlign: "center" }}>
+                {nombre ? rellenar(tema.titulo) : rellenar(tema.tituloSinNombre)}
+              </Text>
+              <Text style={{ fontSize: 14.5, color: "#5E5E5E", textAlign: "center", marginTop: 7, lineHeight: 20 }}>{rellenar(tema.mensaje)}</Text>
+              {promo.hasta ? (
+                <View style={{ marginTop: 12, backgroundColor: "#FFF4E0", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 14 }}>
+                  <Text style={{ color: "#8A5A00", fontWeight: "800", fontSize: 13 }}>⏳ Válido hasta el {promo.hasta}</Text>
+                </View>
+              ) : null}
+              <TouchableOpacity activeOpacity={0.9} onPress={() => cerrar(onPedir)}
+                style={{ alignSelf: "stretch", marginTop: 18, backgroundColor: tema.boton, borderRadius: 14, paddingVertical: 15, alignItems: "center" }}>
+                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 16.5 }}>{rellenar(tema.textoBoton) || "Pedir mi carrera"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => cerrar()} style={{ paddingTop: 14, paddingBottom: 2 }}>
+                <Text style={{ color: "#8A8A8A", fontWeight: "700" }}>Ahora no</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
 function ElegirServicioScreen({ navigation, route }) {
   const { usuario } = route.params;
   const insets = useSafeAreaInsets();
@@ -2167,6 +2311,7 @@ function ElegirServicioScreen({ navigation, route }) {
       <TouchableOpacity style={{ padding: 14, paddingBottom: 14 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
         <Text style={{ color: "#999", fontSize: 13 }}>Salir</Text>
       </TouchableOpacity>
+      <AnuncioPromo promo={promo} nombre={nombre} onPedir={() => ir("carrera")} />
     </SafeAreaView>
   );
 }

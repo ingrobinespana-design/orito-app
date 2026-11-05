@@ -302,7 +302,7 @@ def tarifa_por_vehiculo(clave: str, municipio: str, vehiculo: str, valor_km: int
 @app.put("/promo")
 def configurar_promo(clave: str, activa: str = None, pct: int = None,
                      ciudad: str = None, texto: str = None, dias: int = None,
-                     hasta: str = None, db: Session = Depends(get_db)):
+                     hasta: str = None, tema: str = None, db: Session = Depends(get_db)):
     """Prende/apaga la promo de lanzamiento (SOLO carreras de pasajeros) con la
     clave RESPALDO_CLAVE. activa: 'si'/'no'; pct: % de descuento (0-99);
     ciudad: nombre exacto o 'todas'; texto: etiqueta que ve el cliente;
@@ -330,6 +330,8 @@ def configurar_promo(clave: str, activa: str = None, pct: int = None,
         _set("promo_texto", texto)
     if dias is not None:
         _set("promo_hasta", "" if dias <= 0 else (datetime.now() + timedelta(days=dias)).isoformat())
+    if tema is not None:
+        _set("promo_tema", tema.strip().lower())   # motivo del anuncio: navidad, lanzamiento...
     if hasta:
         # fecha exacta (AAAA-MM-DD): vale hasta las 11:59 p. m. de ese dia en Colombia
         try:
@@ -343,7 +345,8 @@ def configurar_promo(clave: str, activa: str = None, pct: int = None,
             "promo_pct": leer_config("promo_pct", db, "0"),
             "promo_ciudad": leer_config("promo_ciudad", db, ""),
             "promo_texto": leer_config("promo_texto", db, ""),
-            "promo_hasta": leer_config("promo_hasta", db, "")}
+            "promo_hasta": leer_config("promo_hasta", db, ""),
+            "promo_tema": leer_config("promo_tema", db, "navidad")}
 
 @app.put("/exclusivo")
 def configurar_exclusivo(clave: str, tel: str = None, radio_km: float = None,
@@ -981,7 +984,8 @@ def promo_de(municipio: str, db: Session):
                 hasta_txt = f"{f.day} de {meses[f.month - 1]}"
             except Exception:
                 pass
-        return {"activa": True, "pct": pct, "texto": leer_config("promo_texto", db, ""), "hasta": hasta_txt}
+        return {"activa": True, "pct": pct, "texto": leer_config("promo_texto", db, ""), "hasta": hasta_txt,
+                "tema": leer_config("promo_tema", db, "navidad") or "navidad"}
     except Exception:
         return apagada
 
