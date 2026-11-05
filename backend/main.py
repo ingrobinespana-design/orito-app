@@ -798,7 +798,7 @@ def _registro_incompleto(u: Usuario) -> bool:
     n = (u.nombre or "").strip()
     t = "".join(ch for ch in (u.telefono or "") if ch.isdigit())
     return (sum(1 for ch in n if ch.isalpha()) < 3 or "@" in n or any(ch.isdigit() for ch in n)
-            or len(t) != 10 or (u.telefono or "").startswith("ELIMINADO-"))
+            or len(t) != 10 or not t.startswith("3") or (u.telefono or "").startswith("ELIMINADO-"))
 
 @app.put("/usuarios/{usuario_id}/completar")
 def completar_registro(usuario_id: int, nombre: str, telefono: str = None, db: Session = Depends(get_db),

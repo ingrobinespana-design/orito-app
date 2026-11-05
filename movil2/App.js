@@ -7440,7 +7440,9 @@ function AdminCarrerasScreen({ navigation, route }) {
       .catch(() => setFichaUser({ ...obj, rol: tipo === "conductor" ? "conductor" : "cliente" }));
   };
   const nombreDe = (u) => (u.nombre || "").trim() || "⚠️ Sin nombre";
-  const incompleto = (u) => !(u.nombre || "").trim() || (u.nombre || "").includes("@") || !(u.telefono || "").trim();
+  // incompleto o invalido: sin nombre, correo como nombre, o celular que no es colombiano
+  // (los robots de prueba de Google Play se registran con numeros de EE. UU., ej. 650...)
+  const incompleto = (u) => !nombreValido(u.nombre) || !celularValido(u.telefono);
   const incompletos = [...conductores.map(x => ({ ...x, rol: "conductor" })), ...clientes].filter(incompleto);
   const enLinea = conductores.filter(x => x.disponible === "si" && x.activo !== "no").length;
   const porVerificar = conductores.filter(x => x.verificado !== "si" && x.activo !== "no");
@@ -7546,7 +7548,7 @@ function AdminCarrerasScreen({ navigation, route }) {
                 <Text style={{ fontSize: 22 }}>⚠️</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: "800", color: "#C0392B" }}>{incompletos.length} registro{incompletos.length === 1 ? "" : "s"} incompleto{incompletos.length === 1 ? "" : "s"}</Text>
-                  <Text style={{ fontSize: 12.5, color: "#C0392B" }}>Sin nombre, con correo como nombre o sin teléfono</Text>
+                  <Text style={{ fontSize: 12.5, color: "#C0392B" }}>Sin nombre, correo como nombre o celular que no es colombiano</Text>
                 </View>
                 <Text style={{ color: "#C0392B", fontSize: 20 }}>›</Text>
               </TouchableOpacity>
