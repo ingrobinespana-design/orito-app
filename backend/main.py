@@ -1963,6 +1963,7 @@ def obtener_config(db: Session = Depends(get_db), admin: Usuario = Depends(solo_
 def actualizar_config(clave: str, valor: str, db: Session = Depends(get_db),
                       admin: Usuario = Depends(solo_admin)):
     permitidas = ("cobro_activo", "valor_mensual_moto", "valor_mensual_carro", "nequi_pagos", "apk_url", "whatsapp_soporte",
+                  "llave_pagos", "banco_pagos", "banco_tipo", "banco_numero", "banco_titular",
                   "promo_activa", "promo_pct", "promo_ciudad", "promo_texto", "promo_hasta",
                   "exclusivo_aeropuerto_tel", "exclusivo_radio_km")
     if clave not in permitidas:
@@ -4274,6 +4275,15 @@ def estado_cuenta(conductor_id: int, db: Session = Depends(get_db)):
         "valor_mensual": valor_mensual_de(conductor, db),   # segun su vehiculo
         "tipo_vehiculo": conductor.tipo_vehiculo,
         "nequi_pagos": leer_config("nequi_pagos", db, ""),
+        # a donde le paga el conductor la suscripcion a Tukan (los que esten configurados)
+        "pagos_tukan": {
+            "llave": leer_config("llave_pagos", db, ""),
+            "nequi": leer_config("nequi_pagos", db, ""),
+            "banco": leer_config("banco_pagos", db, ""),
+            "banco_tipo": leer_config("banco_tipo", db, ""),
+            "banco_numero": leer_config("banco_numero", db, ""),
+            "banco_titular": leer_config("banco_titular", db, ""),
+        },
     }
 
 @app.put("/conductores/{conductor_id}")

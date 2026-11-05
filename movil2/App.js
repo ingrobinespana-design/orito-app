@@ -6171,9 +6171,7 @@ function ConductorScreen({ navigation, route }) {
           <Text style={{ fontSize: 13, color: "#8A1C1C", marginTop: 4 }}>
             No puedes tomar carreras. Renueva por ${cuenta.valor_mensual.toLocaleString()} al mes.
           </Text>
-          {cuenta.nequi_pagos ? (
-            <Text style={{ fontSize: 13, color: "#8A1C1C", marginTop: 4, fontWeight: "600" }}>Nequi: {cuenta.nequi_pagos}</Text>
-          ) : null}
+          <PagosTukan cuenta={cuenta} color="#8A1C1C" />
         </View>
       )}
       {cuenta && cuenta.cobro_activo && cuenta.al_dia && cuenta.dias_restantes <= 5 && (
@@ -6436,10 +6434,10 @@ function ConductorScreen({ navigation, route }) {
                 </View>
                 {cuenta.al_dia && <Text style={{ fontSize: 13, color: "#666", marginTop: 10 }}>Te quedan {cuenta.dias_restantes} días</Text>}
                 <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>Valor: ${cuenta.valor_mensual.toLocaleString()} / mes</Text>
-                {!cuenta.al_dia && cuenta.nequi_pagos ? (
+                {!cuenta.al_dia ? (
                   <View style={{ backgroundColor: "#FFF4E0", borderRadius: 8, padding: 12, marginTop: 12 }}>
-                    <Text style={{ fontSize: 13, color: "#8A5A00" }}>Renueva pagando a Nequi:</Text>
-                    <Text style={{ fontSize: 18, fontWeight: "bold", color: "#8A5A00" }}>{cuenta.nequi_pagos}</Text>
+                    <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>Renueva pagando a:</Text>
+                    <PagosTukan cuenta={cuenta} />
                   </View>
                 ) : null}
               </>
@@ -7909,15 +7907,34 @@ function AdminCarrerasScreen({ navigation, route }) {
               keyboardType="number-pad"
               style={styles.input}
             />
-            <Text style={styles.etiqueta}>NEQUI PARA RECIBIR PAGOS</Text>
-            <TextInput
-              defaultValue={config.nequi_pagos}
-              placeholder="Numero al que te transfieren"
-              onEndEditing={(e) => adminFetch(`${API}/config?clave=nequi_pagos&valor=${encodeURIComponent(e.nativeEvent.text)}`, { method: "PUT" }).then(cargar)}
-              keyboardType="phone-pad"
-              style={styles.input}
-            />
-            <Text style={styles.ayuda}>Los conductores vencidos ven este numero para renovar</Text>
+            <Text style={[styles.seccionTitulo, { marginTop: 18 }]}>💳 Dónde te pagan los conductores</Text>
+            <Text style={[styles.ayuda, { marginTop: -4, marginBottom: 10 }]}>Llena los que tengas. El conductor ve todos los que estén llenos cuando tenga que pagar. Se guarda al salir de cada campo.</Text>
+            <Text style={styles.etiqueta}>🔑 LLAVE BRE-B (NEQUI NEGOCIOS)</Text>
+            <TextInput defaultValue={config.llave_pagos} placeholder="Tu llave (ej: @tukan o el código que te dieron)" autoCapitalize="none"
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=llave_pagos&valor=${encodeURIComponent(e.nativeEvent.text.trim())}`, { method: "PUT" }).then(cargar)}
+              style={styles.input} />
+            <Text style={styles.etiqueta}>📱 NEQUI</Text>
+            <TextInput defaultValue={config.nequi_pagos} placeholder="Número Nequi (déjalo vacío si no lo usas)"
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=nequi_pagos&valor=${encodeURIComponent(e.nativeEvent.text.trim())}`, { method: "PUT" }).then(cargar)}
+              keyboardType="phone-pad" style={styles.input} />
+            <Text style={styles.etiqueta}>🏦 CUENTA BANCARIA (OPCIONAL)</Text>
+            <TextInput defaultValue={config.banco_pagos} placeholder="Banco (ej: Bancolombia)"
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=banco_pagos&valor=${encodeURIComponent(e.nativeEvent.text.trim())}`, { method: "PUT" }).then(cargar)}
+              style={styles.input} />
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              {["Ahorros", "Corriente"].map(t => (
+                <TouchableOpacity key={t} style={[styles.chip, config.banco_tipo === t && styles.chipOn]}
+                  onPress={() => adminFetch(`${API}/config?clave=banco_tipo&valor=${t}`, { method: "PUT" }).then(cargar)}>
+                  <Text style={[styles.chipTxt, config.banco_tipo === t && styles.chipTxtOn]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput defaultValue={config.banco_numero} placeholder="Número de cuenta" keyboardType="number-pad"
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=banco_numero&valor=${encodeURIComponent(e.nativeEvent.text.trim())}`, { method: "PUT" }).then(cargar)}
+              style={styles.input} />
+            <TextInput defaultValue={config.banco_titular} placeholder="Titular (nombre o razón social y NIT)"
+              onEndEditing={(e) => adminFetch(`${API}/config?clave=banco_titular&valor=${encodeURIComponent(e.nativeEvent.text.trim())}`, { method: "PUT" }).then(cargar)}
+              style={styles.input} />
 
             <Text style={[styles.etiqueta, { marginTop: 16 }]}>💬 WHATSAPP DE SOPORTE</Text>
             <TextInput
@@ -8042,6 +8059,28 @@ function AdminCarrerasScreen({ navigation, route }) {
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
+  );
+}
+
+/** A donde le paga el conductor la suscripcion a Tukan: llave Bre-B, Nequi y/o cuenta. */
+function PagosTukan({ cuenta, color = "#8A5A00" }) {
+  const p = (cuenta && cuenta.pagos_tukan) || { nequi: cuenta && cuenta.nequi_pagos };
+  const filas = [];
+  if (p.llave) filas.push(["🔑", "Llave Bre-B", p.llave]);
+  if (p.nequi) filas.push(["📱", "Nequi", p.nequi]);
+  if (p.banco && p.banco_numero) filas.push(["🏦", `${p.banco}${p.banco_tipo ? ` · ${p.banco_tipo}` : ""}`, `${p.banco_numero}${p.banco_titular ? `
+a nombre de ${p.banco_titular}` : ""}`]);
+  if (!filas.length) return null;
+  return (
+    <View style={{ marginTop: 8, gap: 6 }}>
+      {filas.map(([ic, lbl, val]) => (
+        <View key={lbl}>
+          <Text style={{ fontSize: 12.5, color }}>{ic} {lbl}</Text>
+          <Text selectable style={{ fontSize: 17, fontWeight: "800", color }}>{val}</Text>
+        </View>
+      ))}
+      <Text style={{ fontSize: 11.5, color, opacity: 0.8 }}>Mantén presionado para copiar. Envía el comprobante por WhatsApp a soporte.</Text>
+    </View>
   );
 }
 
