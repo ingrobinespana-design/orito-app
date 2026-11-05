@@ -56,7 +56,7 @@ const guardarSesion = async (u) => { try { await AsyncStorage.setItem(SESION_KEY
 const leerSesion = async () => { try { const s = await AsyncStorage.getItem(SESION_KEY); return s ? JSON.parse(s) : null; } catch (_) { return null; } };
 const borrarSesion = async () => { try { await AsyncStorage.removeItem(SESION_KEY); } catch (_) {} llaveUsuario = null; llaveAdmin = null; };
 // a qué pantalla va cada rol al entrar (login o restaurar sesión)
-const pantallaDe = (rol) => rol === "admin" ? "Admin" : rol === "domiciliario" ? "Domiciliario"
+const pantallaDe = (rol) => rol === "admin" ? "AdminCarreras" : rol === "domiciliario" ? "Domiciliario"
   : rol === "restaurante" ? "Restaurante" : rol === "conductor" ? "Conductor" : "ElegirServicio";
 const adminFetch = (url, opciones = {}) =>
   fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-Admin-Token": llaveAdmin || "" } });
@@ -775,7 +775,7 @@ function LoginScreen({ navigation }) {
         registrarNotificaciones(data.id);
         // entro con un codigo de grupo de la comunidad (CALI20 / REDCALI)
         if (data.beneficio) avisar("¡Bienvenido a Tukán!", data.beneficio);
-        if (data.rol === "admin") navigation.replace("Admin", { usuario: data });
+        if (data.rol === "admin") navigation.replace("AdminCarreras", { usuario: data });
         else if (data.rol === "domiciliario") navigation.replace("Domiciliario", { usuario: data });
         else if (data.rol === "restaurante") navigation.replace("Restaurante", { usuario: data });
         else if (data.rol === "conductor") navigation.replace("Conductor", { usuario: data });
@@ -6991,12 +6991,19 @@ function ConductorScreen({ navigation, route }) {
   );
 }
 
-function AdminCarrerasScreen({ navigation }) {
+function AdminCarrerasScreen({ navigation, route }) {
   const [conductores, setConductores] = useState([]);
   const [carreras, setCarreras] = useState([]);
   const [config, setConfig] = useState({});
   const [gStats, setGStats] = useState(null);
-  const [pestana, setPestana] = useState("conductores");
+  const [pestana, setPestana] = useState("inicio");
+  const [filtroCond, setFiltroCond] = useState("todos");     // todos | revisar | verificados | fundadores | bloqueados
+  const [buscaCond, setBuscaCond] = useState("");
+  const [filtroCarr, setFiltroCarr] = useState("todas");     // todas | curso | finalizadas | canceladas
+  const [ficha, setFicha] = useState(null);                  // { tipo: "conductor"|"usuario", id, obj }
+  const [fichaUser, setFichaUser] = useState(null);          // registro completo (para las acciones)
+  const [verSoporte, setVerSoporte] = useState(false);
+  const [verIncompletos, setVerIncompletos] = useState(false);
   const [telLiberar, setTelLiberar] = useState("");   // desbloquear a un usuario atascado
   const [municipios, setMunicipios] = useState([]);
   const [demanda, setDemanda] = useState({ ciudades: [], departamentos: [] });
@@ -7015,7 +7022,7 @@ function AdminCarrerasScreen({ navigation }) {
   const [reCentrar, setReCentrar] = useState(null);   // ciudad a la que se le corrige el centro en el mapa
 
   const cargar = () => {
-    fetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
+    adminFetch(`${API}/conductores`).then(r => r.json()).then(d => { if (Array.isArray(d)) setConductores(d); }).catch(() => {});
     adminFetch(`${API}/carreras`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCarreras(d); }).catch(() => {});
     adminFetch(`${API}/estadisticas`).then(r => r.json()).then(d => { if (d && !d.detail) setGStats(d); }).catch(() => {});
     adminFetch(`${API}/config`).then(r => r.json()).then(d => { if (d && !d.detail) setConfig(d); }).catch(() => {});
@@ -7312,45 +7319,170 @@ function AdminCarrerasScreen({ navigation }) {
   };
 
   const activos = conductores.filter(c => c.al_dia).length;
+  // ficha: se busca el registro completo del usuario para las acciones (clave, fundador, borrar...)
+  const abrirFicha = (tipo, obj) => {
+    setFicha({ tipo, id: obj.id, obj }); setFichaUser(null);
+    if (!obj.telefono) { setFichaUser({ ...obj, rol: tipo === "conductor" ? "conductor" : (obj.rol || "cliente") }); return; }
+    adminFetch(`${API}/admin/usuarios?buscar=${encodeURIComponent(obj.telefono)}`).then(r => r.json())
+      .then(d => { const u = Array.isArray(d) ? d.find(x => x.id === obj.id) : null; setFichaUser(u || { ...obj, rol: tipo === "conductor" ? "conductor" : "cliente" }); })
+      .catch(() => setFichaUser({ ...obj, rol: tipo === "conductor" ? "conductor" : "cliente" }));
+  };
+  const nombreDe = (u) => (u.nombre || "").trim() || "⚠️ Sin nombre";
+  const incompleto = (u) => !(u.nombre || "").trim() || (u.nombre || "").includes("@") || !(u.telefono || "").trim();
+  const incompletos = [...conductores.map(x => ({ ...x, rol: "conductor" })), ...clientes].filter(incompleto);
+  const enLinea = conductores.filter(x => x.disponible === "si" && x.activo !== "no").length;
+  const porVerificar = conductores.filter(x => x.verificado !== "si" && x.activo !== "no");
+  const ESTADO_CARRERA = {
+    buscando: ["Buscando", "#B85C00", "#FFF3E0"], aceptada: ["Aceptada", "#1A56B8", "#EEF3FB"],
+    en_sitio: ["En el punto", "#1A56B8", "#EEF3FB"], en_camino: ["En viaje", "#187830", "#EAF6EC"],
+    finalizada: ["Finalizada", "#187830", "#EAF6EC"], cancelada: ["Cancelada", "#C0392B", "#FBECEC"],
+  };
+  const avatar = (u, foto) => foto ? (
+    <Image source={{ uri: foto }} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: "#EEE" }} />
+  ) : (
+    <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: incompleto(u) ? "#FBECEC" : "#E7F3E9", alignItems: "center", justifyContent: "center" }}>
+      <Text style={{ fontWeight: "800", color: incompleto(u) ? "#C0392B" : "#187830", fontSize: 17 }}>{incompleto(u) ? "!" : (u.nombre || "?").trim().charAt(0).toUpperCase()}</Text>
+    </View>
+  );
+  const chipEstado = (txt, color, fondo) => (
+    <View style={{ backgroundColor: fondo, borderRadius: 999, paddingVertical: 3, paddingHorizontal: 9 }}>
+      <Text style={{ fontSize: 11, fontWeight: "800", color }}>{txt}</Text>
+    </View>
+  );
+  const fila = (key, u, foto, titulo, sub, derecha, onPress) => (
+    <TouchableOpacity key={key} activeOpacity={0.7} onPress={onPress}
+      style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: incompleto(u) ? "#F3C5C0" : "#ECEEE8" }}>
+      {avatar(u, foto)}
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontWeight: "800", fontSize: 15, color: incompleto(u) ? "#C0392B" : "#1D1D1D" }} numberOfLines={1}>{titulo}</Text>
+        <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 1 }} numberOfLines={1}>{sub}</Text>
+      </View>
+      <View style={{ alignItems: "flex-end", gap: 4 }}>{derecha}</View>
+      <Text style={{ color: "#C4C8BE", fontSize: 20, marginLeft: 2 }}>›</Text>
+    </TouchableOpacity>
+  );
+  const SECCIONES_MAS = [["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
+  const TITULOS = { inicio: "Inicio", conductores: "Conductores", usuarios: "Pasajeros", carreras: "Carreras", mas: "Más",
+    numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte" };
+  const enMas = ["mas", "numeros", "ciudades", "eventos", "cobro"].includes(pestana);
   const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
   const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", alignItems: "center", gap: 12 }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={{ color: "#fff", fontSize: 20 }}>←</Text>
-        </TouchableOpacity>
-        <View>
-          <Text style={styles.headerSub}>Administracion</Text>
-          <Text style={styles.headerTitle}>Carreras</Text>
+      <View style={{ backgroundColor: "#187830", paddingTop: 44, paddingBottom: 14, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 12 }}>
+        {enMas && pestana !== "mas" ? (
+          <TouchableOpacity onPress={() => setPestana("mas")} style={{ padding: 4 }}><Text style={{ color: "#fff", fontSize: 22 }}>←</Text></TouchableOpacity>
+        ) : navigation.canGoBack() ? (
+          <TouchableOpacity onPress={() => navigation.goBack()} style={{ padding: 4 }}><Text style={{ color: "#fff", fontSize: 22 }}>←</Text></TouchableOpacity>
+        ) : null}
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12.5, fontWeight: "700" }}>Tukán · Administración</Text>
+          <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.3 }}>{TITULOS[pestana] || "Admin"}</Text>
         </View>
-        {/* Cerrar sesion: borra la sesion guardada y vuelve a Login (si no, al
-            reabrir la app la restauracion te devuelve a Admin). */}
+        <TouchableOpacity onPress={cargar} style={{ backgroundColor: "rgba(255,255,255,0.16)", borderRadius: 16, paddingVertical: 7, paddingHorizontal: 11 }}>
+          <Text style={{ color: "#fff", fontWeight: "800" }}>↻</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => confirmar("Cerrar sesión", "¿Seguro que quieres salir de tu cuenta de administrador?", async () => { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }, "Cerrar sesión")}
-          style={{ marginLeft: "auto", backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 16, paddingVertical: 7, paddingHorizontal: 13 }}>
-          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>🚪 Salir</Text>
+          style={{ backgroundColor: "rgba(255,255,255,0.16)", borderRadius: 16, paddingVertical: 7, paddingHorizontal: 12 }}>
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Salir</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={{ flexDirection: "row", padding: 16, gap: 10 }}>
-        <View style={styles.mini}><Text style={styles.miniNum}>{enCurso.length}</Text><Text style={styles.miniTxt}>En curso</Text></View>
-        <View style={styles.mini}><Text style={styles.miniNum}>{hoy.length}</Text><Text style={styles.miniTxt}>Hoy</Text></View>
-        <View style={styles.mini}><Text style={styles.miniNum}>{activos}</Text><Text style={styles.miniTxt}>Al dia</Text></View>
-      </View>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
+        {/* ===================== INICIO (tablero) ===================== */}
+        {pestana === "inicio" && (
+          <>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+              {[["🛣️", hoy.length, "Carreras hoy", "#1D1D1D", () => setPestana("carreras")],
+                ["🟠", enCurso.length, "En curso ahora", "#B85C00", () => { setFiltroCarr("curso"); setPestana("carreras"); }],
+                ["🟢", enLinea, "Conductores en línea", "#187830", () => setPestana("conductores")],
+                ["💵", `$${((gStats && gStats.hoy && gStats.hoy.ganado) || 0).toLocaleString()}`, "Movido hoy", "#187830", () => setPestana("numeros")],
+                ["👥", (gStats && gStats.clientes) || clientes.length, "Pasajeros", "#1D1D1D", () => setPestana("usuarios")],
+                ["🚕", conductores.length, "Conductores", "#1D1D1D", () => setPestana("conductores")],
+              ].map(([ic, num, lbl, color, ir]) => (
+                <TouchableOpacity key={lbl} onPress={ir} activeOpacity={0.8}
+                  style={{ width: "48%", flexGrow: 1, backgroundColor: "#fff", borderRadius: 16, padding: 14, borderWidth: 1, borderColor: "#ECEEE8" }}>
+                  <Text style={{ fontSize: 18 }}>{ic}</Text>
+                  <Text style={{ fontSize: 24, fontWeight: "800", color, marginTop: 4 }}>{num}</Text>
+                  <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 1 }}>{lbl}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
-      {/* pestañas: fila que envuelve a 2 renglones (ya son 6, no caben en una).
-          Se evita el ScrollView horizontal porque en columna flex se colapsaba. */}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginHorizontal: 16, marginBottom: 16, backgroundColor: "#F6F1E6", borderRadius: 8, padding: 5 }}>
-        {[["numeros", "Números"], ["conductores", "Conductores"], ["usuarios", "Usuarios"], ["carreras", "Carreras"], ["ciudades", "Ciudades"], ["eventos", "Eventos"], ["cobro", "Cobro"]].map(([p, lbl]) => (
-          <TouchableOpacity key={p} style={[{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 }, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
-            <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{lbl}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+            <Text style={{ fontSize: 16, fontWeight: "800", color: "#1D1D1D", marginTop: 22, marginBottom: 10 }}>Requiere tu atención</Text>
+            {porVerificar.length === 0 && incompletos.length === 0 && enCurso.filter(x => x.estado === "buscando").length === 0 ? (
+              <View style={{ backgroundColor: "#EAF6EC", borderRadius: 14, padding: 14 }}><Text style={{ color: "#187830", fontWeight: "700" }}>✅ Todo al día. No hay pendientes.</Text></View>
+            ) : null}
+            {porVerificar.length > 0 && (
+              <TouchableOpacity onPress={() => { setFiltroCond("revisar"); setPestana("conductores"); }}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#FFF3E0", borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <Text style={{ fontSize: 22 }}>⏳</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: "#8A5A00" }}>{porVerificar.length} conductor{porVerificar.length === 1 ? "" : "es"} por verificar</Text>
+                  <Text style={{ fontSize: 12.5, color: "#8A5A00" }}>Revisa sus documentos y habilítalos</Text>
+                </View>
+                <Text style={{ color: "#8A5A00", fontSize: 20 }}>›</Text>
+              </TouchableOpacity>
+            )}
+            {incompletos.length > 0 && (
+              <TouchableOpacity onPress={() => setVerIncompletos(true)}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#FBECEC", borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <Text style={{ fontSize: 22 }}>⚠️</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: "#C0392B" }}>{incompletos.length} registro{incompletos.length === 1 ? "" : "s"} incompleto{incompletos.length === 1 ? "" : "s"}</Text>
+                  <Text style={{ fontSize: 12.5, color: "#C0392B" }}>Sin nombre, con correo como nombre o sin teléfono</Text>
+                </View>
+                <Text style={{ color: "#C0392B", fontSize: 20 }}>›</Text>
+              </TouchableOpacity>
+            )}
+            {enCurso.filter(x => x.estado === "buscando").length > 0 && (
+              <TouchableOpacity onPress={() => { setFiltroCarr("curso"); setPestana("carreras"); }}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#EEF3FB", borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <Text style={{ fontSize: 22 }}>🔎</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: "#1A4C9B" }}>{enCurso.filter(x => x.estado === "buscando").length} carrera(s) buscando conductor</Text>
+                  <Text style={{ fontSize: 12.5, color: "#1A4C9B" }}>Pasajeros esperando ahora mismo</Text>
+                </View>
+                <Text style={{ color: "#1A4C9B", fontSize: 20 }}>›</Text>
+              </TouchableOpacity>
+            )}
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4 }}>
+            <Text style={{ fontSize: 16, fontWeight: "800", color: "#1D1D1D", marginTop: 18, marginBottom: 10 }}>Buscar a alguien</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TextInput value={buscaUsuario} onChangeText={setBuscaUsuario} placeholder="Teléfono o nombre" onSubmitEditing={buscarUsuarios} returnKeyType="search"
+                style={[styles.input, { flex: 1, marginBottom: 0, backgroundColor: "#fff" }]} />
+              <TouchableOpacity onPress={buscarUsuarios} style={{ backgroundColor: "#187830", borderRadius: 12, paddingHorizontal: 16, justifyContent: "center" }}>
+                <Text style={{ color: "#fff", fontWeight: "800" }}>Buscar</Text>
+              </TouchableOpacity>
+            </View>
+            {usuariosHallados != null && (usuariosHallados.length === 0 ? (
+              <Text style={{ fontSize: 13, color: "#888", marginTop: 10 }}>No se encontró a nadie.</Text>
+            ) : (
+              <View style={{ marginTop: 10 }}>
+                {usuariosHallados.map(u => fila(`b${u.id}`, u, null, nombreDe(u), `${u.rol === "conductor" ? "🚕 Conductor" : "👤 Pasajero"} · ${u.telefono || "sin teléfono"} · ${u.municipio || "—"}`,
+                  u.activo === "no" ? chipEstado("Bloqueado", "#C0392B", "#FBECEC") : null,
+                  () => abrirFicha(u.rol === "conductor" ? "conductor" : "usuario", u)))}
+              </View>
+            ))}
+          </>
+        )}
+
+        {/* ===================== MAS ===================== */}
+        {pestana === "mas" && (
+          <View style={{ gap: 10 }}>
+            {SECCIONES_MAS.map(([k, ic, lbl]) => (
+              <TouchableOpacity key={k} onPress={() => k === "comida" ? navigation.navigate("Admin", { usuario: (route && route.params && route.params.usuario) || {} }) : setPestana(k)} activeOpacity={0.8}
+                style={{ flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: "#fff", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#ECEEE8" }}>
+                <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: "#F1F4EE", alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 22 }}>{ic}</Text></View>
+                <Text style={{ flex: 1, fontSize: 16, fontWeight: "800", color: "#1D1D1D" }}>{lbl}</Text>
+                <Text style={{ color: "#C4C8BE", fontSize: 22 }}>›</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {pestana === "numeros" && gStats && (
           <>
             <View style={[styles.card, { marginBottom: 12 }]}>
@@ -7431,150 +7563,116 @@ function AdminCarrerasScreen({ navigation }) {
             )}
           </>
         )}
-        {pestana === "conductores" && conductores.map(c => (
-          <View key={c.id} style={[styles.card, { marginBottom: 10 }]}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: "600", fontSize: 15 }}>{c.nombre}</Text>
-                <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📞 {c.telefono}</Text>
-                {c.municipio ? <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600" }}>📍 {c.municipio}{c.tipo_vehiculo ? `  ·  ${vehIcono(c.tipo_vehiculo)} ${vehLabel(c.tipo_vehiculo)}` : ""}</Text> : null}
-                {c.placa ? <Text style={{ fontSize: 12, color: "#888" }}>🚕 {c.vehiculo} - {c.placa}</Text> : null}
-              </View>
-              <View style={{ alignItems: "flex-end", gap: 4 }}>
-                <View style={[styles.estadoBadge, { backgroundColor: c.al_dia ? "#E8F5E9" : "#FBECEC" }]}>
-                  <Text style={{ fontSize: 11, fontWeight: "600", color: c.al_dia ? "#187830" : "#C0392B" }}>
-                    {c.al_dia ? (config.cobro_activo === "si" ? `${c.dias_restantes} dias` : "activo") : "vencido"}
-                  </Text>
-                </View>
-                <View style={[styles.estadoBadge, { backgroundColor: c.verificado === "si" ? "#E8F5E9" : "#FFF3E0" }]}>
-                  <Text style={{ fontSize: 11, fontWeight: "700", color: c.verificado === "si" ? "#187830" : "#B85C00" }}>
-                    {c.verificado === "si" ? "✅ verificado" : "⏳ revisar"}
-                  </Text>
-                </View>
-              </View>
-            </View>
-            {(c.veh_color || c.veh_modelo) ? (
-              <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🎨 {[c.veh_color, c.veh_modelo].filter(Boolean).join(" · ")}</Text>
-            ) : null}
-            {c.fotos && Object.values(c.fotos).some(Boolean) ? (
-              <>
-              <Text style={{ fontSize: 10, color: "#999", marginTop: 10 }}>Toca un documento para verlo grande</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                {[["conductor", "foto"], ["vehiculo", "vehículo"], ["cedula", "cédula"], ["licencia", "licencia"], ["tarjeta", "tarjeta"], ["soat", "SOAT"]].map(([t, lbl]) => (
-                  <TouchableOpacity key={t} style={{ width: "31.5%", alignItems: "center" }} disabled={!c.fotos[t]} onPress={() => c.fotos[t] && Linking.openURL(c.fotos[t])}>
-                    {c.fotos[t]
-                      ? <Image source={{ uri: c.fotos[t] }} style={{ width: "100%", height: 56, borderRadius: 8 }} />
-                      : <View style={{ width: "100%", height: 56, borderRadius: 8, backgroundColor: "#f2f2f2", alignItems: "center", justifyContent: "center" }}><Text style={{ color: "#ccc", fontSize: 18 }}>—</Text></View>}
-                    <Text style={{ fontSize: 9, color: c.fotos[t] ? "#187830" : "#bbb", marginTop: 2 }}>{lbl}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              </>
-            ) : (
-              <Text style={{ fontSize: 11, color: "#C0392B", marginTop: 8 }}>⚠️ Sin documentos subidos</Text>
-            )}
-            <TouchableOpacity style={[styles.button, { backgroundColor: c.verificado === "si" ? "#fff" : "#1A56B8", borderWidth: c.verificado === "si" ? 1 : 0, borderColor: "#ddd", padding: 10, marginTop: 10 }]} onPress={() => verificarConductor(c)}>
-              <Text style={{ color: c.verificado === "si" ? "#C0392B" : "#fff", fontWeight: "700", fontSize: 13 }}>{c.verificado === "si" ? "Quitar habilitación" : "✅ Habilitar (verificar)"}</Text>
-            </TouchableOpacity>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => registrarPago(c)}>
-                <Text style={[styles.buttonText, { fontSize: 13 }]}>Registrar pago</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", padding: 10 }]} onPress={() => quitarSuscripcion(c)}>
-                <Text style={{ color: "#C0392B", fontWeight: "600", fontSize: 13 }}>Quitar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ))}
-        {pestana === "conductores" && conductores.length === 0 && (
-          <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>
-            No hay conductores. Cambia el rol de un usuario a "conductor" desde el panel de usuarios.
-          </Text>
-        )}
-
-        {pestana === "usuarios" && (() => {
-          const q = filtroCli.trim().toLowerCase();
-          const lista = q
-            ? clientes.filter(u => (u.nombre || "").toLowerCase().includes(q) || (u.telefono || "").includes(q.replace(/\D/g, "")))
-            : clientes;
+        {pestana === "conductores" && (() => {
+          const q = buscaCond.trim().toLowerCase();
+          const lista = conductores
+            .filter(x => filtroCond === "todos" ? x.activo !== "no"
+              : filtroCond === "revisar" ? (x.verificado !== "si" && x.activo !== "no")
+              : filtroCond === "verificados" ? (x.verificado === "si" && x.activo !== "no")
+              : filtroCond === "fundadores" ? x.fundador === "si"
+              : x.activo === "no")
+            .filter(x => !q || (x.nombre || "").toLowerCase().includes(q) || (x.telefono || "").includes(q.replace(/\D/g, "") || "~") || (x.placa || "").toLowerCase().includes(q))
+            .sort((a, b) => (b.disponible === "si") - (a.disponible === "si") || (a.nombre || "").localeCompare(b.nombre || ""));
+          const n = (f) => conductores.filter(x => f === "todos" ? x.activo !== "no" : f === "revisar" ? (x.verificado !== "si" && x.activo !== "no") : f === "verificados" ? (x.verificado === "si" && x.activo !== "no") : f === "fundadores" ? x.fundador === "si" : x.activo === "no").length;
           return (
             <>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <Text style={styles.seccionTitulo}>👥 Usuarios ({clientes.length})</Text>
-                <TouchableOpacity onPress={cargar}><Text style={{ color: "#187830", fontWeight: "700", fontSize: 12 }}>↻ Actualizar</Text></TouchableOpacity>
-              </View>
-              <Text style={[styles.ayuda, { marginTop: -4, marginBottom: 8 }]}>Clientes registrados (los más recientes primero). Toca para liberar, bloquear o eliminar.</Text>
-              <TextInput value={filtroCli} onChangeText={setFiltroCli}
-                placeholder="🔎 Filtrar por nombre o teléfono" style={styles.input} />
-              {lista.length === 0 ? (
-                <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>
-                  {clientes.length === 0 ? "Aún no hay usuarios registrados." : "Ningún usuario coincide con el filtro."}
-                </Text>
-              ) : lista.map((u) => tarjetaUsuario(u))}
+              <TextInput value={buscaCond} onChangeText={setBuscaCond} placeholder="Buscar por nombre, teléfono o placa" style={[styles.input, { backgroundColor: "#fff" }]} />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 12 }}>
+                {[["todos", "Todos"], ["revisar", "⏳ Por verificar"], ["verificados", "✅ Verificados"], ["fundadores", "🏅 Fundadores"], ["bloqueados", "⛔ Bloqueados"]].map(([k, lbl]) => (
+                  <TouchableOpacity key={k} onPress={() => setFiltroCond(k)} style={[styles.chip, filtroCond === k && styles.chipOn]}>
+                    <Text style={[styles.chipTxt, filtroCond === k && styles.chipTxtOn]}>{lbl} ({n(k)})</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {lista.length === 0 ? <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>No hay conductores en este filtro.</Text> : null}
+              {lista.map(x => fila(`c${x.id}`, x, x.fotos && x.fotos.conductor, `${nombreDe(x)}${x.fundador === "si" ? " 🏅" : ""}`,
+                `${nombreCiudad(x.municipio || "—")} · ${vehIcono(x.tipo_vehiculo)} ${x.placa || "sin placa"}${x.carreras_conductor ? ` · ${x.carreras_conductor} viajes` : ""}`,
+                <>
+                  {x.disponible === "si" && x.activo !== "no" ? chipEstado("● En línea", "#187830", "#EAF6EC") : null}
+                  {x.activo === "no" ? chipEstado("Bloqueado", "#C0392B", "#FBECEC") : x.verificado === "si" ? chipEstado("✅ Verificado", "#187830", "#EAF6EC") : chipEstado("⏳ Revisar", "#B85C00", "#FFF3E0")}
+                </>,
+                () => abrirFicha("conductor", x)))}
             </>
           );
         })()}
 
-        {pestana === "carreras" && (
-          <View style={[styles.card, { marginBottom: 12, backgroundColor: "#FFF6E5", borderWidth: 1, borderColor: "#F0C36D" }]}>
-            <Text style={{ fontWeight: "800", color: "#8A5A00", fontSize: 14 }}>🔓 Liberar usuario atascado</Text>
-            <Text style={{ fontSize: 12, color: "#8A5A00", marginTop: 2 }}>
-              Si un usuario no puede pedir porque "ya tiene una carrera en curso", escribe su teléfono y cancela sus carreras atascadas.
-            </Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-              <TextInput
-                value={telLiberar}
-                onChangeText={setTelLiberar}
-                placeholder="Teléfono del usuario"
-                keyboardType="phone-pad"
-                style={[styles.input, { flex: 1, marginBottom: 0 }]}
-              />
-              <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", paddingHorizontal: 16, justifyContent: "center" }]} onPress={() => liberarUsuario()}>
-                <Text style={[styles.buttonText, { fontSize: 14 }]}>Liberar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        {pestana === "usuarios" && (() => {
+          const q = filtroCli.trim().toLowerCase();
+          const lista = q
+            ? clientes.filter(u => (u.nombre || "").toLowerCase().includes(q) || (u.telefono || "").includes(q.replace(/\D/g, "") || "~"))
+            : clientes;
+          return (
+            <>
+              <TextInput value={filtroCli} onChangeText={setFiltroCli} placeholder="Buscar por nombre o teléfono" style={[styles.input, { backgroundColor: "#fff" }]} />
+              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 10 }}>{clientes.length} pasajeros · los más recientes primero</Text>
+              {lista.length === 0 ? (
+                <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>{clientes.length === 0 ? "Aún no hay pasajeros." : "Nadie coincide con la búsqueda."}</Text>
+              ) : lista.map(u => fila(`u${u.id}`, u, null, nombreDe(u),
+                `${u.telefono || "sin teléfono"} · ${nombreCiudad(u.municipio || "—")} · ${u.carreras_cliente || 0} viajes`,
+                <>
+                  {u.activas ? chipEstado(`🟠 ${u.activas} en curso`, "#B85C00", "#FFF3E0") : null}
+                  {u.activo === "no" ? chipEstado("Bloqueado", "#C0392B", "#FBECEC") : null}
+                </>,
+                () => abrirFicha("usuario", u)))}
+            </>
+          );
+        })()}
 
-        {pestana === "carreras" && (
-          <View style={[styles.card, { marginBottom: 12, backgroundColor: "#EDF3FF", borderWidth: 1, borderColor: "#B8CDF0" }]}>
-            <Text style={{ fontWeight: "800", color: "#1A4C9B", fontSize: 14 }}>🔎 Buscar usuario</Text>
-            <Text style={{ fontSize: 12, color: "#1A4C9B", marginTop: 2 }}>
-              Por teléfono o nombre — para identificarlo y ver su actividad (soporte).
-            </Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-              <TextInput
-                value={buscaUsuario}
-                onChangeText={setBuscaUsuario}
-                placeholder="Teléfono o nombre"
-                style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                onSubmitEditing={buscarUsuarios}
-                returnKeyType="search"
-              />
-              <TouchableOpacity style={[styles.button, { backgroundColor: "#1A73E8", paddingHorizontal: 16, justifyContent: "center" }]} onPress={buscarUsuarios}>
-                <Text style={[styles.buttonText, { fontSize: 14 }]}>Buscar</Text>
-              </TouchableOpacity>
-            </View>
-            {usuariosHallados != null && (usuariosHallados.length === 0 ? (
-              <Text style={{ fontSize: 12, color: "#888", marginTop: 10 }}>No se encontró ningún usuario.</Text>
-            ) : usuariosHallados.map((u) => tarjetaUsuario(u)))}
-          </View>
-        )}
+        {pestana === "carreras" && (() => {
+          const lista = carreras.filter(x => filtroCarr === "todas" ? true
+            : filtroCarr === "curso" ? ["buscando", "aceptada", "en_sitio", "en_camino"].includes(x.estado)
+            : filtroCarr === "finalizadas" ? x.estado === "finalizada" : x.estado === "cancelada");
+          return (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 12 }}>
+                {[["todas", "Todas"], ["curso", "🟠 En curso"], ["finalizadas", "✅ Finalizadas"], ["canceladas", "✖ Canceladas"]].map(([k, lbl]) => (
+                  <TouchableOpacity key={k} onPress={() => setFiltroCarr(k)} style={[styles.chip, filtroCarr === k && styles.chipOn]}>
+                    <Text style={[styles.chipTxt, filtroCarr === k && styles.chipTxtOn]}>{lbl}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {lista.length === 0 ? <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>No hay carreras en este filtro.</Text> : null}
+              {lista.slice(0, 60).map(x => {
+                const [txt, color, fondo] = ESTADO_CARRERA[x.estado] || [x.estado, "#555", "#F1F2EF"];
+                return (
+                  <View key={x.id} style={{ backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#ECEEE8" }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={{ fontWeight: "800", color: "#1D1D1D" }}>#{x.id} · {(x.cliente_nombre || "Pasajero").split(" ")[0]}</Text>
+                      {chipEstado(txt, color, fondo)}
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#187830" }} />
+                      <Text style={{ flex: 1, fontSize: 13, color: "#444" }} numberOfLines={1}>{limpiaDir(x.origen)}</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: "#F06000" }} />
+                      <Text style={{ flex: 1, fontSize: 13, color: "#444" }} numberOfLines={1}>{limpiaDir(x.destino)}</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
+                      <Text style={{ fontSize: 12, color: "#888" }}>{x.conductor_nombre ? `🚕 ${x.conductor_nombre}` : "Sin conductor"} · {nombreCiudad(x.municipio || "")}</Text>
+                      {x.tarifa || x.tarifa_ofrecida ? <Text style={{ fontWeight: "800", color: "#187830" }}>${(x.tarifa || x.tarifa_ofrecida).toLocaleString()}</Text> : null}
+                    </View>
+                  </View>
+                );
+              })}
 
-        {pestana === "carreras" && carreras.slice(0, 40).map(c => (
-          <View key={c.id} style={[styles.card, { marginBottom: 10 }]}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <Text style={{ fontWeight: "600" }}>#{c.id} · {c.cliente_nombre}</Text>
-              <Text style={{ fontSize: 11, color: "#888" }}>{({ en_sitio: "en el punto", en_camino: "en viaje" }[c.estado]) || c.estado}</Text>
-            </View>
-            <Text style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{limpiaDir(c.origen)} → {limpiaDir(c.destino)}</Text>
-            {c.conductor_nombre ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>🚕 {c.conductor_nombre}</Text> : null}
-            {c.tarifa ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>${c.tarifa.toLocaleString()}</Text> : null}
-          </View>
-        ))}
-        {pestana === "carreras" && carreras.length === 0 && (
-          <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>Todavia no hay carreras</Text>
-        )}
+              <TouchableOpacity onPress={() => setVerSoporte(v => !v)} style={{ marginTop: 10, paddingVertical: 10 }}>
+                <Text style={{ color: "#1A56B8", fontWeight: "800" }}>{verSoporte ? "▾" : "▸"} Herramienta de soporte: liberar usuario atascado</Text>
+              </TouchableOpacity>
+              {verSoporte && (
+                <View style={{ backgroundColor: "#FFF6E5", borderRadius: 14, padding: 14 }}>
+                  <Text style={{ fontSize: 12.5, color: "#8A5A00" }}>Si alguien no puede pedir porque "ya tiene una carrera en curso", escribe su teléfono y se cancelan sus carreras atascadas.</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                    <TextInput value={telLiberar} onChangeText={setTelLiberar} placeholder="Teléfono" keyboardType="phone-pad" style={[styles.input, { flex: 1, marginBottom: 0, backgroundColor: "#fff" }]} />
+                    <TouchableOpacity style={{ backgroundColor: "#C0392B", borderRadius: 12, paddingHorizontal: 16, justifyContent: "center" }} onPress={() => liberarUsuario()}>
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>Liberar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </>
+          );
+        })()}
 
         {pestana === "eventos" && <AdminEventos />}
         {pestana === "ciudades" && (
@@ -7825,6 +7923,115 @@ function AdminCarrerasScreen({ navigation }) {
           </View>
         )}
       </ScrollView>
+
+      {/* menu inferior fijo */}
+      <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#E6E8E2", paddingTop: 8, paddingBottom: 18 }}>
+        {[["inicio", "🏠", "Inicio"], ["conductores", "🚕", "Conductores"], ["usuarios", "👥", "Pasajeros"], ["carreras", "🛣️", "Carreras"], ["mas", "☰", "Más"]].map(([k, ic, lbl]) => {
+          const on = k === "mas" ? enMas : pestana === k;
+          return (
+            <TouchableOpacity key={k} onPress={() => setPestana(k)} style={{ flex: 1, alignItems: "center" }}>
+              <Text style={{ fontSize: 20, opacity: on ? 1 : 0.55 }}>{ic}</Text>
+              <Text style={{ fontSize: 11, fontWeight: on ? "800" : "600", color: on ? "#187830" : "#8A8A8A", marginTop: 2 }}>{lbl}</Text>
+              {k === "conductores" && porVerificar.length > 0 ? (
+                <View style={{ position: "absolute", top: -4, right: "22%", backgroundColor: "#F06000", borderRadius: 9, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 }}>
+                  <Text style={{ color: "#fff", fontSize: 10.5, fontWeight: "900" }}>{porVerificar.length}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* FICHA de conductor / pasajero */}
+      <Modal visible={!!ficha} animationType="slide" onRequestClose={() => setFicha(null)}>
+        {ficha ? (() => {
+          const x = ficha.tipo === "conductor" ? (conductores.find(k => k.id === ficha.id) || ficha.obj) : (clientes.find(k => k.id === ficha.id) || ficha.obj);
+          return (
+            <SafeAreaView style={{ flex: 1, backgroundColor: "#F4F5F1" }}>
+              <View style={{ backgroundColor: "#187830", paddingTop: 44, paddingBottom: 16, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <TouchableOpacity onPress={() => setFicha(null)} style={{ padding: 4 }}><Text style={{ color: "#fff", fontSize: 22 }}>←</Text></TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12.5, fontWeight: "700" }}>{ficha.tipo === "conductor" ? "Conductor" : "Pasajero"}</Text>
+                  <Text style={{ color: "#fff", fontSize: 21, fontWeight: "800" }} numberOfLines={1}>{nombreDe(x)}{x.fundador === "si" ? " 🏅" : ""}</Text>
+                </View>
+              </View>
+              <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+                <View style={[styles.card, { marginBottom: 12 }]}>
+                  {[["📞", "Teléfono", x.telefono || "— sin teléfono"], ["📍", "Ciudad", nombreCiudad(x.municipio || "—")],
+                    ...(ficha.tipo === "conductor" ? [["🚘", "Vehículo", `${vehLabel(x.tipo_vehiculo) || "—"} · ${x.vehiculo || ""} ${x.placa || "sin placa"}`],
+                      ["🎨", "Color / modelo", [x.veh_color, x.veh_modelo].filter(Boolean).join(" · ") || "—"],
+                      ["⭐", "Calificación", x.calificacion != null ? Number(x.calificacion).toFixed(1) : "Nuevo"],
+                      ["🛣️", "Viajes hechos", String(x.carreras_conductor || 0)],
+                      ["💳", "Suscripción", x.al_dia ? (config.cobro_activo === "si" ? `${x.dias_restantes} días` : "Activa (cobro apagado)") : "Vencida"]]
+                    : [["🛣️", "Viajes pedidos", String(x.carreras_cliente || 0)]]),
+                  ].map(([ic, lbl, val]) => (
+                    <View key={lbl} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#F1F2EF" }}>
+                      <Text style={{ width: 28, fontSize: 15 }}>{ic}</Text>
+                      <Text style={{ width: 120, fontSize: 13, color: "#8A8A8A" }}>{lbl}</Text>
+                      <Text style={{ flex: 1, fontSize: 14, fontWeight: "700", color: "#1D1D1D" }}>{val}</Text>
+                    </View>
+                  ))}
+                  {x.telefono ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://wa.me/57${String(x.telefono).replace(/\D/g, "").slice(-10)}`).catch(() => {})}
+                      style={{ marginTop: 10, backgroundColor: "#25D366", borderRadius: 12, paddingVertical: 11, alignItems: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>💬 Escribirle por WhatsApp</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                {ficha.tipo === "conductor" && (
+                  <View style={[styles.card, { marginBottom: 12 }]}>
+                    <Text style={styles.seccionTitulo}>Documentos</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {[["conductor", "Foto"], ["vehiculo", "Vehículo"], ["cedula", "Cédula"], ["licencia", "Licencia"], ["tarjeta", "Tarjeta prop."], ["soat", "SOAT"]].map(([t, lbl]) => {
+                        const f = x.fotos && x.fotos[t];
+                        return (
+                          <TouchableOpacity key={t} disabled={!f} onPress={() => f && Linking.openURL(f)} style={{ width: "31%", alignItems: "center" }}>
+                            {f ? <Image source={{ uri: f }} style={{ width: "100%", height: 72, borderRadius: 10 }} />
+                              : <View style={{ width: "100%", height: 72, borderRadius: 10, backgroundColor: "#F1F2EF", alignItems: "center", justifyContent: "center" }}><Text style={{ color: "#C4C8BE", fontSize: 20 }}>—</Text></View>}
+                            <Text style={{ fontSize: 11.5, color: f ? "#187830" : "#AAA", fontWeight: "700", marginTop: 3 }}>{lbl}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <TouchableOpacity onPress={() => verificarConductor(x)}
+                      style={{ marginTop: 14, backgroundColor: x.verificado === "si" ? "#fff" : "#187830", borderWidth: x.verificado === "si" ? 1.5 : 0, borderColor: "#E6E8E2", borderRadius: 12, paddingVertical: 13, alignItems: "center" }}>
+                      <Text style={{ color: x.verificado === "si" ? "#C0392B" : "#fff", fontWeight: "800" }}>{x.verificado === "si" ? "Quitar habilitación" : "✅ Habilitar conductor"}</Text>
+                    </TouchableOpacity>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity onPress={() => registrarPago(x)} style={{ flex: 1, backgroundColor: "#EEF3FB", borderRadius: 12, paddingVertical: 11, alignItems: "center" }}>
+                        <Text style={{ color: "#1A56B8", fontWeight: "800" }}>💳 Registrar pago</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => quitarSuscripcion(x)} style={{ flex: 1, backgroundColor: "#F1F2EF", borderRadius: 12, paddingVertical: 11, alignItems: "center" }}>
+                        <Text style={{ color: "#8A8A8A", fontWeight: "800" }}>Quitar suscripción</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                <Text style={styles.seccionTitulo}>Acciones</Text>
+                {fichaUser ? tarjetaUsuario(fichaUser) : <ActivityIndicator color="#187830" style={{ marginTop: 10 }} />}
+              </ScrollView>
+            </SafeAreaView>
+          );
+        })() : null}
+      </Modal>
+
+      {/* registros incompletos */}
+      <Modal visible={verIncompletos} animationType="slide" onRequestClose={() => setVerIncompletos(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#F4F5F1" }}>
+          <View style={{ backgroundColor: "#C0392B", paddingTop: 44, paddingBottom: 16, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <TouchableOpacity onPress={() => setVerIncompletos(false)} style={{ padding: 4 }}><Text style={{ color: "#fff", fontSize: 22 }}>←</Text></TouchableOpacity>
+            <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800" }}>Registros incompletos</Text>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+            <Text style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Cuentas creadas antes de que el registro exigiera datos completos. Puedes escribirles para que completen, o eliminarlas.</Text>
+            {incompletos.length === 0 ? <Text style={{ color: "#187830", fontWeight: "700" }}>✅ No quedan registros incompletos.</Text> : null}
+            {incompletos.map(u => fila(`i${u.rol}${u.id}`, u, null, nombreDe(u), `${u.rol === "conductor" ? "🚕 Conductor" : "👤 Pasajero"} · ${u.telefono || "sin teléfono"} · ${nombreCiudad(u.municipio || "—")}`,
+              null, () => { setVerIncompletos(false); abrirFicha(u.rol === "conductor" ? "conductor" : "usuario", u); }))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }

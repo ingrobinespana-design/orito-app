@@ -4203,9 +4203,14 @@ def guardar_pagos(usuario_id: int, efectivo: str = None, nequi: str = None, davi
     return {"ok": True, "pagos": medios_pago(u)}
 
 @app.get("/conductores")
-def obtener_conductores(db: Session = Depends(get_db)):
+def obtener_conductores(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """SOLO admin: trae telefonos y fotos de documentos (antes era publica)."""
     conductores = db.query(Usuario).filter(Usuario.rol == "conductor").all()
+    hechas = dict(db.query(Carrera.conductor_id, func.count(Carrera.id)).filter(
+        Carrera.estado == "finalizada").group_by(Carrera.conductor_id).all())
     return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "placa": u.placa,
+             "fundador": u.fundador or "no", "activo": u.activo or "si", "calificacion": u.calificacion,
+             "carreras_conductor": hechas.get(u.id, 0), "creado": getattr(u, "fecha_registro", None),
              "vehiculo": u.vehiculo, "disponible": u.disponible,
              "tipo_vehiculo": u.tipo_vehiculo, "municipio": u.municipio,
              "veh_color": u.veh_color, "veh_modelo": u.veh_modelo,
