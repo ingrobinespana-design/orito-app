@@ -2129,7 +2129,8 @@ function ElegirServicioScreen({ navigation, route }) {
           {tiles.map(([ic, tit, sub, fondo, color, fn]) => (
             <TouchableOpacity key={tit} activeOpacity={0.85} onPress={fn}
               style={{ flex: 1, backgroundColor: "#fff", borderRadius: 18, paddingVertical: 16, paddingHorizontal: 10, alignItems: "center",
-                shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 10, elevation: 2 }}>
+                borderWidth: 1, borderColor: "#E1E5DD",   // en pantallas de gama baja la sombra no se ve: el borde marca la tarjeta
+                shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 3 }}>
               <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: fondo, alignItems: "center", justifyContent: "center" }}>
                 <Text style={{ fontSize: 30 }}>{ic}</Text>
               </View>
@@ -2475,13 +2476,59 @@ function mapaSeguimientoHTML() {
 <div id="leyenda">🚗 Tú · 📍 Recogida · 🏁 Destino</div>
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
 <script>
-  // Mapa VECTORIAL (Mapbox GL JS): gira 360 con el dedo (2 dedos) manteniendo los
-  // nombres derechos, mas fino que el raster. Carga con el referer orito.app (baseUrl
-  // del WebView), por eso el token restringido funciona.
-  mapboxgl.accessToken='${MAPBOX_TOKEN}';
-  var map=new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/streets-v12',
-    center:[-76.8719,0.6668],zoom:14,attributionControl:false,
-    dragRotate:true,touchZoomRotate:true,touchPitch:false,pitchWithRotate:false});
+  // ===== COMPATIBILIDAD: celulares sin WebGL2 (gama baja / Android viejo) =====
+  // Mapbox GL v3 necesita WebGL2; sin eso el mapa queda EN BLANCO. Se detecta y se usa
+  // Leaflet con el MISMO mapa de Mapbox (raster) imitando las funciones de GL que usa
+  // este mapa, asi el resto del codigo (carro, ruta, botones) no cambia.
+  function tieneWebGL2(){ try{ var c=document.createElement('canvas'); return !!(c.getContext('webgl2')); }catch(e){ return false; } }
+  function toLL(p){ return Array.isArray(p)?[p[1],p[0]]:[p.lat,p.lng]; }
+  function shimLeaflet(){
+    function Bounds(a,b){ this.s=Infinity;this.w=Infinity;this.n=-Infinity;this.e=-Infinity; if(a)this.extend(a); if(b)this.extend(b); }
+    Bounds.prototype.extend=function(p){ var ll=toLL(p); this.s=Math.min(this.s,ll[0]);this.n=Math.max(this.n,ll[0]);this.w=Math.min(this.w,ll[1]);this.e=Math.max(this.e,ll[1]); return this; };
+    function estilo(paint){ var d=paint['line-dasharray']; return {color:paint['line-color']||'#187830',weight:paint['line-width']||5,opacity:paint['line-opacity']==null?0.9:paint['line-opacity'],dashArray:(d&&d[1]>0)?'2,9':null,lineCap:'round',lineJoin:'round'}; }
+    function GMap(o){
+      var self=this; this.L=L.map(o.container,{zoomControl:false,attributionControl:false}).setView(toLL(o.center),o.zoom||14);
+      L.tileLayer('${MAPBOX_STREETS}',{tileSize:512,zoomOffset:-1,maxZoom:20}).addTo(this.L);
+      this.capas={}; this.paints={};
+    }
+    GMap.prototype.on=function(ev,fn){ if(ev==='load'){ setTimeout(fn,0); } else if(ev==='dragstart'){ this.L.on('dragstart',fn); } };
+    GMap.prototype.addSource=function(id){ this.capas[id]=L.geoJSON(null).addTo(this.L); };
+    GMap.prototype.addLayer=function(l){ this.paints[l.id]=Object.assign({},l.paint||{}); this.capas[l.id].setStyle(estilo(this.paints[l.id])); };
+    GMap.prototype.getSource=function(id){ var self=this,c=this.capas[id]; if(!c) return null; return {setData:function(g){ c.clearLayers(); c.addData(g); c.setStyle(estilo(self.paints[id]||{})); }}; };
+    GMap.prototype.setPaintProperty=function(id,k,v){ this.paints[id]=this.paints[id]||{}; this.paints[id][k]=v; if(this.capas[id]) this.capas[id].setStyle(estilo(this.paints[id])); };
+    GMap.prototype.easeTo=function(o){ this.L.setView(toLL(o.center),o.zoom||this.L.getZoom(),{animate:true}); };
+    GMap.prototype.fitBounds=function(b,o){ var p=(o&&o.padding)||40; this.L.fitBounds([[b.s,b.w],[b.n,b.e]],{padding:[p,p]}); };
+    GMap.prototype.setCenter=function(c){ this.L.panTo(toLL(c),{animate:false}); };
+    GMap.prototype.getZoom=function(){ return this.L.getZoom(); };
+    GMap.prototype.resize=function(){ this.L.invalidateSize(); };
+    GMap.prototype.remove=function(){ this.L.remove(); };
+    function Marker(o){ this.el=o.element; this.anchor=o.anchor||'center'; this.m=null; this.ll=[0,0]; }
+    Marker.prototype.setLngLat=function(p){ this.ll=toLL(p); if(this.m) this.m.setLatLng(this.ll); return this; };
+    Marker.prototype.addTo=function(map){ var w=40,h=40; var ic=L.divIcon({html:this.el,className:'',iconSize:[w,h],iconAnchor:this.anchor==='bottom'?[w/2,h]:[w/2,h/2]}); this.m=L.marker(this.ll,{icon:ic,interactive:false}).addTo(map.L); return this; };
+    Marker.prototype.getLngLat=function(){ return {lng:this.ll[1],lat:this.ll[0]}; };
+    Marker.prototype.setRotation=function(d){ this.el.style.transform='rotate('+d+'deg)'; return this; };
+    Marker.prototype.getElement=function(){ return this.el; };
+    return {Map:GMap,Marker:Marker,LngLatBounds:Bounds,accessToken:''};
+  }
+  var map=null, modoMapa='gl', esperaGL=null;
+  function crearMapa(){
+    map=new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/streets-v12',
+      center:[-76.8719,0.6668],zoom:14,attributionControl:false,
+      dragRotate:true,touchZoomRotate:true,touchPitch:false,pitchWithRotate:false});
+    map.on('load', alCargar);
+    // si el usuario arrastra (pan) a mano, dejamos de perseguir el carro
+    map.on('dragstart', function(){ if(seguir){ seguir=false; botones(); } });
+  }
+  function pasarALeaflet(){
+    if(modoMapa==='leaflet') return; modoMapa='leaflet';
+    if(esperaGL) clearTimeout(esperaGL);
+    try{ if(map) map.remove(); }catch(e){}
+    document.getElementById('map').innerHTML='';
+    var css=document.createElement('link'); css.rel='stylesheet'; css.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'; document.head.appendChild(css);
+    var js=document.createElement('script'); js.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    js.onload=function(){ window.mapboxgl=shimLeaflet(); carro=null; pin=null; mDest=null; crearMapa(); };
+    document.head.appendChild(js);
+  }
   var SVG={
     carro:'<svg viewBox="0 0 44 44" width="40" height="40" style="display:block"><defs><linearGradient id="cB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="0.55" stop-color="#1E8A3E"/><stop offset="1" stop-color="#115526"/></linearGradient><linearGradient id="cG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eafff0"/><stop offset="1" stop-color="#bfe6cf"/></linearGradient></defs><rect x="13" y="5" width="18" height="33" rx="8" fill="url(#cB)" stroke="#0e4a22" stroke-width="0.9"/><rect x="15" y="7" width="4.5" height="29" rx="2.2" fill="#ffffff" opacity="0.16"/><rect x="16" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><rect x="24" y="5.6" width="4" height="2" rx="1" fill="#fff6d8"/><path d="M15 12 Q22 9 29 12 L27.5 17 Q22 15 16.5 17 Z" fill="url(#cG)"/><rect x="16" y="18" width="12" height="9" rx="2.5" fill="#0f5e2a"/><rect x="17" y="19" width="10" height="2.6" rx="1.3" fill="#ffffff" opacity="0.12"/><path d="M16.5 30 Q22 32 27.5 30 L26 27 Q22 28.5 18 27 Z" fill="url(#cG)"/><rect x="10.3" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/><rect x="30.6" y="15" width="3.1" height="2.6" rx="1.3" fill="#F06000"/></svg>',
     moto:'<svg viewBox="0 0 44 44" width="38" height="38" style="display:block"><defs><linearGradient id="mB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A4D"/><stop offset="0.55" stop-color="#F06000"/><stop offset="1" stop-color="#B84800"/></linearGradient></defs><rect x="20" y="6" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="20" y="30" width="4" height="8" rx="2" fill="#1a1a1a"/><rect x="13" y="12" width="18" height="2.8" rx="1.4" fill="#444"/><path d="M18 14 Q22 12 26 14 L25 30 Q22 31.5 19 30 Z" fill="url(#mB)" stroke="#9c3d00" stroke-width="0.8"/><rect x="19" y="20" width="6" height="8" rx="3" fill="#135E29"/><rect x="20" y="15" width="4" height="3" rx="1.5" fill="#fff6d8"/><rect x="19.4" y="15" width="1.8" height="12" rx="0.9" fill="#ffffff" opacity="0.14"/></svg>',
@@ -2498,16 +2545,24 @@ function mapaSeguimientoHTML() {
   function rumbo(a,b){ var la1=a[1]*Math.PI/180,la2=b[1]*Math.PI/180,dlo=(b[0]-a[0])*Math.PI/180; var y=Math.sin(dlo)*Math.cos(la2); var x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dlo); return (Math.atan2(y,x)*180/Math.PI+360)%360; }
   function emoji(ch){ var d=document.createElement('div'); d.className='em'; d.textContent=ch; return d; }
 
-  map.on('load', function(){
+  function alCargar(){
+    if(esperaGL) clearTimeout(esperaGL);
     map.addSource('ctx',{type:'geojson',data:line([])});
     map.addLayer({id:'ctx',type:'line',source:'ctx',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#C0392B','line-width':4,'line-opacity':0.5,'line-dasharray':[1,3]}});
     map.addSource('ruta',{type:'geojson',data:line([])});
     map.addLayer({id:'ruta',type:'line',source:'ruta',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#187830','line-width':6,'line-opacity':0.9}});
     ready=true; map.resize(); var q=cola; cola=[]; q.forEach(function(f){ try{f();}catch(e){} });
-  });
+    // al pasar a Leaflet se repinta lo ultimo conocido (recogida, destino, conductor)
+    if(modoMapa==='leaflet'){ var u=ultimos; if(u.rec) _recogida(u.rec[0],u.rec[1]); if(u.dest) _destino(u.dest[0],u.dest[1]); if(u.cond) _conductor(u.cond[0],u.cond[1]); }
+  }
+  var ultimos={};
   window.addEventListener('resize', function(){ try{ map.resize(); }catch(e){} });
-  // si el usuario arrastra (pan) a mano, dejamos de perseguir el carro
-  map.on('dragstart', function(){ if(seguir){ seguir=false; botones(); } });
+  // arranque: GL si el celular puede; si no (o si GL no carga en 8 s), Leaflet
+  if(typeof mapboxgl==='undefined' || !tieneWebGL2()){ pasarALeaflet(); }
+  else {
+    try{ mapboxgl.accessToken='${MAPBOX_TOKEN}'; crearMapa(); esperaGL=setTimeout(function(){ if(!ready) pasarALeaflet(); },8000); }
+    catch(e){ pasarALeaflet(); }
+  }
 
   function botones(){ document.getElementById('bSeguir').className=seguir?'on':''; document.getElementById('bRuta').className=seguir?'':'on'; }
   function modoSeguir(){ seguir=true; botones(); if(carro){ map.easeTo({center:carro.getLngLat(),zoom:Math.max(map.getZoom(),ZOOM),duration:400}); } }
@@ -2579,10 +2634,10 @@ function mapaSeguimientoHTML() {
     var mover=!ultimaRuta||Math.sqrt(Math.pow(la-ultimaRuta[0],2)+Math.pow(lo-ultimaRuta[1],2))>0.0008; if(mover) pedirRuta(la,lo);
   }
   function _rutaA(cual){ metaRuta=cual; aplicarMeta(); ultimaRuta=null; if(carro&&dLat!=null){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
-  function recogida(la,lo){ enListo(function(){_recogida(la,lo);}); }
+  function recogida(la,lo){ ultimos.rec=[la,lo]; enListo(function(){_recogida(la,lo);}); }
   function punto(la,lo){ recogida(la,lo); }
-  function destino(la,lo){ enListo(function(){_destino(la,lo);}); }
-  function conductor(la,lo){ enListo(function(){_conductor(la,lo);}); }
+  function destino(la,lo){ ultimos.dest=[la,lo]; enListo(function(){_destino(la,lo);}); }
+  function conductor(la,lo){ ultimos.cond=[la,lo]; enListo(function(){_conductor(la,lo);}); }
   function rutaA(cual){ enListo(function(){_rutaA(cual);}); }
 </script></body></html>`;
 }
@@ -3930,7 +3985,7 @@ function PedirCarreraScreen({ navigation, route }) {
           </View>
         )}
 
-        <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }}>
           {/* si tiene varias solicitudes abiertas, puede saltar entre ellas */}
           {activas.length > 1 && (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
@@ -4377,7 +4432,7 @@ function PedirCarreraScreen({ navigation, route }) {
             <TouchableOpacity onPress={() => setVerHistorial(false)} style={{ padding: 4 }}><Text style={{ fontSize: 24, color: "#fff" }}>←</Text></TouchableOpacity>
             <Text style={{ fontSize: 17, fontWeight: "700", color: "#fff" }}>Tus carreras</Text>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }}>
             {historialCli.length === 0 ? (
               <Text style={{ color: "#888", textAlign: "center", padding: 30 }}>Aún no tienes carreras terminadas.{"\n"}Aquí quedará tu historial.</Text>
             ) : historialCli.map(c => <TarjetaHistorial key={c.id} c={c} esConductor={false} />)}
