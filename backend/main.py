@@ -2956,6 +2956,10 @@ def le_sirve_la_carrera(conductor: Usuario, carrera: Carrera, con_radio: bool = 
     + Ruta exclusiva del dueño: aeropuerto solo para el; y a el (si con_radio) sus
     demas solicitudes solo si la recogida esta cerca. Al aceptar/contraofertar no
     se exige el radio (pudo moverse un poco desde que la vio)."""
+    # solo conductores HABILITADOS (documentos revisados por el admin) reciben carreras:
+    # el pasajero ve "Conductores verificados" y eso tiene que ser cierto
+    if (conductor.verificado or "no") != "si":
+        return False
     tel_excl, radio, tipo_dueno = _cfg_exclusivo()
     es_dueno = bool(tel_excl) and _digitos(conductor.telefono)[-10:] == tel_excl
     if tel_excl and carrera.vehiculo_pedido == tipo_dueno and es_carrera_aeropuerto(carrera):
@@ -3473,6 +3477,8 @@ def aceptar_carrera(carrera_id: int, conductor_id: int, tareas: BackgroundTasks,
     if en_curso:
         raise HTTPException(status_code=409, detail="Ya tienes una carrera en curso. Termínala antes de aceptar otra.")
     pedida = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if (conductor.verificado or "no") != "si":
+        raise HTTPException(status_code=403, detail="Aún no estás habilitado. Sube tus documentos en Configuración y espera la verificación para tomar carreras.")
     if pedida and not le_sirve_la_carrera(conductor, pedida, con_radio=False):
         raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
     # el conductor toma la carrera al precio que ofrecio el cliente (o sin precio
@@ -3544,6 +3550,8 @@ def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: Backgr
         raise HTTPException(status_code=404, detail="Carrera no encontrada")
     if carrera.estado != "buscando":
         raise HTTPException(status_code=409, detail="Esa carrera ya no esta disponible")
+    if (conductor.verificado or "no") != "si":
+        raise HTTPException(status_code=403, detail="Aún no estás habilitado. Sube tus documentos en Configuración y espera la verificación para tomar carreras.")
     if not le_sirve_la_carrera(conductor, carrera, con_radio=False):
         raise HTTPException(status_code=403, detail="Esa carrera no es de tu municipio o pidieron otro tipo de vehiculo")
     # una sola oferta por conductor: si ya habia, se actualiza el monto

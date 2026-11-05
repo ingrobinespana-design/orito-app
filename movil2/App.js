@@ -5426,9 +5426,20 @@ function ConductorScreen({ navigation, route }) {
   const [disponibles, setDisponibles] = useState([]);
   const [mias, setMias] = useState([]);
   const [esFundador, setEsFundador] = useState(usuario.fundador === "si");
+  const [habilitado, setHabilitado] = useState(true);   // verificado por el admin: solo asi le llegan carreras
+  const [docsFaltan, setDocsFaltan] = useState(0);
   useEffect(() => {
-    fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
-      .then(p => { if (p && p.fundador) setEsFundador(p.fundador === "si"); }).catch(() => {});
+    const leer = () => fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
+      .then(p => {
+        if (!p || p.detail) return;
+        if (p.fundador) setEsFundador(p.fundador === "si");
+        setHabilitado(p.verificado === "si");
+        const f = p.fotos || {};
+        setDocsFaltan(["conductor", "vehiculo", "cedula", "licencia", "tarjeta", "soat"].filter(k => !f[k]).length);
+      }).catch(() => {});
+    leer();
+    const t = setInterval(leer, 60000);   // cuando el admin lo habilite, el aviso se va solo
+    return () => clearInterval(t);
   }, []);
   const [avisoCancelada, setAvisoCancelada] = useState(null); // carrera que el pasajero cancelo
   const [sobreOk, setSobreOk] = useState(puedeSobreponer());  // "Mostrar encima de otras apps"
@@ -6272,6 +6283,18 @@ function ConductorScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
 
+      {!habilitado && (
+        <TouchableOpacity activeOpacity={0.85} onPress={() => navigation.navigate("Configuracion", { usuario })}
+          style={{ margin: 16, marginBottom: 0, backgroundColor: "#FFF3E0", borderRadius: 16, padding: 16, borderWidth: 1.5, borderColor: "#F5C27A" }}>
+          <Text style={{ fontWeight: "900", color: "#8A5A00", fontSize: 16 }}>⏳ Aún no estás habilitado para recibir carreras</Text>
+          <Text style={{ fontSize: 13.5, color: "#8A5A00", marginTop: 4, lineHeight: 19 }}>
+            {docsFaltan > 0
+              ? `Te faltan ${docsFaltan} documento${docsFaltan === 1 ? "" : "s"}: sube tu foto, foto del vehículo, cédula, licencia, tarjeta de propiedad y SOAT. Cuando estén completos, revisamos y te habilitamos.`
+              : "Ya subiste tus documentos ✅ Los estamos revisando; apenas te habilitemos te empiezan a llegar las carreras."}
+          </Text>
+          {docsFaltan > 0 ? <Text style={{ marginTop: 8, color: "#187830", fontWeight: "800" }}>Subir documentos en Configuración ›</Text> : null}
+        </TouchableOpacity>
+      )}
       {cuenta && cuenta.cobro_activo && !cuenta.al_dia && (
         <View style={styles.avisoVencido}>
           <Text style={{ fontWeight: "bold", color: "#8A1C1C" }}>Tu suscripcion esta vencida</Text>
