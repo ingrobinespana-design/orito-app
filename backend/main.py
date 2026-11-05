@@ -787,6 +787,24 @@ def registrar_usuario(request: Request, nombre: str, telefono: str, password: st
     # para tolerar un lanzamiento donde varios se registran en la misma red.
     if paso_del_limite(("registro", ip_de(request)), 25, 3600):
         raise HTTPException(status_code=429, detail="Demasiados registros desde aqui. Intenta en un rato.")
+    # ---- datos completos y validos: sin esto NO se crea la cuenta ----
+    nombre = " ".join((nombre or "").split())
+    letras = sum(1 for ch in nombre if ch.isalpha())
+    if letras < 3 or "@" in nombre or len(nombre) > 60:
+        raise HTTPException(status_code=400, detail="Escribe tu nombre y apellido (sin correo ni números).")
+    if sum(1 for ch in nombre if ch.isdigit()) > 0:
+        raise HTTPException(status_code=400, detail="Tu nombre no debe llevar números.")
+    telefono = _digitos(telefono)
+    if telefono.startswith("57") and len(telefono) == 12:
+        telefono = telefono[2:]
+    if len(telefono) != 10 or not telefono.startswith("3"):
+        raise HTTPException(status_code=400, detail="Escribe un número de celular válido de 10 dígitos (ej: 3001234567).")
+    if len((password or "").strip()) < 6:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres.")
+    if not (municipio or "").strip():
+        raise HTTPException(status_code=400, detail="Escoge tu zona (la ciudad donde usarás Tukán).")
+    if tipo_vehiculo is not None and len(_digitos(placa or "") + "".join(ch for ch in (placa or "") if ch.isalpha())) < 5:
+        raise HTTPException(status_code=400, detail="Escribe la placa de tu vehículo (ej: ABC123).")
     usuario_existe = db.query(Usuario).filter(Usuario.telefono == telefono).first()
     if usuario_existe:
         raise HTTPException(status_code=400, detail="Este telefono ya esta registrado")
