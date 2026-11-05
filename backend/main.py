@@ -10,6 +10,8 @@ import logging
 import push
 import tarifas
 import legal
+import nomenclatura
+nomenclatura.tiene_malla("Cali")   # carga la malla de calles al arrancar (no en la 1a busqueda)
 import cloudinary
 import cloudinary.uploader
 import os
@@ -2646,8 +2648,16 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
             if not r.get("titulo"):
                 partes = [x.strip() for x in r["nombre"].split(",")]
                 r = {**r, "titulo": partes[0], "detalle": ", ".join(partes[1:])}
-            # detalle sin pedazos raros ("ቺፒቻፔ", "first floor")
-            limpio = ", ".join(x.strip() for x in (r.get("detalle") or "").split(",") if x.strip() and not _es_basura(x))
+            # detalle limpio: sin pedazos raros ("ቺፒቻፔ", "first floor"), sin codigos
+            # postales (760035), sin "Colombia" ni el departamento; "Santiago de Cali" -> "Cali"
+            partes = []
+            for x in (r.get("detalle") or "").split(","):
+                x = _re_bus.sub(r"\b\d{5,6}\b", "", x).replace("Santiago de Cali", "Cali").strip()
+                if not x or _es_basura(x) or x in ("Colombia", "Valle del Cauca", "Cauca", "Nariño", "Putumayo",
+                                                    "Caquetá", "Huila", "Cali ciudad") or x in partes:
+                    continue
+                partes.append(x)
+            limpio = ", ".join(partes)
             r = {**r, "detalle": limpio, "nombre": f"{r['titulo']}, {limpio}" if limpio else r["titulo"]}
             # mismo nombre y misma direccion = repetido (aunque el punto varie unos metros)
             kn = r["nombre"].lower()
@@ -2662,21 +2672,36 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         except Exception:
             pass
 
-    # 0) sitios que Tukan ya conoce en esa ciudad (tolera errores)
+    ciudad_q = municipio or _ciudad_cercana(cerca_lat, cerca_lon, db)
+    # 0) DIRECCION colombiana calculada con la malla de calles (Calle 9 # 43-30, Cra 5 con 66):
+    #    va de PRIMERA; si es direccion, las tiendas del Search Box solo de relleno
+    es_direccion = False
     try:
-        agregar(_lugares_conocidos(original, municipio or _ciudad_cercana(cerca_lat, cerca_lon, db), db))
+        if nomenclatura.parsear(original):
+            es_direccion = True
+            cal = nomenclatura.ubicar(original, ciudad_q or "",
+                                      (cerca_lat, cerca_lon) if cerca_lat is not None else None)
+            if cal:
+                agregar([{"nombre": f"{cal['titulo']}, {cal['detalle']}", "titulo": cal["titulo"],
+                          "detalle": cal["detalle"], "lat": cal["lat"], "lon": cal["lon"]}])
+    except Exception:
+        pass
+    # sitios que Tukan ya conoce en esa ciudad (tolera errores)
+    try:
+        agregar(_lugares_conocidos(original, ciudad_q, db))
     except Exception:
         pass
     # una esquina ("Calle 5 con 66") la ubica mejor la nomenclatura (v6); lo demas,
     # el Search Box. Cada fuente en try/except: si una falla, siguen las otras.
-    if es_cruce:
+    if es_cruce or es_direccion:
         # de la nomenclatura solo sirven las que traen placa ("Calle 5 66-10"); un
         # "Calle 5" pelado de otro pueblo no ubica la esquina
         try:
             agregar([r for r in _mapbox_geo(t, cerca_lat, cerca_lon) if "-" in r["nombre"].split(",")[0]])
         except Exception:
             pass
-        intentar(_mapbox_searchbox, original, cerca_lat, cerca_lon)
+        if len(resultados) < 3:   # tiendas solo de relleno cuando es una direccion
+            intentar(_mapbox_searchbox, original, cerca_lat, cerca_lon)
     else:
         intentar(_mapbox_searchbox, t, cerca_lat, cerca_lon)
         if len(resultados) < 4:
