@@ -2190,7 +2190,13 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
   const [cargandoSug, setCargandoSug] = useState(false);
   // cada vez que se abre, la busqueda se sesga hacia donde abre el mapa (la ciudad
   // del usuario), no hacia el primer centro que tuvo (podia quedar en Orito)
-  useEffect(() => { if (visible) setCoords(inicial); }, [visible]);
+  const insets = useSafeAreaInsets();
+  // cada vez que se abre: el mapa arranca limpio (sin el texto del punto anterior)
+  useEffect(() => {
+    if (!visible) return;
+    setCoords(inicial);
+    setBusqueda(""); setSugerencias([]); setSinRes(false); setEncontrado(null);
+  }, [visible, titulo]);
   const saltarAuto = useRef(false);                     // al elegir una sugerencia no se vuelve a buscar
 
   // AUTOCOMPLETAR (tipo Uber): mientras escribes, el backend sugiere direcciones con
@@ -2281,9 +2287,11 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
             <TextInput
               value={busqueda}
               onChangeText={setBusqueda}
-              placeholder="Busca un sitio, barrio o dirección"
+              placeholder="Sitio o dirección"
               placeholderTextColor="#9A9A9A"
-              style={{ flex: 1, height: 50, paddingHorizontal: 10, fontSize: 15, color: "#1D1D1D" }}
+              numberOfLines={1}
+              multiline={false}
+              style={{ flex: 1, height: 50, paddingHorizontal: 10, paddingVertical: 0, fontSize: 15, color: "#1D1D1D" }}
               onSubmitEditing={buscarLugar}
               returnKeyType="search"
               autoCorrect={false}
@@ -2299,9 +2307,6 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
               {buscandoLugar ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>Buscar</Text>}
             </TouchableOpacity>
           </View>
-          {!busqueda ? (
-            <Text style={{ fontSize: 12, color: "#9A9A9A", marginTop: 6, marginLeft: 4 }}>Ej: Unicentro · barrio San Fernando · Calle 5 con Carrera 66</Text>
-          ) : null}
           {encontrado ? (
             <View style={{ marginTop: 8, backgroundColor: "#EAF6EC", borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12 }}>
               <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }} numberOfLines={1}>{encontrado}</Text>
@@ -2354,15 +2359,24 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
               </Text>
             </View>
           ) : null}
-          <Text style={{ textAlign: "center", fontSize: 12, color: "#888", paddingVertical: 6 }}>
-            Toca el mapa para poner el pin, o arrastralo al punto exacto
-          </Text>
+          {/* "mi ubicacion" flota sobre el mapa (abajo a la izquierda), como en Uber */}
+          {sugerencias.length === 0 ? (
+            <TouchableOpacity onPress={usarMiUbicacion} disabled={buscando} activeOpacity={0.85}
+              style={{ position: "absolute", left: 14, bottom: 14, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#fff", borderRadius: 22, paddingVertical: 10, paddingHorizontal: 14, elevation: 6, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } }}>
+              {buscando ? <ActivityIndicator size="small" color="#187830" /> : (
+                <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: "#187830", alignItems: "center", justifyContent: "center" }}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#187830" }} />
+                </View>
+              )}
+              <Text style={{ color: "#187830", fontWeight: "800", fontSize: 13.5 }}>Mi ubicación</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
-        <View style={{ padding: 16, gap: 10 }}>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={usarMiUbicacion} disabled={buscando}>
-            {buscando ? <ActivityIndicator color="#187830" /> : <Text style={{ color: "#187830", fontWeight: "600" }}>📍 Usar mi ubicacion</Text>}
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830" }]} onPress={() => onConfirmar(coords)}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 8, backgroundColor: "#fff" }}>
+          <Text style={{ textAlign: "center", fontSize: 12, color: "#8A8A8A", marginBottom: 8 }}>
+            Toca el mapa o arrastra el pin al punto exacto
+          </Text>
+          <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", shadowColor: "#187830" }]} onPress={() => onConfirmar(coords)}>
             <Text style={styles.buttonText}>Confirmar este punto</Text>
           </TouchableOpacity>
         </View>
