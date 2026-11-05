@@ -6528,7 +6528,52 @@ function AdminCarrerasScreen({ navigation }) {
       .catch(() => setUsuariosHallados([]));
   };
 
+  // soporte "olvide mi contraseña": clave temporal de 6 numeros + enviarla por WhatsApp
+  const nuevaClaveUsuario = (u) => {
+    confirmar("Nueva contraseña", `Se le pondrá a ${u.nombre} una contraseña temporal de 6 números, se reactiva la cuenta y se le quita el bloqueo por intentos. Su contraseña anterior deja de servir.`, () => {
+      adminFetch(`${API}/admin/usuarios/${u.id}/clave`, { method: "POST" })
+        .then(async r => {
+          const d = await r.json().catch(() => null);
+          if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+          buscarUsuarios(); cargar();
+          const tel = String(d.telefono || "").replace(/\D/g, "").slice(-10);
+          const msg = `Hola ${String(d.nombre || "").split(" ")[0]} 👋 Soy de soporte Tukán. Tu contraseña temporal es: ${d.clave_temporal}\nEntra con tu número ${tel} y esa clave. Luego cámbiala en Configuración → Cambiar contraseña.`;
+          elegir("Contraseña temporal", `${d.nombre}\nTeléfono: ${tel}\nClave: ${d.clave_temporal}`, [
+            { texto: "Enviar por WhatsApp", alElegir: () => Linking.openURL(`https://wa.me/57${tel}?text=${encodeURIComponent(msg)}`).catch(() => {}) },
+            { texto: "Listo", alElegir: () => {} },
+          ]);
+        })
+        .catch(() => avisar("Error", "No hay conexión."));
+    }, "Generar clave");
+  };
+
+  // de raiz: borra sus datos y LIBERA el numero para que se registre otra vez
+  const eliminarDeRaiz = (u) => {
+    confirmar("Eliminar de raíz", `Se borran los datos de ${u.nombre} y su número ${u.telefono} queda LIBRE para registrarse de nuevo. Sus carreras pasadas quedan anónimas para las estadísticas. No se puede deshacer.`, () => {
+      adminFetch(`${API}/admin/usuarios/${u.id}/raiz`, { method: "DELETE" })
+        .then(async r => {
+          const d = await r.json().catch(() => null);
+          if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+          buscarUsuarios(); cargar();
+          avisar("Eliminado de raíz", `${d.nombre} se eliminó. El número ${d.telefono_liberado} ya puede registrarse de nuevo.`);
+        })
+        .catch(() => avisar("Error", "No hay conexión."));
+    }, "Sí, eliminar de raíz");
+  };
+
   const eliminarUsuario = (u) => {
+    const tieneHist = ((u.carreras_cliente || 0) + (u.carreras_conductor || 0)) > 0;
+    if (tieneHist) {
+      elegir("Eliminar usuario", `${u.nombre} tiene historial de carreras. ¿Qué quieres hacer?\n\n• Bloquear: no puede entrar; lo puedes reactivar después.\n• De raíz: se borran sus datos y su número queda libre para registrarse otra vez.`, [
+        { texto: "Bloquear", alElegir: () => bloquearUsuario(u) },
+        { texto: "Eliminar de raíz", alElegir: () => eliminarDeRaiz(u) },
+      ]);
+      return;
+    }
+    bloquearUsuario(u);
+  };
+
+  const bloquearUsuario = (u) => {
     const tieneHist = ((u.carreras_cliente || 0) + (u.carreras_conductor || 0)) > 0;
     const msg = tieneHist
       ? `${u.nombre} tiene historial de carreras. Se BLOQUEARÁ (no podrá entrar ni trabajar), pero se conserva su historial para las estadísticas. Podrás reactivarlo después.`
@@ -6678,6 +6723,16 @@ function AdminCarrerasScreen({ navigation }) {
         {u.activas > 0 && (
           <TouchableOpacity onPress={() => liberarUsuario(u.telefono)}>
             <Text style={{ color: "#B85C00", fontWeight: "700", fontSize: 12 }}>🔓 Liberar carreras</Text>
+          </TouchableOpacity>
+        )}
+        {u.rol !== "admin" && !String(u.telefono || "").startsWith("ELIMINADO-") && (
+          <TouchableOpacity onPress={() => nuevaClaveUsuario(u)}>
+            <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 12 }}>🔑 Nueva contraseña</Text>
+          </TouchableOpacity>
+        )}
+        {u.activo === "no" && u.rol !== "admin" && !String(u.telefono || "").startsWith("ELIMINADO-") && (
+          <TouchableOpacity onPress={() => eliminarDeRaiz(u)}>
+            <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 12 }}>💥 Eliminar de raíz</Text>
           </TouchableOpacity>
         )}
         {u.activo === "no" ? (
@@ -7254,6 +7309,51 @@ const METODOS_PAGO = [
   { key: "breb", label: "Llave Bre-B", icon: "🔑", cuenta: true, ph: "Tu llave Bre-B" },
 ];
 
+/** Cambiar contraseña (por ejemplo la temporal que dio soporte). */
+function CambiarClave({ usuario }) {
+  const [abierto, setAbierto] = useState(false);
+  const [actual, setActual] = useState("");
+  const [nueva, setNueva] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const guardar = () => {
+    if (nueva.trim().length < 6) { avisar("Muy corta", "La nueva contraseña debe tener al menos 6 caracteres."); return; }
+    setEnviando(true);
+    userFetch(`${API}/usuarios/${usuario.id}/clave?actual=${encodeURIComponent(actual)}&nueva=${encodeURIComponent(nueva.trim())}`, { method: "PUT" })
+      .then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { avisar("No se pudo", (d && d.detail) || "Intenta de nuevo."); return; }
+        setAbierto(false); setActual(""); setNueva("");
+        avisar("Listo", "Tu contraseña quedó cambiada.");
+      })
+      .catch(() => avisar("Error", "No hay conexión."))
+      .finally(() => setEnviando(false));
+  };
+  if (!abierto) {
+    return (
+      <TouchableOpacity onPress={() => setAbierto(true)}
+        style={{ marginTop: 14, alignSelf: "flex-start", backgroundColor: "#EEF3FB", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 16 }}>
+        <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 13 }}>🔑 Cambiar contraseña</Text>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <View style={{ marginTop: 14, backgroundColor: "#F4F5F1", borderRadius: 12, padding: 12 }}>
+      <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Contraseña actual</Text>
+      <TextInput value={actual} onChangeText={setActual} secureTextEntry placeholder="La que usas hoy (o la temporal)" style={[styles.input, { marginBottom: 10, backgroundColor: "#fff" }]} />
+      <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Nueva contraseña</Text>
+      <TextInput value={nueva} onChangeText={setNueva} secureTextEntry placeholder="Mínimo 6 caracteres" style={[styles.input, { marginBottom: 10, backgroundColor: "#fff" }]} />
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <TouchableOpacity onPress={guardar} disabled={enviando} style={{ flex: 1, backgroundColor: "#187830", borderRadius: 10, paddingVertical: 11, alignItems: "center" }}>
+          {enviando ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800" }}>Guardar</Text>}
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => { setAbierto(false); setActual(""); setNueva(""); }} style={{ paddingVertical: 11, paddingHorizontal: 14 }}>
+          <Text style={{ color: "#8A8A8A", fontWeight: "700" }}>Cancelar</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 function ConfiguracionScreen({ navigation, route }) {
   const { usuario } = route.params;
   const esConductor = usuario.rol === "conductor";
@@ -7481,6 +7581,7 @@ function ConfiguracionScreen({ navigation, route }) {
               </Text>
             </View>
           )}
+          <CambiarClave usuario={usuario} />
           <TouchableOpacity onPress={() => confirmar("Cerrar sesión", "¿Seguro que quieres salir de tu cuenta?", async () => { await borrarSesion(); navigation.reset({ index: 0, routes: [{ name: "Login" }] }); }, "Cerrar sesión")}
             style={{ marginTop: 14, alignSelf: "flex-start", backgroundColor: "#FDECEA", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 16 }}>
             <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>🚪 Cerrar sesión</Text>

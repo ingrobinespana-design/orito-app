@@ -1312,6 +1312,7 @@ def reactivar_usuario(usuario_id: int, db: Session = Depends(get_db), admin: Usu
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     u.activo = "si"
     db.commit()
+    limpiar_limite(("login", u.telefono))
     return {"ok": True, "nombre": u.nombre}
 
 @app.delete("/usuarios/{usuario_id}")
@@ -1346,26 +1347,105 @@ def eliminar_mi_cuenta(usuario_id: int, db: Session = Depends(get_db),
         db.query(Expreso).filter((Expreso.cliente_id == u.id) | (Expreso.conductor_id == u.id)).count() > 0
     )
     if tiene_historial:
-        u.nombre = "Cuenta eliminada"
-        u.telefono = f"ELIMINADO-{u.id}"      # unico, ya no es un telefono real
-        u.password = pwd_context.hash(secrets.token_urlsafe(24))   # clave inservible
-        u.token = None
-        u.push_token = None
-        u.placa = None
-        u.vehiculo = None
-        u.veh_color = None
-        u.veh_modelo = None
-        for campo in ("foto_conductor", "foto_vehiculo", "foto_tarjeta", "foto_licencia", "foto_cedula", "foto_soat", "foto_perfil"):
-            if hasattr(u, campo):
-                setattr(u, campo, None)
-        u.activo = "no"
-        u.disponible = "no"
+        _anonimizar_usuario(u)
         modo = "anonimizado"
     else:
         db.delete(u)
         modo = "eliminado"
     db.commit()
     return {"ok": True, "modo": modo}
+
+def _anonimizar_usuario(u: Usuario):
+    """Borra los datos personales y LIBERA el telefono (se puede volver a registrar).
+    El registro anonimo queda solo para las estadisticas de carreras."""
+    u.nombre = "Cuenta eliminada"
+    u.telefono = f"ELIMINADO-{u.id}"      # unico, ya no es un telefono real
+    u.password = pwd_context.hash(secrets.token_urlsafe(24))   # clave inservible
+    u.token = None
+    u.push_token = None
+    u.placa = None
+    u.vehiculo = None
+    u.veh_color = None
+    u.veh_modelo = None
+    for campo in ("foto_conductor", "foto_vehiculo", "foto_tarjeta", "foto_licencia", "foto_cedula", "foto_soat", "foto_perfil"):
+        if hasattr(u, campo):
+            setattr(u, campo, None)
+    u.activo = "no"
+    u.disponible = "no"
+
+def _cancelar_en_curso(u: Usuario, db: Session):
+    db.query(Carrera).filter(
+        ((Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)),
+        Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])
+    ).update({"estado": "cancelada"}, synchronize_session=False)
+    db.query(Expreso).filter(
+        ((Expreso.cliente_id == u.id) | (Expreso.conductor_id == u.id)),
+        Expreso.estado.in_(["buscando", "aceptado", "en_camino"])
+    ).update({"estado": "cancelado"}, synchronize_session=False)
+
+@app.delete("/admin/usuarios/{usuario_id}/raiz")
+def eliminar_usuario_de_raiz(usuario_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Soporte: elimina a la persona DE RAIZ. Sin historial se borra; con historial
+    se anonimiza (igual que cuando el usuario borra su cuenta): sus datos se van y
+    su NUMERO QUEDA LIBRE para registrarse de nuevo. Nunca a un admin."""
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.rol == "admin":
+        raise HTTPException(status_code=400, detail="No se puede eliminar una cuenta de administrador")
+    nombre, tel = u.nombre, u.telefono
+    _cancelar_en_curso(u, db)
+    try:
+        db.query(LugarGuardado).filter(LugarGuardado.usuario_id == u.id).delete(synchronize_session=False)
+    except Exception:
+        pass
+    tiene_historial = (
+        db.query(Carrera).filter((Carrera.cliente_id == u.id) | (Carrera.conductor_id == u.id)).count() > 0 or
+        db.query(Expreso).filter((Expreso.cliente_id == u.id) | (Expreso.conductor_id == u.id)).count() > 0)
+    if tiene_historial:
+        _anonimizar_usuario(u)
+        modo = "anonimizado"
+    else:
+        db.delete(u)
+        modo = "eliminado"
+    db.commit()
+    limpiar_limite(("login", tel))
+    return {"ok": True, "modo": modo, "nombre": nombre, "telefono_liberado": tel}
+
+@app.post("/admin/usuarios/{usuario_id}/clave")
+def restablecer_clave(usuario_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Soporte "olvide mi contraseña": le pone una clave TEMPORAL de 6 numeros,
+    reactiva la cuenta y le quita el bloqueo por intentos. El admin se la manda por
+    WhatsApp; la persona entra y la cambia en Configuracion."""
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.rol == "admin":
+        raise HTTPException(status_code=400, detail="La clave del administrador no se cambia desde aqui")
+    if (u.telefono or "").startswith("ELIMINADO-"):
+        raise HTTPException(status_code=400, detail="Esa cuenta fue eliminada: la persona debe registrarse de nuevo")
+    temporal = "".join(secrets.choice("0123456789") for _ in range(6))
+    u.password = pwd_context.hash(temporal)
+    u.activo = "si"
+    u.token = None          # cierra cualquier sesion vieja
+    db.commit()
+    limpiar_limite(("login", u.telefono))
+    return {"ok": True, "nombre": u.nombre, "telefono": u.telefono, "clave_temporal": temporal}
+
+@app.put("/usuarios/{usuario_id}/clave")
+def cambiar_mi_clave(usuario_id: int, actual: str, nueva: str, db: Session = Depends(get_db),
+                     yo: Usuario = Depends(usuario_actual)):
+    """El usuario cambia su contraseña (por ejemplo la temporal que le dio soporte)."""
+    exigir_dueño(yo, usuario_id)
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u or not pwd_context.verify(actual, u.password):
+        raise HTTPException(status_code=400, detail="La contraseña actual no es correcta")
+    nueva = (nueva or "").strip()
+    if len(nueva) < 6:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 6 caracteres")
+    u.password = pwd_context.hash(nueva)
+    db.commit()
+    return {"ok": True}
 
 @app.post("/login")
 def login(telefono: str, password: str, db: Session = Depends(get_db)):
@@ -1375,7 +1455,18 @@ def login(telefono: str, password: str, db: Session = Depends(get_db)):
     if paso_del_limite(clave, 10, 900):
         raise HTTPException(status_code=429, detail="Demasiados intentos. Espera unos minutos e intenta de nuevo.")
     usuario = db.query(Usuario).filter(Usuario.telefono == telefono).first()
-    if not usuario or not pwd_context.verify(password, usuario.password):
+    if not usuario:
+        # tolerante: con +57, espacios o guiones igual encuentra la cuenta (ultimos 10 digitos)
+        dig = "".join(ch for ch in (telefono or "") if ch.isdigit())[-10:]
+        if len(dig) == 10:
+            usuario = next((x for x in db.query(Usuario).filter(Usuario.telefono.like(f"%{dig[-4:]}")).all()
+                            if "".join(ch for ch in (x.telefono or "") if ch.isdigit())[-10:] == dig), None)
+    def _clave_ok(u):
+        if pwd_context.verify(password, u.password):
+            return True
+        # espacio de mas al final (teclado del celular): se perdona
+        return bool(password) and password.strip() != password and pwd_context.verify(password.strip(), u.password)
+    if not usuario or not _clave_ok(usuario):
         raise HTTPException(status_code=400, detail="Telefono o contraseña incorrectos")
     if usuario.activo == "no":
         raise HTTPException(status_code=403, detail="Tu cuenta está desactivada. Comunícate con el soporte.")
