@@ -6289,8 +6289,8 @@ function ConductorScreen({ navigation, route }) {
           <Text style={{ fontWeight: "900", color: "#8A5A00", fontSize: 16 }}>⏳ Aún no estás habilitado para recibir carreras</Text>
           <Text style={{ fontSize: 13.5, color: "#8A5A00", marginTop: 4, lineHeight: 19 }}>
             {docsFaltan > 0
-              ? `Te faltan ${docsFaltan} documento${docsFaltan === 1 ? "" : "s"}: sube tu foto, foto del vehículo, cédula, licencia, tarjeta de propiedad y SOAT. Cuando estén completos, revisamos y te habilitamos.`
-              : "Ya subiste tus documentos ✅ Los estamos revisando; apenas te habilitemos te empiezan a llegar las carreras."}
+              ? `Te faltan ${docsFaltan} documento${docsFaltan === 1 ? "" : "s"}: sube tu foto, foto del vehículo, cédula, licencia, tarjeta de propiedad y SOAT. Apenas subas el último, quedas habilitado automáticamente. ⚡`
+              : "Ya subiste tus documentos ✅ Revisa que tengas placa y vehículo en Configuración; si tu habilitación fue retirada, escríbele a soporte."}
           </Text>
           {docsFaltan > 0 ? <Text style={{ marginTop: 8, color: "#187830", fontWeight: "800" }}>Subir documentos en Configuración ›</Text> : null}
         </TouchableOpacity>
@@ -7557,6 +7557,8 @@ function AdminCarrerasScreen({ navigation, route }) {
   const incompletos = [...conductores.map(x => ({ ...x, rol: "conductor" })), ...clientes].filter(incompleto);
   const enLinea = conductores.filter(x => x.disponible === "si" && x.activo !== "no").length;
   const porVerificar = conductores.filter(x => x.verificado !== "si" && x.activo !== "no");
+  const autoPorRevisar = conductores.filter(x => x.verif_auto === "pendiente_revision" && x.activo !== "no");
+  const marcarRevisado = (x) => adminFetch(`${API}/conductores/${x.id}/verificar?valor=si`, { method: "PUT" }).then(cargar).catch(() => {});
   const ESTADO_CARRERA = {
     buscando: ["Buscando", "#B85C00", "#FFF3E0"], aceptada: ["Aceptada", "#1A56B8", "#EEF3FB"],
     en_sitio: ["En el punto", "#1A56B8", "#EEF3FB"], en_camino: ["En viaje", "#187830", "#EAF6EC"],
@@ -7640,7 +7642,7 @@ function AdminCarrerasScreen({ navigation, route }) {
             </View>
 
             <Text style={{ fontSize: 16, fontWeight: "800", color: "#1D1D1D", marginTop: 22, marginBottom: 10 }}>Requiere tu atención</Text>
-            {porVerificar.length === 0 && incompletos.length === 0 && enCurso.filter(x => x.estado === "buscando").length === 0 ? (
+            {porVerificar.length === 0 && autoPorRevisar.length === 0 && incompletos.length === 0 && enCurso.filter(x => x.estado === "buscando").length === 0 ? (
               <View style={{ backgroundColor: "#EAF6EC", borderRadius: 14, padding: 14 }}><Text style={{ color: "#187830", fontWeight: "700" }}>✅ Todo al día. No hay pendientes.</Text></View>
             ) : null}
             {porVerificar.length > 0 && (
@@ -7648,10 +7650,21 @@ function AdminCarrerasScreen({ navigation, route }) {
                 style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#FFF3E0", borderRadius: 14, padding: 14, marginBottom: 8 }}>
                 <Text style={{ fontSize: 22 }}>⏳</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: "800", color: "#8A5A00" }}>{porVerificar.length} conductor{porVerificar.length === 1 ? "" : "es"} por verificar</Text>
-                  <Text style={{ fontSize: 12.5, color: "#8A5A00" }}>Revisa sus documentos y habilítalos</Text>
+                  <Text style={{ fontWeight: "800", color: "#8A5A00" }}>{porVerificar.length} conductor{porVerificar.length === 1 ? "" : "es"} sin habilitar</Text>
+                  <Text style={{ fontSize: 12.5, color: "#8A5A00" }}>Les faltan documentos (se habilitan solos al completarlos)</Text>
                 </View>
                 <Text style={{ color: "#8A5A00", fontSize: 20 }}>›</Text>
+              </TouchableOpacity>
+            )}
+            {autoPorRevisar.length > 0 && (
+              <TouchableOpacity onPress={() => { setFiltroCond("auto"); setPestana("conductores"); }}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#EEF3FB", borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <Text style={{ fontSize: 22 }}>🤖</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: "#1A4C9B" }}>{autoPorRevisar.length} habilitado{autoPorRevisar.length === 1 ? "" : "s"} automáticamente</Text>
+                  <Text style={{ fontSize: 12.5, color: "#1A4C9B" }}>Ya reciben carreras. Échales un ojo a sus documentos cuando puedas</Text>
+                </View>
+                <Text style={{ color: "#1A4C9B", fontSize: 20 }}>›</Text>
               </TouchableOpacity>
             )}
             {incompletos.length > 0 && (
@@ -7797,16 +7810,17 @@ function AdminCarrerasScreen({ navigation, route }) {
             .filter(x => filtroCond === "todos" ? x.activo !== "no"
               : filtroCond === "revisar" ? (x.verificado !== "si" && x.activo !== "no")
               : filtroCond === "verificados" ? (x.verificado === "si" && x.activo !== "no")
+              : filtroCond === "auto" ? (x.verif_auto === "pendiente_revision" && x.activo !== "no")
               : filtroCond === "fundadores" ? x.fundador === "si"
               : x.activo === "no")
             .filter(x => !q || (x.nombre || "").toLowerCase().includes(q) || (x.telefono || "").includes(q.replace(/\D/g, "") || "~") || (x.placa || "").toLowerCase().includes(q))
             .sort((a, b) => (b.disponible === "si") - (a.disponible === "si") || (a.nombre || "").localeCompare(b.nombre || ""));
-          const n = (f) => conductores.filter(x => !eliminada(x)).filter(x => f === "todos" ? x.activo !== "no" : f === "revisar" ? (x.verificado !== "si" && x.activo !== "no") : f === "verificados" ? (x.verificado === "si" && x.activo !== "no") : f === "fundadores" ? x.fundador === "si" : x.activo === "no").length;
+          const n = (f) => conductores.filter(x => !eliminada(x)).filter(x => f === "todos" ? x.activo !== "no" : f === "revisar" ? (x.verificado !== "si" && x.activo !== "no") : f === "verificados" ? (x.verificado === "si" && x.activo !== "no") : f === "auto" ? (x.verif_auto === "pendiente_revision" && x.activo !== "no") : f === "fundadores" ? x.fundador === "si" : x.activo === "no").length;
           return (
             <>
               <TextInput value={buscaCond} onChangeText={setBuscaCond} placeholder="Buscar por nombre, teléfono o placa" style={[styles.input, { backgroundColor: "#fff" }]} />
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 12 }}>
-                {[["todos", "Todos"], ["revisar", "⏳ Por verificar"], ["verificados", "✅ Verificados"], ["fundadores", "🏅 Fundadores"], ["bloqueados", "⛔ Bloqueados"]].map(([k, lbl]) => (
+                {[["todos", "Todos"], ["revisar", "⏳ Sin habilitar"], ["auto", "🤖 Por revisar"], ["verificados", "✅ Habilitados"], ["fundadores", "🏅 Fundadores"], ["bloqueados", "⛔ Bloqueados"]].map(([k, lbl]) => (
                   <TouchableOpacity key={k} onPress={() => setFiltroCond(k)} style={[styles.chip, filtroCond === k && styles.chipOn]}>
                     <Text style={[styles.chipTxt, filtroCond === k && styles.chipTxtOn]}>{lbl} ({n(k)})</Text>
                   </TouchableOpacity>
@@ -7817,7 +7831,7 @@ function AdminCarrerasScreen({ navigation, route }) {
                 `${nombreCiudad(x.municipio || "—")} · ${vehIcono(x.tipo_vehiculo)} ${x.placa || "sin placa"}${x.carreras_conductor ? ` · ${x.carreras_conductor} viajes` : ""}`,
                 <>
                   {x.disponible === "si" && x.activo !== "no" ? chipEstado("● En línea", "#187830", "#EAF6EC") : null}
-                  {x.activo === "no" ? chipEstado("Bloqueado", "#C0392B", "#FBECEC") : x.verificado === "si" ? chipEstado("✅ Verificado", "#187830", "#EAF6EC") : chipEstado("⏳ Revisar", "#B85C00", "#FFF3E0")}
+                  {x.activo === "no" ? chipEstado("Bloqueado", "#C0392B", "#FBECEC") : x.verif_auto === "pendiente_revision" ? chipEstado("🤖 Por revisar", "#1A56B8", "#EEF3FB") : x.verificado === "si" ? chipEstado("✅ Habilitado", "#187830", "#EAF6EC") : chipEstado("⏳ Sin habilitar", "#B85C00", "#FFF3E0")}
                 </>,
                 () => abrirFicha("conductor", x)))}
             </>
@@ -8243,6 +8257,20 @@ function AdminCarrerasScreen({ navigation, route }) {
                   ) : null}
                 </View>
 
+                {ficha.tipo === "conductor" && x.verif_auto === "pendiente_revision" && (
+                  <View style={{ backgroundColor: "#EEF3FB", borderRadius: 14, padding: 14, marginBottom: 12 }}>
+                    <Text style={{ fontWeight: "800", color: "#1A4C9B" }}>🤖 Habilitado automáticamente</Text>
+                    <Text style={{ fontSize: 12.5, color: "#1A4C9B", marginTop: 2 }}>Subió todos sus documentos y ya recibe carreras. Revisa que las fotos sean reales y legibles.</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                      <TouchableOpacity onPress={() => marcarRevisado(x)} style={{ flex: 1, backgroundColor: "#187830", borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
+                        <Text style={{ color: "#fff", fontWeight: "800" }}>✓ Revisado, todo bien</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => verificarConductor(x)} style={{ flex: 1, backgroundColor: "#fff", borderWidth: 1.5, borderColor: "#F3C5C0", borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
+                        <Text style={{ color: "#C0392B", fontWeight: "800" }}>✗ Quitar habilitación</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
                 {ficha.tipo === "conductor" && (
                   <View style={[styles.card, { marginBottom: 12 }]}>
                     <Text style={styles.seccionTitulo}>Documentos</Text>

@@ -4259,8 +4259,49 @@ def mis_referidos(usuario_id: int, db: Session = Depends(get_db)):
             "premio_listo": con_carrera >= META_REFERIDOS,
             "nombres": [x.nombre for x in invitados[:20]]}
 
+DOCS_CONDUCTOR = ("conductor", "vehiculo", "cedula", "licencia", "tarjeta", "soat")
+
+def _auto_habilitar(u: Usuario, db: Session, tareas: BackgroundTasks = None):
+    """Habilitacion AUTOMATICA: si el conductor ya tiene todo en regla (6 documentos,
+    placa, vehiculo y nombre valido) queda habilitado al instante y el admin lo ve
+    como 'por revisar'. Si el admin lo rechazo, no se re-habilita solo."""
+    if u.rol != "conductor" or u.activo == "no" or (u.verificado or "no") == "si" or u.verif_auto == "rechazado":
+        return False
+    if not all(getattr(u, f"foto_{t}", None) for t in DOCS_CONDUCTOR):
+        return False
+    if not (u.placa and u.vehiculo):
+        return False
+    n = (u.nombre or "").strip()
+    if sum(1 for ch in n if ch.isalpha()) < 3 or "@" in n:
+        return False
+    u.verificado = "si"
+    u.verif_auto = "pendiente_revision"
+    db.commit()
+    if u.push_token:
+        msg = [push.mensaje(u.push_token, "✅ ¡Ya estás habilitado en Tukán!",
+                            "Tus documentos están completos. Ponte disponible y te empiezan a llegar las carreras.",
+                            {"tipo": "habilitado"})]
+        if tareas is not None:
+            tareas.add_task(lambda m=msg: limpiar_tokens_muertos(push.enviar(m)))
+        else:
+            limpiar_tokens_muertos(push.enviar(msg))
+    return True
+
+@app.on_event("startup")
+def _revisar_conductores_al_arrancar():
+    """Al arrancar: habilita solos a los conductores que YA tenian todo en regla."""
+    db = SessionLocal()
+    try:
+        for u in db.query(Usuario).filter(Usuario.rol == "conductor").all():
+            try:
+                _auto_habilitar(u, db)
+            except Exception:
+                db.rollback()
+    finally:
+        db.close()
+
 @app.post("/usuarios/{usuario_id}/foto")
-async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = File(...),
+async def subir_foto_conductor(usuario_id: int, tipo: str, tareas: BackgroundTasks, file: UploadFile = File(...),
                                db: Session = Depends(get_db),
                                actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, usuario_id)
@@ -4276,8 +4317,11 @@ async def subir_foto_conductor(usuario_id: int, tipo: str, file: UploadFile = Fi
         public_id=f"{tipo}_{usuario_id}", overwrite=True)
     url = resultado["secure_url"]
     setattr(u, f"foto_{tipo}", url)
+    if tipo in DOCS_CONDUCTOR and u.verif_auto == "rechazado":
+        u.verif_auto = None   # subio un documento nuevo: se vuelve a evaluar
     db.commit()
-    return {"url": url}
+    habilitado = _auto_habilitar(u, db, tareas)
+    return {"url": url, "habilitado": habilitado or (u.verificado == "si")}
 
 @app.put("/usuarios/{usuario_id}/vehiculo")
 def guardar_vehiculo(usuario_id: int, placa: str = None, vehiculo: str = None,
@@ -4294,7 +4338,10 @@ def guardar_vehiculo(usuario_id: int, placa: str = None, vehiculo: str = None,
     if veh_color is not None: u.veh_color = (veh_color.strip() or None)
     if veh_modelo is not None: u.veh_modelo = (veh_modelo.strip() or None)
     u.verificado = "no"   # cambio los datos: hay que re-verificar
+    if u.verif_auto != "rechazado":
+        u.verif_auto = None
     db.commit()
+    _auto_habilitar(u, db)   # si sigue todo en regla, se re-habilita solo (queda por revisar)
     db.refresh(u)
     return {"ok": True, "placa": u.placa, "vehiculo": u.vehiculo,
             "veh_color": u.veh_color, "veh_modelo": u.veh_modelo, "verificado": u.verificado}
@@ -4329,6 +4376,7 @@ def obtener_conductores(db: Session = Depends(get_db), admin: Usuario = Depends(
         Carrera.estado == "finalizada").group_by(Carrera.conductor_id).all())
     return [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "placa": u.placa,
              "fundador": u.fundador or "no", "activo": u.activo or "si", "calificacion": u.calificacion,
+             "verif_auto": u.verif_auto,
              "carreras_conductor": hechas.get(u.id, 0), "creado": getattr(u, "fecha_registro", None),
              "vehiculo": u.vehiculo, "disponible": u.disponible,
              "tipo_vehiculo": u.tipo_vehiculo, "municipio": u.municipio,
@@ -4349,6 +4397,7 @@ def verificar_conductor(conductor_id: int, valor: str = "si",
     if not u:
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     u.verificado = "si" if valor == "si" else "no"
+    u.verif_auto = "revisado" if valor == "si" else "rechazado"   # decision humana: manda sobre lo automatico
     db.commit()
     return {"ok": True, "verificado": u.verificado}
 
