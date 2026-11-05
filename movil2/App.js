@@ -2467,6 +2467,11 @@ function mapaSeguimientoHTML() {
   html,body,#map{height:100%;margin:0;padding:0;background:#e8e8e8}
   .veh{width:40px;height:40px;will-change:transform;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
   .em{font-size:30px;line-height:30px;text-align:center}
+  /* mismos simbolos del formulario: circulo verde = recogida, cuadro naranja = destino */
+  .mk-rec{width:22px;height:22px;border-radius:50%;background:#187830;border:4px solid #fff;box-sizing:border-box;box-shadow:0 0 0 3px rgba(24,120,48,.35),0 2px 6px rgba(0,0,0,.35)}
+  .mk-dest{width:20px;height:20px;border-radius:4px;background:#F06000;border:4px solid #fff;box-sizing:border-box;box-shadow:0 0 0 3px rgba(240,96,0,.35),0 2px 6px rgba(0,0,0,.35)}
+  .ley-rec{display:inline-block;width:10px;height:10px;border-radius:50%;background:#187830;vertical-align:middle;margin:0 2px 2px 0}
+  .ley-dest{display:inline-block;width:10px;height:10px;border-radius:2px;background:#F06000;vertical-align:middle;margin:0 2px 2px 0}
   #btns{position:absolute;top:10px;right:10px;z-index:3;display:flex;flex-direction:column;gap:8px}
   #btns button{border:none;border-radius:22px;padding:9px 13px;font-size:13px;font-weight:700;
     box-shadow:0 2px 6px rgba(0,0,0,.25);background:#fff;color:#187830}
@@ -2480,7 +2485,7 @@ function mapaSeguimientoHTML() {
   <button id="bSeguir" class="on" onclick="modoSeguir()">📍 Seguir</button>
   <button id="bRuta" onclick="modoRuta()">🗺️ Ruta</button>
 </div>
-<div id="leyenda">🚗 Tú · 📍 Recogida · 🏁 Destino</div>
+<div id="leyenda">🚗 Tú · <span class="ley-rec"></span> Recogida · <span class="ley-dest"></span> Destino</div>
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
 <script>
   // ===== COMPATIBILIDAD: celulares sin WebGL2 (gama baja / Android viejo) =====
@@ -2511,7 +2516,7 @@ function mapaSeguimientoHTML() {
     GMap.prototype.remove=function(){ this.L.remove(); };
     function Marker(o){ this.el=o.element; this.anchor=o.anchor||'center'; this.m=null; this.ll=[0,0]; }
     Marker.prototype.setLngLat=function(p){ this.ll=toLL(p); if(this.m) this.m.setLatLng(this.ll); return this; };
-    Marker.prototype.addTo=function(map){ var w=40,h=40; var ic=L.divIcon({html:this.el,className:'',iconSize:[w,h],iconAnchor:this.anchor==='bottom'?[w/2,h]:[w/2,h/2]}); this.m=L.marker(this.ll,{icon:ic,interactive:false}).addTo(map.L); return this; };
+    Marker.prototype.addTo=function(map){ var w=(this.el.className==='mk-rec'||this.el.className==='mk-dest')?22:40,h=w; var ic=L.divIcon({html:this.el,className:'',iconSize:[w,h],iconAnchor:this.anchor==='bottom'?[w/2,h]:[w/2,h/2]}); this.m=L.marker(this.ll,{icon:ic,interactive:false}).addTo(map.L); return this; };
     Marker.prototype.getLngLat=function(){ return {lng:this.ll[1],lat:this.ll[0]}; };
     Marker.prototype.setRotation=function(d){ this.el.style.transform='rotate('+d+'deg)'; return this; };
     Marker.prototype.getElement=function(){ return this.el; };
@@ -2551,6 +2556,7 @@ function mapaSeguimientoHTML() {
   function rutaURL(lo1,la1,lo2,la2){ return 'https://api.mapbox.com/directions/v5/mapbox/driving/'+lo1+','+la1+';'+lo2+','+la2+'?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}'; }
   function rumbo(a,b){ var la1=a[1]*Math.PI/180,la2=b[1]*Math.PI/180,dlo=(b[0]-a[0])*Math.PI/180; var y=Math.sin(dlo)*Math.cos(la2); var x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dlo); return (Math.atan2(y,x)*180/Math.PI+360)%360; }
   function emoji(ch){ var d=document.createElement('div'); d.className='em'; d.textContent=ch; return d; }
+  function marca(cls){ var d=document.createElement('div'); d.className=cls; return d; }
 
   function alCargar(){
     if(esperaGL) clearTimeout(esperaGL);
@@ -2632,8 +2638,8 @@ function mapaSeguimientoHTML() {
     animId=requestAnimationFrame(paso);
   }
 
-  function _recogida(la,lo){ recLat=la; recLon=lo; if(!pin){ pin=new mapboxgl.Marker({element:emoji('📍'),anchor:'bottom'}).setLngLat([lo,la]).addTo(map); } else pin.setLngLat([lo,la]); aplicarMeta(); ultimaRuta=null; dibujarContexto(); if(!carro){ map.easeTo({center:[lo,la],zoom:ZOOM}); } else if(metaRuta!=='destino'){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
-  function _destino(la,lo){ destLat=la; destLon=lo; if(!mDest){ mDest=new mapboxgl.Marker({element:emoji('🏁'),anchor:'bottom'}).setLngLat([lo,la]).addTo(map); } else mDest.setLngLat([lo,la]); aplicarMeta(); dibujarContexto(); if(!carro&&!pin){ map.easeTo({center:[lo,la],zoom:ZOOM}); } else if(metaRuta==='destino'&&carro){ ultimaRuta=null; var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
+  function _recogida(la,lo){ recLat=la; recLon=lo; if(!pin){ pin=new mapboxgl.Marker({element:marca('mk-rec'),anchor:'center'}).setLngLat([lo,la]).addTo(map); } else pin.setLngLat([lo,la]); aplicarMeta(); ultimaRuta=null; dibujarContexto(); if(!carro){ map.easeTo({center:[lo,la],zoom:ZOOM}); } else if(metaRuta!=='destino'){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
+  function _destino(la,lo){ destLat=la; destLon=lo; if(!mDest){ mDest=new mapboxgl.Marker({element:marca('mk-dest'),anchor:'center'}).setLngLat([lo,la]).addTo(map); } else mDest.setLngLat([lo,la]); aplicarMeta(); dibujarContexto(); if(!carro&&!pin){ map.easeTo({center:[lo,la],zoom:ZOOM}); } else if(metaRuta==='destino'&&carro){ ultimaRuta=null; var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
   function _conductor(la,lo){
     if(!carro){ var el=document.createElement('div'); el.className='veh'; el.innerHTML=svgActual; carro=new mapboxgl.Marker({element:el,rotationAlignment:'map'}).setLngLat([lo,la]).addTo(map); carIdx=0;
       if(primera){ if(navegacion){ seguir=true; botones(); map.easeTo({center:[lo,la],zoom:17}); } else if(dLat!=null){ seguir=false; botones(); var b=new mapboxgl.LngLatBounds([lo,la],[lo,la]); b.extend([dLon,dLat]); map.fitBounds(b,{padding:60,duration:400}); } else { map.easeTo({center:[lo,la],zoom:ZOOM}); } primera=false; }
@@ -4563,13 +4569,8 @@ function PedirCarreraScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
 
-          {/* municipio detectado o a elegir manual */}
-          {muni ? (
-            <TouchableOpacity style={[styles.muniBanner, { marginTop: 12, marginBottom: 0 }]} onPress={() => setEligiendoMuni(true)}>
-              <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700" }}>📌 Estás en {muni.nombre}</Text>
-              <Text style={{ fontSize: 12, color: "#888" }}>cambiar ›</Text>
-            </TouchableOpacity>
-          ) : (
+          {/* la ciudad la define el GPS; solo si no la detecto se pide elegirla */}
+          {muni ? null : (
             <TouchableOpacity style={[styles.muniBanner, { backgroundColor: "#FFF4E0", marginTop: 12, marginBottom: 0 }]} onPress={() => setEligiendoMuni(true)}>
               <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>¿En qué municipio estás?</Text>
               <Text style={{ fontSize: 12, color: "#8A5A00" }}>elegir ›</Text>
@@ -4608,48 +4609,7 @@ function PedirCarreraScreen({ navigation, route }) {
             </View>
           )}
 
-          {/* UNA sola nota opcional para el conductor. (En acarreos la nota es la
-              "Descripcion de la carga", que va en su propia tarjeta mas abajo, por
-              eso aqui solo aparece cuando NO es carga.) */}
-          {!esCarga(vehiculo) && (
-            <TextInput
-              ref={refNotas}
-              onFocus={() => subirCampo(refNotas)}
-              value={form.notas}
-              onChangeText={(t) => setForm({ ...form, notas: t })}
-              placeholder="Indicaciones para el conductor (opcional)"
-              style={[styles.input, { marginTop: 12, marginBottom: 0 }]}
-              multiline
-            />
-          )}
         </View>
-
-        {/* ===== VISTA PREVIA DEL RECORRIDO: aparece al tener recogida + destino ===== */}
-        {origenCoords && destinoCoords && (
-          <View style={styles.card}>
-            <Text style={styles.etiqueta}>RECORRIDO</Text>
-            <View style={{ height: 340, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
-              <MapaSeguimiento recogida={origenCoords} destino={destinoCoords} preview lleno onInfo={setRutaPrevia} />
-            </View>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#FFF6EF", borderRadius: 12, padding: 12 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Text style={{ fontSize: 22 }}>🛣️</Text>
-                <View>
-                  <Text style={{ fontSize: 10.5, color: "#B08A5A", fontWeight: "800", letterSpacing: 0.5 }}>DISTANCIA DEL VIAJE</Text>
-                  <Text style={{ fontSize: 17, fontWeight: "800", color: "#B85C00", marginTop: 1 }}>
-                    {rutaPrevia ? `~${rutaPrevia.km.toFixed(1)} km` : (estimado && estimado.distancia_km ? `~${estimado.distancia_km} km` : "Calculando…")}
-                  </Text>
-                </View>
-              </View>
-              {rutaPrevia && rutaPrevia.min ? (
-                <View style={{ alignItems: "flex-end" }}>
-                  <Text style={{ fontSize: 10.5, color: "#B08A5A", fontWeight: "800", letterSpacing: 0.5 }}>APROX.</Text>
-                  <Text style={{ fontSize: 15, fontWeight: "800", color: "#B85C00", marginTop: 1 }}>~{rutaPrevia.min} min</Text>
-                </View>
-              ) : null}
-            </View>
-          </View>
-        )}
 
         {/* 2. VEHICULO: personas (carrera) y carga (trasteo/acarreo), segun el pueblo */}
         {muni && vehiculosAqui.length > 0 && (
@@ -4692,6 +4652,47 @@ function PedirCarreraScreen({ navigation, route }) {
                 </View>
               </>
             )}
+          {/* UNA sola nota opcional para el conductor. (En acarreos la nota es la
+                "Descripcion de la carga", que va en su propia tarjeta mas abajo, por
+                eso aqui solo aparece cuando NO es carga.) */}
+            {!esCarga(vehiculo) && (
+              <TextInput
+                ref={refNotas}
+                onFocus={() => subirCampo(refNotas)}
+                value={form.notas}
+                onChangeText={(t) => setForm({ ...form, notas: t })}
+                placeholder="Indicaciones para el conductor (opcional)"
+                style={[styles.input, { marginTop: 12, marginBottom: 0 }]}
+                multiline
+              />
+            )}
+          </View>
+        )}
+
+        {/* ===== VISTA PREVIA DEL RECORRIDO: aparece al tener recogida + destino ===== */}
+        {origenCoords && destinoCoords && (
+          <View style={styles.card}>
+            <Text style={styles.etiqueta}>RECORRIDO</Text>
+            <View style={{ height: 340, borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
+              <MapaSeguimiento recogida={origenCoords} destino={destinoCoords} preview lleno onInfo={setRutaPrevia} />
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#FFF6EF", borderRadius: 12, padding: 12 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={{ fontSize: 22 }}>🛣️</Text>
+                <View>
+                  <Text style={{ fontSize: 10.5, color: "#B08A5A", fontWeight: "800", letterSpacing: 0.5 }}>DISTANCIA DEL VIAJE</Text>
+                  <Text style={{ fontSize: 17, fontWeight: "800", color: "#B85C00", marginTop: 1 }}>
+                    {rutaPrevia ? `~${rutaPrevia.km.toFixed(1)} km` : (estimado && estimado.distancia_km ? `~${estimado.distancia_km} km` : "Calculando…")}
+                  </Text>
+                </View>
+              </View>
+              {rutaPrevia && rutaPrevia.min ? (
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={{ fontSize: 10.5, color: "#B08A5A", fontWeight: "800", letterSpacing: 0.5 }}>APROX.</Text>
+                  <Text style={{ fontSize: 15, fontWeight: "800", color: "#B85C00", marginTop: 1 }}>~{rutaPrevia.min} min</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         )}
 
