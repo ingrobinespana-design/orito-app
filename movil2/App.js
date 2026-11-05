@@ -105,8 +105,8 @@ async function canalPantalla() {
   const { AndroidImportance, AndroidVisibility } = NotifeeTipos;
   if (!canalPantallaLista) {
     await notifee.createChannel({
-      id: "alerta_total", name: "Avisos a pantalla completa", importance: AndroidImportance.HIGH,
-      sound: "tono", vibration: true, vibrationPattern: [300, 500, 300, 500],
+      id: CANAL_PANTALLA, name: "Avisos a pantalla completa", importance: AndroidImportance.HIGH,
+      sound: SONIDO_PANTALLA, vibration: true, vibrationPattern: [300, 500, 300, 500],
       bypassDnd: true, visibility: AndroidVisibility.PUBLIC,
     });
     canalPantallaLista = true;
@@ -117,8 +117,8 @@ function notifPantallaCompleta(id, titulo, cuerpo) {
   return {
     id, title: titulo, body: cuerpo,
     android: {
-      channelId: "alerta_total", category: AndroidCategory.CALL, importance: AndroidImportance.HIGH,
-      visibility: AndroidVisibility.PUBLIC, sound: "tono", lightUpScreen: true, autoCancel: true,
+      channelId: CANAL_PANTALLA, category: AndroidCategory.CALL, importance: AndroidImportance.HIGH,
+      visibility: AndroidVisibility.PUBLIC, sound: SONIDO_PANTALLA, lightUpScreen: true, autoCancel: true,
       fullScreenAction: { id: "default" }, pressAction: { id: "default" }, timeoutAfter: 90000,
     },
   };
@@ -136,6 +136,13 @@ function quitarAviso(id) {
   try { if (TukanOverlay && TukanOverlay.quitarAvisos) TukanOverlay.quitarAvisos(); } catch (e) {}
 }
 // APK con receptor nativo de push (el aviso tipo llamada lo hace Android solo)
+// Tono propio "Selva": solo si el APK lo trae (los APK viejos siguen con el tono anterior;
+// el sonido de un canal de Android no se cambia, por eso los canales son nuevos)
+const TONO_SELVA = (() => { try { return !!(TukanOverlay && TukanOverlay.tonoSelva && TukanOverlay.tonoSelva()); } catch (e) { return false; } })();
+const CANAL_EXPO = TONO_SELVA ? "carreras4" : "carreras3";
+const SONIDO_EXPO = TONO_SELVA ? "tono_selva.wav" : "tono.wav";
+const CANAL_PANTALLA = TONO_SELVA ? "alerta_selva" : "alerta_total";
+const SONIDO_PANTALLA = TONO_SELVA ? "tono_selva" : "tono";
 const avisoNativo = () => { try { return !!(TukanOverlay && TukanOverlay.avisoNativo && TukanOverlay.avisoNativo()); } catch (e) { return false; } };
 
 // ===== TUKAN AL FRENTE (encima de Waze, WhatsApp...) =====
@@ -177,8 +184,8 @@ async function sonarCarreraFondo(c) {
   }
   try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
   Notifications.scheduleNotificationAsync({
-    content: { title: titulo, body: cuerpo, sound: "tono.wav" },
-    trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
+    content: { title: titulo, body: cuerpo, sound: SONIDO_EXPO },
+    trigger: Platform.OS === "android" ? { channelId: CANAL_EXPO, seconds: 1 } : null,
   }).catch(() => {});
 }
 
@@ -288,8 +295,8 @@ async function manejarPushFondo(d) {
   diagFondo("aviso", { tipo: d.tipo, ok });
   if (!ok) {
     Notifications.scheduleNotificationAsync({
-      content: { title: titulo, body: cuerpo, sound: "tono.wav" },
-      trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
+      content: { title: titulo, body: cuerpo, sound: SONIDO_EXPO },
+      trigger: Platform.OS === "android" ? { channelId: CANAL_EXPO, seconds: 1 } : null,
     }).catch(() => {});
   }
 }
@@ -600,11 +607,13 @@ async function registrarNotificaciones(usuarioId) {
       try { await Notifications.deleteNotificationChannelAsync("carreras"); } catch (e) {}
       try { await Notifications.deleteNotificationChannelAsync("carreras2"); } catch (e) {}
       // El canal define que suene fuerte y salte en pantalla.
-      await Notifications.setNotificationChannelAsync("carreras3", {
+      // con el APK del tono Selva se crea "carreras4"; "carreras3" se deja para los
+      // pushes que el servidor aun mande con el canal viejo
+      await Notifications.setNotificationChannelAsync(CANAL_EXPO, {
         name: "Carreras",
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 500, 220, 500],
-        sound: "tono.wav",   // tono propio fuerte (bundleado en el APK 1.0.2)
+        sound: SONIDO_EXPO,   // tono propio (Selva desde el APK nuevo)
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         bypassDnd: true,      // suena aunque este en "No molestar"
       });
@@ -647,7 +656,7 @@ async function registrarNotificaciones(usuarioId) {
     // "si" = este APK convierte el push en aviso a pantalla completa (el servidor
     // le manda push solo de datos); "no" = push normal
     const pantalla = (await tareaPushLista) ? "si" : "no";
-    const r = await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}&pantalla_completa=${pantalla}`, { method: "PUT" });
+    const r = await userFetch(`${API}/usuarios/${usuarioId}/push-token?token=${encodeURIComponent(token)}&pantalla_completa=${pantalla}&canal=${CANAL_EXPO}`, { method: "PUT" });
     if (!r.ok) return { ok: false, motivo: "El servidor rechazo el token (HTTP " + r.status + ").", token };
     return { ok: true, motivo: "Token guardado.", token };
   } catch (e) {
@@ -4953,8 +4962,8 @@ function ConductorScreen({ navigation, route }) {
     try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
     // ademas el tono de notificacion (si dio permiso y no esta en silencio)
     Notifications.scheduleNotificationAsync({
-      content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: "tono.wav" },
-      trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
+      content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: SONIDO_EXPO },
+      trigger: Platform.OS === "android" ? { channelId: CANAL_EXPO, seconds: 1 } : null,
     }).catch(() => {});
   };
 
@@ -7421,8 +7430,8 @@ function ConfiguracionScreen({ navigation, route }) {
     try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
     try {
       await Notifications.scheduleNotificationAsync({
-        content: { title: "🔔 Prueba de tono", body: "Así suena cuando entra una carrera.", sound: "tono.wav" },
-        trigger: Platform.OS === "android" ? { channelId: "carreras3", seconds: 1 } : null,
+        content: { title: "🔔 Prueba de tono", body: "Así suena cuando entra una carrera.", sound: SONIDO_EXPO },
+        trigger: Platform.OS === "android" ? { channelId: CANAL_EXPO, seconds: 1 } : null,
       });
       avisar("Probando…", "En 1 segundo debe sonar el tono y vibrar. Si vibra pero no suena, revisa el volumen de notificaciones o la 'Pausa de actividad'.");
     } catch (e) {

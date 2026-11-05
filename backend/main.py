@@ -2009,6 +2009,20 @@ def _candidatos_carrera(carrera, db):
         if le_sirve_la_carrera(c, carrera) and suscripcion_al_dia(c, db)
     ]
 
+def _canales_de_tokens(tokens):
+    """{token: canal} para los celulares cuya app usa un canal propio (tono Selva)."""
+    if not tokens:
+        return {}
+    db = SessionLocal()
+    try:
+        filas = db.query(Usuario.push_token, Usuario.push_canal).filter(
+            Usuario.push_token.in_(list(set(tokens))), Usuario.push_canal.isnot(None)).all()
+        return {t: c for t, c in filas if c}
+    finally:
+        db.close()
+
+push.resolver_canal = _canales_de_tokens
+
 def push_conductor(u: Usuario, titulo: str, cuerpo: str, datos: dict):
     """Si la app del conductor sabe hacer avisos a pantalla completa, se le manda un
     push SOLO DE DATOS (sin titulo): la app lo recibe aunque este bloqueada o cerrada
@@ -2197,7 +2211,7 @@ def avisar_carrera_cancelada(carrera_id: int):
     limpiar_tokens_muertos(push.enviar(mensajes))
 
 @app.put("/usuarios/{usuario_id}/push-token")
-def guardar_push_token(usuario_id: int, token: str, pantalla_completa: str = None,
+def guardar_push_token(usuario_id: int, token: str, pantalla_completa: str = None, canal: str = None,
                        db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, usuario_id)
     """La app manda esto al entrar. Si el token ya estaba en otro usuario (celular
@@ -2210,6 +2224,8 @@ def guardar_push_token(usuario_id: int, token: str, pantalla_completa: str = Non
     usuario.push_token = token
     if pantalla_completa is not None:
         usuario.push_modo = "datos" if pantalla_completa == "si" else None
+    # el APK nuevo (tono Selva) usa "carreras4"; los viejos no mandan nada -> carreras3
+    usuario.push_canal = canal if canal in ("carreras3", "carreras4") else None
     db.commit()
     return {"ok": True}
 

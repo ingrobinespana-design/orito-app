@@ -20,12 +20,25 @@ def _es_token_valido(token):
     return bool(token) and token.startswith(("ExponentPushToken[", "ExpoPushToken["))
 
 
+# main.py la conecta: dado [tokens] devuelve {token: canal} de la app de cada celular
+# (el APK del tono "Selva" usa "carreras4"; los viejos, "carreras3").
+resolver_canal = None
+
+
 def enviar(mensajes):
     """Manda un lote a Expo. Devuelve los tokens que Expo reporta como muertos
     (celular desinstalado o token vencido) para poder limpiarlos de la base."""
     mensajes = [m for m in mensajes if _es_token_valido(m.get("to"))]
     if not mensajes:
         return []
+    if resolver_canal:
+        try:
+            canales = resolver_canal([m["to"] for m in mensajes if m.get("channelId")]) or {}
+            for m in mensajes:
+                if m.get("channelId") and canales.get(m["to"]):
+                    m["channelId"] = canales[m["to"]]
+        except Exception as e:
+            log.warning("No se pudo resolver el canal: %s", e)
 
     peticion = urllib.request.Request(
         EXPO_URL,

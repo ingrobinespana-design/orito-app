@@ -1,0 +1,23 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.tukanoverlay'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.tukanoverlay"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+
+dependencies {
+  // receptor nativo de push: extiende el servicio de Expo (TukanMessagingService)
+  // expo-notifications viene PRECOMPILADO (local-maven-repo) en SDK 54: se usa su coordenada
+  compileOnly 'host.exp.exponent:expo.modules.notifications:0.32.17'
+  compileOnly 'com.google.firebase:firebase-messaging:24.0.1'
+}

@@ -90,6 +90,7 @@ class Usuario(Base):
     # "datos" = su app (APK nuevo) convierte el push en aviso a pantalla completa;
     # vacio = push normal (APKs viejos)
     push_modo = Column(String, nullable=True)
+    push_canal = Column(String, nullable=True)   # canal de Android de su app (carreras3 / carreras4)
     # foto de perfil del pasajero (la ve el conductor en la solicitud)
     foto_perfil = Column(String, nullable=True)
 
@@ -487,7 +488,7 @@ def crear_tablas():
                     "verificado VARCHAR DEFAULT 'no'",
                     "codigo_referido VARCHAR", "referido_por VARCHAR",
                     "promo_bienvenida_hasta TIMESTAMP", "promo_bienvenida_pct INTEGER",
-                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR", "foto_perfil VARCHAR"):
+                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR", "foto_perfil VARCHAR", "push_canal VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))

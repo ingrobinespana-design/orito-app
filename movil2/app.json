@@ -31,7 +31,12 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
-        "USE_FULL_SCREEN_INTENT"
+        "USE_FULL_SCREEN_INTENT",
+        "CAMERA",
+        "SYSTEM_ALERT_WINDOW"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -42,7 +47,10 @@
         "expo-notifications",
         {
           "color": "#187830",
-          "sounds": ["./assets/tono.wav"]
+          "sounds": [
+            "./assets/tono.wav",
+            "./assets/tono_selva.wav"
+          ]
         }
       ],
       [
@@ -52,7 +60,16 @@
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Tukán usa la cámara para tomar fotos de la carga y de la entrega en los acarreos.",
+          "photosPermission": "Tukán usa tus fotos para mostrar la carga y tus documentos."
+        }
+      ],
+      "./plugins/pantallaCompleta",
+      "./plugins/fuentes"
     ],
     "runtimeVersion": {
       "policy": "appVersion"
