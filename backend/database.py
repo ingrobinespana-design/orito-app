@@ -577,6 +577,19 @@ def crear_tablas():
                 if faltan:
                     m.vehiculos = ",".join(actuales + faltan)
             db.add(Config(clave="migracion_carga_v1", valor="si"))
+        # zonas del sur (2026-11-05): Popayan (Cauca) y Neiva (Huila). UNA sola vez
+        # (marcada con config): si despues el admin las apaga o las cambia, no se tocan.
+        # Sin $/km: el precio lo ofrece el pasajero hasta que el dueño ponga tarifa.
+        if not db.query(Config).filter(Config.clave == "ciudades_sur_v1").first():
+            ya = {(m.nombre or "").strip().lower() for m in db.query(Municipio).all()}
+            for nom, depto, lat, lon in (("Popayán", "Cauca", 2.4448, -76.6147),
+                                         ("Neiva", "Huila", 2.9273, -75.2819)):
+                if nom.lower() not in ya and nom.lower().replace("á", "a") not in ya:
+                    db.add(Municipio(nombre=nom, departamento=depto, activo="si", usa_gps="si",
+                                     vehiculos=",".join(["carro", "moto"] + list(VEHICULOS_CARGA)),
+                                     tarifa_base=0, valor_km=0, tarifa_minima=0,
+                                     centro_lat=lat, centro_lon=lon))
+            db.add(Config(clave="ciudades_sur_v1", valor="si"))
         # tarifas por municipio+vehiculo que falten
         existentes_t = {(t.municipio, t.vehiculo) for t in db.query(Tarifa).all()}
         nuevas_t = [Tarifa(municipio=mu, vehiculo=ve, base=b, valor_km=vk, minima=mi)
