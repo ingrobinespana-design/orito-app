@@ -2512,8 +2512,6 @@ function ElegirServicioScreen({ navigation, route }) {
           ))}
         </View>
 
-        <EventosCiudad municipio={usuario.municipio}
-          onIr={(e) => navigation.navigate("PedirCarrera", { usuario, modo: "carrera", destinoEvento: { nombre: e.lugar, lat: e.lat, lon: e.lon } })} />
 
         {/* por que Tukan: corto, da confianza */}
         <View style={{ backgroundColor: "#fff", borderRadius: 18, padding: 16, marginTop: 16, gap: 12 }}>
@@ -2531,6 +2529,8 @@ function ElegirServicioScreen({ navigation, route }) {
             </View>
           ))}
         </View>
+        <EventosCiudad municipio={usuario.municipio}
+          onIr={(e) => navigation.navigate("PedirCarrera", { usuario, modo: "carrera", destinoEvento: { nombre: e.lugar, lat: e.lat, lon: e.lon } })} />
       </ScrollView>
       <TouchableOpacity style={{ padding: 14, paddingBottom: 14 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>
         <Text style={{ color: "#999", fontSize: 13 }}>Salir</Text>
