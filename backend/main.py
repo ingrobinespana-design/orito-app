@@ -302,7 +302,7 @@ def tarifa_por_vehiculo(clave: str, municipio: str, vehiculo: str, valor_km: int
 @app.put("/promo")
 def configurar_promo(clave: str, activa: str = None, pct: int = None,
                      ciudad: str = None, texto: str = None, dias: int = None,
-                     db: Session = Depends(get_db)):
+                     hasta: str = None, db: Session = Depends(get_db)):
     """Prende/apaga la promo de lanzamiento (SOLO carreras de pasajeros) con la
     clave RESPALDO_CLAVE. activa: 'si'/'no'; pct: % de descuento (0-99);
     ciudad: nombre exacto o 'todas'; texto: etiqueta que ve el cliente;
@@ -330,6 +330,13 @@ def configurar_promo(clave: str, activa: str = None, pct: int = None,
         _set("promo_texto", texto)
     if dias is not None:
         _set("promo_hasta", "" if dias <= 0 else (datetime.now() + timedelta(days=dias)).isoformat())
+    if hasta:
+        # fecha exacta (AAAA-MM-DD): vale hasta las 11:59 p. m. de ese dia en Colombia
+        try:
+            fin = datetime.fromisoformat(hasta[:10]) + timedelta(hours=23, minutes=59, seconds=59) + timedelta(hours=5)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="hasta: usa AAAA-MM-DD")
+        _set("promo_hasta", fin.isoformat())
     db.commit()
     return {"ok": True,
             "promo_activa": leer_config("promo_activa", db, "no"),
@@ -965,7 +972,16 @@ def promo_de(municipio: str, db: Session):
         ciudad = (leer_config("promo_ciudad", db, "") or "").strip().lower()
         if ciudad and ciudad not in ("todas", "todos") and ciudad != (municipio or "").strip().lower():
             return apagada
-        return {"activa": True, "pct": pct, "texto": leer_config("promo_texto", db, "")}
+        hasta_txt = ""
+        if hasta:
+            try:
+                f = datetime.fromisoformat(hasta) - timedelta(hours=5)   # a hora de Colombia
+                meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+                         "septiembre", "octubre", "noviembre", "diciembre"]
+                hasta_txt = f"{f.day} de {meses[f.month - 1]}"
+            except Exception:
+                pass
+        return {"activa": True, "pct": pct, "texto": leer_config("promo_texto", db, ""), "hasta": hasta_txt}
     except Exception:
         return apagada
 
