@@ -2838,8 +2838,9 @@ def le_sirve_la_carrera(conductor: Usuario, carrera: Carrera, con_radio: bool = 
         edad = (ahora - carrera.fecha).total_seconds() if carrera.fecha else 1e9
         if edad < EXCLUSIVO_ESPERA_SEG:
             km = km_conductor_a_recogida(conductor, carrera, ahora)
-            # sin GPS reciente tampoco (antes le aparecia tarde, a los minutos)
-            if km is None or km > radio:
+            # solo se le oculta si SABEMOS que esta lejos (GPS reciente). Sin GPS reciente
+            # (app en segundo plano) se le muestra de una: estaba a 244 m y le llegaba al minuto
+            if km is not None and km > radio:
                 return False
     return True
 
