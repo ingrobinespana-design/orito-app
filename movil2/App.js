@@ -7004,6 +7004,12 @@ function AdminCarrerasScreen({ navigation, route }) {
   const [fichaUser, setFichaUser] = useState(null);          // registro completo (para las acciones)
   const [verSoporte, setVerSoporte] = useState(false);
   const [verIncompletos, setVerIncompletos] = useState(false);
+  const [tecladoAbierto, setTecladoAbierto] = useState(false);
+  useEffect(() => {
+    const a = Keyboard.addListener("keyboardDidShow", () => setTecladoAbierto(true));
+    const b = Keyboard.addListener("keyboardDidHide", () => setTecladoAbierto(false));
+    return () => { a.remove(); b.remove(); };
+  }, []);
   const [telLiberar, setTelLiberar] = useState("");   // desbloquear a un usuario atascado
   const [municipios, setMunicipios] = useState([]);
   const [demanda, setDemanda] = useState({ ciudades: [], departamentos: [] });
@@ -7390,7 +7396,9 @@ function AdminCarrerasScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
+      {/* el teclado empuja el contenido (antes tapaba el campo que se escribia) */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
         {/* ===================== INICIO (tablero) ===================== */}
         {pestana === "inicio" && (
           <>
@@ -7923,9 +7931,10 @@ function AdminCarrerasScreen({ navigation, route }) {
           </View>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
 
-      {/* menu inferior fijo */}
-      <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#E6E8E2", paddingTop: 8, paddingBottom: 18 }}>
+      {/* menu inferior fijo (se oculta mientras el teclado esta abierto) */}
+      {!tecladoAbierto && <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#E6E8E2", paddingTop: 8, paddingBottom: 18 }}>
         {[["inicio", "🏠", "Inicio"], ["conductores", "🚕", "Conductores"], ["usuarios", "👥", "Pasajeros"], ["carreras", "🛣️", "Carreras"], ["mas", "☰", "Más"]].map(([k, ic, lbl]) => {
           const on = k === "mas" ? enMas : pestana === k;
           return (
@@ -7940,7 +7949,7 @@ function AdminCarrerasScreen({ navigation, route }) {
             </TouchableOpacity>
           );
         })}
-      </View>
+      </View>}
 
       {/* FICHA de conductor / pasajero */}
       <Modal visible={!!ficha} animationType="slide" onRequestClose={() => setFicha(null)}>
