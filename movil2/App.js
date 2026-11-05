@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, forwardRef } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, Text as RNText, TextInput as RNTextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Image, Alert, Platform, Modal, LayoutAnimation, UIManager, Linking, Animated, Vibration, KeyboardAvoidingView, findNodeHandle, Share, Dimensions, AppState, NativeModules, Keyboard } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -61,8 +61,23 @@ const pantallaDe = (rol) => rol === "admin" ? "Admin" : rol === "domiciliario" ?
 const adminFetch = (url, opciones = {}) =>
   fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-Admin-Token": llaveAdmin || "" } });
 // para acciones sobre lo propio: manda la identidad del usuario
+const navRef = createNavigationContainerRef();
+let avisoSesionDado = false;
 const userFetch = (url, opciones = {}) =>
-  fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-User-Token": llaveUsuario || "" } });
+  fetch(url, { ...opciones, headers: { ...(opciones.headers || {}), "X-User-Token": llaveUsuario || "" } })
+    .then((r) => {
+      // sesion vencida (entro con la misma cuenta en otro celular, o soporte le cambio
+      // la clave): se le explica y se le lleva a entrar de nuevo, en vez de "HTTP 401"
+      if (r.status === 401 && llaveUsuario && !avisoSesionDado && navRef.isReady()) {
+        avisoSesionDado = true;
+        borrarSesion().catch(() => {}).finally(() => {
+          avisar("Vuelve a iniciar sesión", "Tu sesión se cerró porque esta cuenta se abrió en otro celular (o se cambió la contraseña). Entra de nuevo con tu número y contraseña.");
+          try { navRef.reset({ index: 0, routes: [{ name: "Login" }] }); } catch (e) {}
+          setTimeout(() => { avisoSesionDado = false; }, 5000);
+        });
+      }
+      return r;
+    });
 
 // ===== rastreo en SEGUNDO PLANO del conductor con carrera activa =====
 // Un servicio de Android (notificacion fija "carrera en curso") sigue enviando
@@ -7918,7 +7933,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-    <NavigationContainer>
+    <NavigationContainer ref={navRef}>
       <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="ElegirServicio" component={ElegirServicioScreen} />
