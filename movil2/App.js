@@ -2085,7 +2085,7 @@ const TEMAS_PROMO = {
     textoCabecera: "#FFFFFF", suave: "#FFD6D6",
     etiqueta: "🎄 ESPECIAL DE NAVIDAD 🎄",
     titulo: "¡Feliz Navidad, {n}!", tituloSinNombre: "¡Feliz Navidad!",
-    mensaje: "Tukán te regala {pct}% de descuento en todas tus carreras{hasta}. Tú pones el precio y le pagas directo al conductor.",
+    mensaje: "Tukán te regala {pct}% de descuento en todas tus carreras{hasta}. Ves la tarifa antes de pedir y le pagas directo al conductor.",
     textoBoton: "🎁 Pedir mi carrera",
     caen: ["❄️", "❄️", "⭐", "🎁", "❄️", "✨", "🎄", "❄️"],
     adorno: "🎅", luces: ["#FF3B30", "#FFD60A", "#34C759", "#0A84FF", "#FF9F0A"],
@@ -2095,7 +2095,7 @@ const TEMAS_PROMO = {
     textoCabecera: "#FFFFFF", suave: "#FFE3CC",
     etiqueta: "🔥 LANZAMIENTO",
     titulo: "¡{n}, aprovecha!", tituloSinNombre: "¡Aprovecha!",
-    mensaje: "Todas tus carreras con {pct}% de descuento{hasta}. Tú pones el precio y le pagas directo al conductor.",
+    mensaje: "Todas tus carreras con {pct}% de descuento{hasta}. Ves la tarifa antes de pedir y le pagas directo al conductor.",
     textoBoton: "Pedir mi carrera",
     caen: ["🎉", "✨", "🔥", "🎊", "⭐"],
     adorno: "🚕", luces: null,
@@ -2293,7 +2293,7 @@ function ElegirServicioScreen({ navigation, route }) {
 
         {/* por que Tukan: corto, da confianza */}
         <View style={{ backgroundColor: "#fff", borderRadius: 18, padding: 16, marginTop: 16, gap: 12 }}>
-          {[["💵", "Tú pones el precio", "Ves una tarifa sugerida y ofreces lo que quieres pagar."],
+          {[["💵", "Precio claro", "Ves la tarifa antes de pedir. Sin sorpresas al llegar."],
             ["🛡️", "Conductores verificados", "Ves foto, placa y calificación antes de subirte."],
             ["📍", "Viaje en vivo", "Comparte tu recorrido con tu familia."]].map(([ic, t, d]) => (
             <View key={t} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
@@ -3737,7 +3737,7 @@ function PedirCarreraScreen({ navigation, route }) {
     if (!referidos) return;
     try {
       await Share.share({ message:
-        `🚕 ¡Únete a Tukán! Carreras y acarreos, tú pones el precio.\n` +
+        `🚕 ¡Únete a Tukán! Carreras y acarreos con precio claro.\n` +
         `Regístrate con mi código: ${referidos.codigo}\n` +
         `Descárgala aquí 👉 https://orito-app-production.up.railway.app/app` });
     } catch (_) {}
