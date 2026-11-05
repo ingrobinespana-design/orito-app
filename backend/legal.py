@@ -42,7 +42,8 @@ def _pagina(titulo, cuerpo):
   <div class="nav"><a href="/terminos">Términos y condiciones</a> · <a href="/privacidad">Privacidad y Habeas Data</a> · <a href="/eliminar-cuenta">Eliminar cuenta</a> · <a href="/app">Descargar</a></div>
   {cuerpo}
   <div class="pie">{MARCA} es una marca de {RESPONSABLE_LEGAL} · {LUGAR}<br>
-  Contacto: <a href="mailto:{CORREO}">{CORREO}</a> · WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a></div>
+  Contacto: <a href="mailto:{CORREO}">{CORREO}</a> · WhatsApp <a href="{WHATSAPP_LINK}">{WHATSAPP}</a><br>
+  Mapas © <a href="https://www.mapbox.com/about/maps/">Mapbox</a> · Datos de calles © <a href="https://www.openstreetmap.org/copyright">colaboradores de OpenStreetMap</a> (licencia ODbL)</div>
 </div></body></html>"""
 
 
