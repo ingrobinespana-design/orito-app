@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Backgroun
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, Expreso, OfertaExpreso, LugarGuardado, CodigoVerificacion, VEHICULOS_VALIDOS, VEHICULOS_CARGA
+from database import SessionLocal, crear_tablas, Restaurante, Pedido, Usuario, Plato, Carrera, Lugar, Config, Municipio, Tarifa, Oferta, Evento, EventoCiudad, Expreso, OfertaExpreso, LugarGuardado, CodigoVerificacion, VEHICULOS_VALIDOS, VEHICULOS_CARGA
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -2981,6 +2981,113 @@ def _datos_acarreo(c: Carrera, tipo, tamano, fotos, ayudantes, piso_o, piso_d, a
     c.ascensor_destino = asc_d if asc_d in ("si", "no") else None
     c.recibe_nombre = (recibe_nombre or "").strip()[:80] or None
     c.recibe_telefono = _digitos(recibe_tel)[:15] or None
+
+# ======================= EVENTOS DE CADA CIUDAD =======================
+# Se muestran en el inicio del pasajero ("Eventos en Cali") con "Ir en Tukan".
+# Fechas en hora de Colombia tal cual las escribe el admin ("2026-12-25 19:00").
+
+def _fecha_evento(t: str):
+    t = (t or "").strip().replace("T", " ")
+    if not t:
+        return None
+    for f in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(t[:16] if f.endswith("%M") else t[:10], f)
+        except ValueError:
+            pass
+    raise HTTPException(status_code=400, detail="Fecha invalida: usa AAAA-MM-DD HH:MM (ej. 2026-12-25 19:00)")
+
+def _evento_dict(e: EventoCiudad):
+    return {"id": e.id, "municipio": e.municipio, "titulo": e.titulo, "descripcion": e.descripcion or "",
+            "lugar": e.lugar, "lat": e.lat, "lon": e.lon,
+            "inicio": e.inicio.strftime("%Y-%m-%d %H:%M") if e.inicio else None,
+            "fin": e.fin.strftime("%Y-%m-%d %H:%M") if e.fin else None,
+            "imagen": e.imagen, "enlace": e.enlace, "activo": e.activo or "si"}
+
+def _evento_vigente(e: EventoCiudad, ahora: datetime):
+    termina = e.fin or (e.inicio.replace(hour=23, minute=59) if e.inicio else None)
+    return termina is None or termina >= ahora
+
+@app.get("/eventos")
+def eventos_de_ciudad(municipio: str, db: Session = Depends(get_db)):
+    """Eventos activos y vigentes de la ciudad, del mas proximo al mas lejano."""
+    ahora = ahora_colombia()
+    filas = db.query(EventoCiudad).filter(EventoCiudad.municipio == municipio,
+                                          EventoCiudad.activo == "si").all()
+    vigentes = [e for e in filas if _evento_vigente(e, ahora)]
+    vigentes.sort(key=lambda e: e.inicio or ahora)
+    return [_evento_dict(e) for e in vigentes[:20]]
+
+@app.get("/admin/eventos")
+def eventos_admin(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    ahora = ahora_colombia()
+    filas = db.query(EventoCiudad).order_by(EventoCiudad.inicio.desc()).limit(200).all()
+    return [{**_evento_dict(e), "vigente": _evento_vigente(e, ahora)} for e in filas]
+
+@app.post("/admin/eventos")
+def crear_evento(municipio: str, titulo: str, lugar: str, inicio: str, fin: str = None,
+                 lat: float = None, lon: float = None, descripcion: str = None,
+                 imagen: str = None, enlace: str = None,
+                 db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    if not (titulo or "").strip() or not (lugar or "").strip():
+        raise HTTPException(status_code=400, detail="Falta el nombre del evento o el lugar")
+    e = EventoCiudad(municipio=municipio.strip(), titulo=titulo.strip()[:120], lugar=lugar.strip()[:160],
+                     lat=lat, lon=lon, inicio=_fecha_evento(inicio), fin=_fecha_evento(fin) if fin else None,
+                     descripcion=(descripcion or "").strip()[:600] or None,
+                     imagen=(imagen or "").strip() or None, enlace=(enlace or "").strip() or None, activo="si")
+    if not e.inicio:
+        raise HTTPException(status_code=400, detail="Falta la fecha de inicio")
+    db.add(e)
+    db.commit()
+    db.refresh(e)
+    return _evento_dict(e)
+
+@app.put("/admin/eventos/{evento_id}")
+def editar_evento(evento_id: int, activo: str = None, titulo: str = None, lugar: str = None,
+                  inicio: str = None, fin: str = None, lat: float = None, lon: float = None,
+                  descripcion: str = None, imagen: str = None, enlace: str = None,
+                  db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    e = db.query(EventoCiudad).filter(EventoCiudad.id == evento_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+    if activo in ("si", "no"):
+        e.activo = activo
+    if titulo:
+        e.titulo = titulo.strip()[:120]
+    if lugar:
+        e.lugar = lugar.strip()[:160]
+    if inicio:
+        e.inicio = _fecha_evento(inicio)
+    if fin is not None:
+        e.fin = _fecha_evento(fin) if fin.strip() else None
+    if lat is not None and lon is not None:
+        e.lat, e.lon = lat, lon
+    if descripcion is not None:
+        e.descripcion = descripcion.strip()[:600] or None
+    if imagen is not None:
+        e.imagen = imagen.strip() or None
+    if enlace is not None:
+        e.enlace = enlace.strip() or None
+    db.commit()
+    return _evento_dict(e)
+
+@app.delete("/admin/eventos/{evento_id}")
+def borrar_evento(evento_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    e = db.query(EventoCiudad).filter(EventoCiudad.id == evento_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+    db.delete(e)
+    db.commit()
+    return {"ok": True}
+
+@app.post("/admin/eventos/imagen")
+async def subir_imagen_evento(file: UploadFile = File(...), admin: Usuario = Depends(solo_admin)):
+    contenido = await file.read()
+    if len(contenido) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="La imagen es muy pesada (máx 8 MB)")
+    r = cloudinary.uploader.upload(contenido, folder="orito-app/eventos",
+                                   public_id=f"evento_{secrets.token_hex(6)}")
+    return {"url": r["secure_url"]}
 
 @app.post("/cargas/foto")
 async def subir_foto_carga(file: UploadFile = File(...), actual: Usuario = Depends(usuario_actual)):

@@ -2074,6 +2074,190 @@ function IconoServicio({ emoji, size = 82 }) {
 
 const MOSTRAR_COMIDA = false;   // domicilios de comida: apagado hasta que el modulo este listo
 
+/* ======================= EVENTOS DE CADA CIUDAD ======================= */
+const DIAS_CORTOS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+function fechaEvento(ini, fin) {
+  // "2026-12-26 19:00" -> "sáb 26 dic · 7:00 p. m."; con fin otro dia -> "26 – 30 dic"
+  const parse = (t) => { if (!t) return null; const [d, h] = t.split(" "); const [y, m, dd] = d.split("-").map(Number); const [hh, mm] = (h || "00:00").split(":").map(Number); return { y, m, d: dd, hh, mm, dia: new Date(y, m - 1, dd).getDay() }; };
+  const a = parse(ini), b = parse(fin);
+  if (!a) return "";
+  if (b && (b.d !== a.d || b.m !== a.m)) return `${a.d} ${a.m !== b.m ? MESES_CORTOS[a.m - 1] + " " : ""}– ${b.d} ${MESES_CORTOS[b.m - 1]}`;
+  const h12 = a.hh % 12 === 0 ? 12 : a.hh % 12;
+  const hora = (a.hh || a.mm) ? ` · ${h12}:${String(a.mm).padStart(2, "0")} ${a.hh < 12 ? "a. m." : "p. m."}` : "";
+  return `${DIAS_CORTOS[a.dia]} ${a.d} ${MESES_CORTOS[a.m - 1]}${hora}`;
+}
+
+function EventosCiudad({ municipio, onIr }) {
+  const [eventos, setEventos] = useState([]);
+  const [abierto, setAbierto] = useState(null);
+  useEffect(() => {
+    if (!municipio) return;
+    fetch(`${API}/eventos?municipio=${encodeURIComponent(municipio)}`).then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setEventos(d); }).catch(() => {});
+  }, [municipio]);
+  if (!eventos.length) return null;
+  return (
+    <View style={{ marginTop: 22 }}>
+      <Text style={{ fontSize: 17, fontWeight: "800", color: "#1D1D1D", marginBottom: 12, letterSpacing: -0.2 }}>🎉 Eventos en {municipio}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 6 }}>
+        {eventos.map(e => (
+          <TouchableOpacity key={e.id} activeOpacity={0.88} onPress={() => setAbierto(e)}
+            style={{ width: 250, backgroundColor: "#fff", borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#E1E5DD" }}>
+            {e.imagen ? (
+              <Image source={{ uri: e.imagen }} style={{ width: "100%", height: 120, backgroundColor: "#EEE" }} />
+            ) : (
+              <View style={{ height: 120, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 44 }}>🎉</Text></View>
+            )}
+            <View style={{ padding: 12 }}>
+              <Text style={{ fontSize: 12, fontWeight: "800", color: "#F06000" }}>{fechaEvento(e.inicio, e.fin).toUpperCase()}</Text>
+              <Text style={{ fontSize: 15.5, fontWeight: "800", color: "#1D1D1D", marginTop: 2 }} numberOfLines={2}>{e.titulo}</Text>
+              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 2 }} numberOfLines={1}>📍 {e.lugar}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      <Modal visible={!!abierto} transparent animationType="slide" onRequestClose={() => setAbierto(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+          {abierto ? (
+            <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: "hidden", paddingBottom: 26 }}>
+              {abierto.imagen ? <Image source={{ uri: abierto.imagen }} style={{ width: "100%", height: 190, backgroundColor: "#EEE" }} /> : null}
+              <View style={{ padding: 20 }}>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: "#F06000" }}>{fechaEvento(abierto.inicio, abierto.fin).toUpperCase()}</Text>
+                <Text style={{ fontSize: 22, fontWeight: "800", color: "#1D1D1D", marginTop: 4 }}>{abierto.titulo}</Text>
+                <Text style={{ fontSize: 14, color: "#555", marginTop: 6 }}>📍 {abierto.lugar}</Text>
+                {abierto.descripcion ? <Text style={{ fontSize: 14.5, color: "#555", marginTop: 10, lineHeight: 20 }}>{abierto.descripcion}</Text> : null}
+                {abierto.lat != null ? (
+                  <TouchableOpacity activeOpacity={0.9} onPress={() => { const e = abierto; setAbierto(null); onIr(e); }}
+                    style={{ marginTop: 18, backgroundColor: "#187830", borderRadius: 14, paddingVertical: 15, alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 16.5 }}>🚕 Ir en Tukán</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {abierto.enlace ? (
+                  <TouchableOpacity onPress={() => Linking.openURL(abierto.enlace).catch(() => {})}
+                    style={{ marginTop: 10, borderWidth: 1.5, borderColor: "#BFE0C8", borderRadius: 14, paddingVertical: 13, alignItems: "center" }}>
+                    <Text style={{ color: "#187830", fontWeight: "800" }}>🎟️ Boletas y más información</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity onPress={() => setAbierto(null)} style={{ paddingTop: 14, alignItems: "center" }}>
+                  <Text style={{ color: "#8A8A8A", fontWeight: "700" }}>Cerrar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+/** Admin: crear, apagar y borrar eventos de cada ciudad. */
+function AdminEventos() {
+  const [lista, setLista] = useState([]);
+  const [munis, setMunis] = useState([]);
+  const vacio = { municipio: "Cali", titulo: "", lugar: "", lat: null, lon: null, inicio: "", fin: "", descripcion: "", imagen: "", enlace: "" };
+  const [f, setF] = useState(vacio);
+  const [sug, setSug] = useState([]);
+  const [subiendo, setSubiendo] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const cargar = () => adminFetch(`${API}/admin/eventos`).then(r => r.json()).then(d => Array.isArray(d) && setLista(d)).catch(() => {});
+  useEffect(() => {
+    cargar();
+    fetch(`${API}/municipios`).then(r => r.json()).then(d => Array.isArray(d) && setMunis(d)).catch(() => {});
+  }, []);
+  const buscarLugar = () => {
+    const m = munis.find(x => x.nombre === f.municipio);
+    const cerca = m && m.centro_lat ? `&cerca_lat=${m.centro_lat}&cerca_lon=${m.centro_lon}` : "";
+    fetch(`${API}/ubicacion/autocompletar?texto=${encodeURIComponent(f.lugar)}&municipio=${encodeURIComponent(f.municipio)}${cerca}`)
+      .then(r => r.json()).then(d => setSug(Array.isArray(d) ? d : [])).catch(() => setSug([]));
+  };
+  const subirImagen = async () => {
+    const uri = await tomarOElegirFoto();
+    if (!uri) return;
+    setSubiendo(true);
+    const fd = new FormData();
+    fd.append("file", { uri, type: "image/jpeg", name: "evento.jpg" });
+    adminFetch(`${API}/admin/eventos/imagen`, { method: "POST", body: fd }).then(r => r.json())
+      .then(d => { if (d && d.url) setF(x => ({ ...x, imagen: d.url })); else avisar("No se pudo", (d && d.detail) || "Intenta de nuevo"); })
+      .catch(() => avisar("Error", "No hay conexión.")).finally(() => setSubiendo(false));
+  };
+  const guardar = () => {
+    if (!f.titulo.trim() || !f.lugar.trim() || !f.inicio.trim()) { avisar("Faltan datos", "Nombre, lugar y fecha de inicio son obligatorios."); return; }
+    if (f.lat == null) { avisar("Ubica el lugar", "Toca 'Buscar en el mapa' y elige el lugar, para que el botón 'Ir en Tukán' lleve al sitio exacto."); return; }
+    setGuardando(true);
+    adminFetch(`${API}/admin/eventos?${qs({ municipio: f.municipio, titulo: f.titulo, lugar: f.lugar, lat: f.lat, lon: f.lon, inicio: f.inicio, fin: f.fin || null, descripcion: f.descripcion, imagen: f.imagen, enlace: f.enlace })}`, { method: "POST" })
+      .then(async r => { const d = await r.json().catch(() => null); if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; } setF({ ...vacio, municipio: f.municipio }); setSug([]); cargar(); avisar("Evento creado 🎉", "Ya aparece en el inicio de los pasajeros de esa ciudad."); })
+      .catch(() => avisar("Error", "No hay conexión.")).finally(() => setGuardando(false));
+  };
+  const accion = (e, metodo, extra) => adminFetch(`${API}/admin/eventos/${e.id}${extra || ""}`, { method: metodo }).then(cargar).catch(() => {});
+  return (
+    <View>
+      <View style={[styles.card, { marginBottom: 14 }]}>
+        <Text style={styles.seccionTitulo}>🎉 Nuevo evento</Text>
+        <Text style={estEtiqueta}>Ciudad</Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+          {munis.map(m => (
+            <TouchableOpacity key={m.nombre} style={[styles.chip, f.municipio === m.nombre && styles.chipOn]} onPress={() => setF({ ...f, municipio: m.nombre, lat: null, lon: null })}>
+              <Text style={[styles.chipTxt, f.municipio === m.nombre && styles.chipTxtOn]}>{nombreCiudad(m.nombre)}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={estEtiqueta}>Nombre del evento</Text>
+        <TextInput value={f.titulo} onChangeText={t => setF({ ...f, titulo: t })} placeholder="Ej: Feria de Cali — Salsódromo" style={styles.input} />
+        <Text style={estEtiqueta}>Lugar</Text>
+        <TextInput value={f.lugar} onChangeText={t => setF({ ...f, lugar: t, lat: null, lon: null })} placeholder="Ej: Estadio Pascual Guerrero" style={styles.input} />
+        <TouchableOpacity onPress={buscarLugar} style={{ alignSelf: "flex-start", backgroundColor: f.lat != null ? "#EAF6EC" : "#EEF3FB", borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14, marginTop: -4, marginBottom: 10 }}>
+          <Text style={{ color: f.lat != null ? "#187830" : "#1A56B8", fontWeight: "800" }}>{f.lat != null ? "✓ Lugar ubicado (toca para cambiar)" : "🔎 Buscar en el mapa"}</Text>
+        </TouchableOpacity>
+        {sug.map((x, i) => (
+          <TouchableOpacity key={i} onPress={() => { setF({ ...f, lugar: x.titulo || f.lugar, lat: x.lat, lon: x.lon }); setSug([]); }}
+            style={{ paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: "#F0F1EE" }}>
+            <Text style={{ fontWeight: "700", color: "#1D1D1D" }}>{x.titulo || x.nombre}</Text>
+            {x.detalle ? <Text style={{ fontSize: 12, color: "#888" }}>{x.detalle}</Text> : null}
+          </TouchableOpacity>
+        ))}
+        <Text style={[estEtiqueta, { marginTop: 8 }]}>Empieza (AAAA-MM-DD HH:MM)</Text>
+        <TextInput value={f.inicio} onChangeText={t => setF({ ...f, inicio: t })} placeholder="2026-12-25 19:00" style={styles.input} />
+        <Text style={estEtiqueta}>Termina (opcional, si dura varios días)</Text>
+        <TextInput value={f.fin} onChangeText={t => setF({ ...f, fin: t })} placeholder="2026-12-30 23:00" style={styles.input} />
+        <Text style={estEtiqueta}>Descripción (opcional)</Text>
+        <TextInput value={f.descripcion} onChangeText={t => setF({ ...f, descripcion: t })} placeholder="Qué es, quién toca, recomendaciones…" style={[styles.input, { minHeight: 70, textAlignVertical: "top" }]} multiline />
+        <Text style={estEtiqueta}>Enlace de boletas (opcional)</Text>
+        <TextInput value={f.enlace} onChangeText={t => setF({ ...f, enlace: t })} placeholder="https://…" autoCapitalize="none" style={styles.input} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <TouchableOpacity onPress={subirImagen} disabled={subiendo} style={{ backgroundColor: "#F1F2EF", borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 }}>
+            {subiendo ? <ActivityIndicator color="#187830" /> : <Text style={{ fontWeight: "800", color: "#333" }}>🖼️ {f.imagen ? "Cambiar imagen" : "Subir imagen"}</Text>}
+          </TouchableOpacity>
+          {f.imagen ? <Image source={{ uri: f.imagen }} style={{ width: 64, height: 40, borderRadius: 6 }} /> : null}
+        </View>
+        <TouchableOpacity onPress={guardar} disabled={guardando} style={[styles.button, { backgroundColor: "#187830" }]}>
+          {guardando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Publicar evento</Text>}
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.seccionTitulo}>Eventos ({lista.length})</Text>
+      {lista.map(e => (
+        <View key={e.id} style={[styles.card, { marginBottom: 10, opacity: e.vigente ? 1 : 0.55 }]}>
+          <Text style={{ fontWeight: "800", fontSize: 15 }}>{e.titulo}</Text>
+          <Text style={{ fontSize: 12.5, color: "#666", marginTop: 2 }}>{nombreCiudad(e.municipio)} · {fechaEvento(e.inicio, e.fin)} · 📍 {e.lugar}</Text>
+          <Text style={{ fontSize: 12, marginTop: 2, color: !e.vigente ? "#999" : e.activo === "si" ? "#187830" : "#B85C00", fontWeight: "700" }}>
+            {!e.vigente ? "Ya pasó" : e.activo === "si" ? "Visible para los pasajeros" : "Oculto"}
+          </Text>
+          <View style={{ flexDirection: "row", gap: 16, marginTop: 8 }}>
+            {e.vigente ? (
+              <TouchableOpacity onPress={() => accion(e, "PUT", `?activo=${e.activo === "si" ? "no" : "si"}`)}>
+                <Text style={{ color: "#1A56B8", fontWeight: "700" }}>{e.activo === "si" ? "🙈 Ocultar" : "👁️ Mostrar"}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity onPress={() => confirmar("Borrar evento", `¿Borrar "${e.titulo}"?`, () => accion(e, "DELETE"), "Borrar")}>
+              <Text style={{ color: "#C0392B", fontWeight: "700" }}>🗑️ Borrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /* ============ ANUNCIO DE PROMO POR TEMAS (facil de cambiar de motivo) ============
  * Cada tema es una ficha: colores, figuras que caen, adorno que rebota, luces y textos.
  * El tema lo elige el SERVIDOR (PUT /promo?tema=navidad), asi se cambia de motivo sin
@@ -2290,6 +2474,9 @@ function ElegirServicioScreen({ navigation, route }) {
             </TouchableOpacity>
           ))}
         </View>
+
+        <EventosCiudad municipio={usuario.municipio}
+          onIr={(e) => navigation.navigate("PedirCarrera", { usuario, modo: "carrera", destinoEvento: { nombre: e.lugar, lat: e.lat, lon: e.lon } })} />
 
         {/* por que Tukan: corto, da confianza */}
         <View style={{ backgroundColor: "#fff", borderRadius: 18, padding: 16, marginTop: 16, gap: 12 }}>
@@ -3718,6 +3905,11 @@ function PedirCarreraScreen({ navigation, route }) {
     setDestinoCoords({ lat: l.lat, lon: l.lon });
     setForm(f => ({ ...f, destino: limpiaDir(l.direccion) || l.etiqueta || "Destino guardado" }));
   };
+  // viene de "Ir en Tukan" de un evento: el destino llega puesto
+  const destinoEvento = route.params && route.params.destinoEvento;
+  useEffect(() => {
+    if (destinoEvento && destinoEvento.lat != null) usarComoDestino({ lat: destinoEvento.lat, lon: destinoEvento.lon, direccion: destinoEvento.nombre });
+  }, [destinoEvento]);
   const guardarDestino = (etiqueta) => {
     if (!destinoCoords) { avisar("Marca el destino", "Primero marca a dónde vas para poder guardarlo."); return; }
     const dir = (form.destino || "").replace(/^🏁 /, "").trim() || etiqueta;
@@ -7143,7 +7335,7 @@ function AdminCarrerasScreen({ navigation }) {
       {/* pestañas: fila que envuelve a 2 renglones (ya son 6, no caben en una).
           Se evita el ScrollView horizontal porque en columna flex se colapsaba. */}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginHorizontal: 16, marginBottom: 16, backgroundColor: "#F6F1E6", borderRadius: 8, padding: 5 }}>
-        {[["numeros", "Números"], ["conductores", "Conductores"], ["usuarios", "Usuarios"], ["carreras", "Carreras"], ["ciudades", "Ciudades"], ["cobro", "Cobro"]].map(([p, lbl]) => (
+        {[["numeros", "Números"], ["conductores", "Conductores"], ["usuarios", "Usuarios"], ["carreras", "Carreras"], ["ciudades", "Ciudades"], ["eventos", "Eventos"], ["cobro", "Cobro"]].map(([p, lbl]) => (
           <TouchableOpacity key={p} style={[{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 }, pestana === p && styles.tabActive]} onPress={() => setPestana(p)}>
             <Text style={[styles.tabText, pestana === p && styles.tabTextActive]}>{lbl}</Text>
           </TouchableOpacity>
@@ -7376,6 +7568,7 @@ function AdminCarrerasScreen({ navigation }) {
           <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>Todavia no hay carreras</Text>
         )}
 
+        {pestana === "eventos" && <AdminEventos />}
         {pestana === "ciudades" && (
           <>
             {/* --- formulario: abrir ciudad nueva --- */}

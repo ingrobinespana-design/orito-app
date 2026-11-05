@@ -195,6 +195,25 @@ class Evento(Base):
     tipo = Column(String)   # "visita_pagina" | "descarga_apk"
     fecha = Column(DateTime, default=datetime.now)
 
+class EventoCiudad(Base):
+    """Eventos de cada ciudad (feria, conciertos, partidos) que se muestran en el
+    inicio del pasajero con un boton "Ir en Tukan" (destino ya puesto). Fechas en
+    hora de Colombia, guardadas tal cual las escribe el admin."""
+    __tablename__ = "eventos_ciudad"
+    id = Column(Integer, primary_key=True, index=True)
+    municipio = Column(String, index=True)
+    titulo = Column(String)
+    descripcion = Column(String, nullable=True)
+    lugar = Column(String)                       # nombre del sitio (va como destino)
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    inicio = Column(DateTime)                    # hora Colombia
+    fin = Column(DateTime, nullable=True)        # si no hay, se oculta al terminar el dia de inicio
+    imagen = Column(String, nullable=True)
+    enlace = Column(String, nullable=True)       # boletas / mas informacion
+    activo = Column(String, default="si")
+    creado = Column(DateTime, default=datetime.now)
+
 class Config(Base):
     """Ajustes que el dueño cambia desde el panel sin tocar codigo."""
     __tablename__ = "config"
