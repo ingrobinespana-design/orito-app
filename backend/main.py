@@ -197,7 +197,7 @@ def diagnostico_push(clave: str, tel: str, probar: str = "no", db: Session = Dep
         raise HTTPException(status_code=404, detail="No existe")
     info = {"id": u.id, "nombre": u.nombre, "rol": u.rol, "disponible": u.disponible,
             "tiene_token": bool(u.push_token), "token_inicio": (u.push_token or "")[:28],
-            "push_modo": u.push_modo, "ubic_fecha": u.ubic_fecha, "municipio": u.municipio}
+            "push_modo": u.push_modo, "push_canal": u.push_canal or "carreras3 (tono viejo)", "ubic_fecha": u.ubic_fecha, "municipio": u.municipio}
     if probar == "si" and u.push_token:
         msgs = push_conductor(u, "🔔 Prueba de solicitud", "Aviso de prueba desde el servidor",
                               {"tipo": "carrera_nueva", "carrera_id": 0})
