@@ -4037,7 +4037,10 @@ function PedirCarreraScreen({ navigation, route }) {
                           </View>
                         )}
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: "800", fontSize: 16, color: "#1D1D1D" }} numberOfLines={1}>{nom.split(" ")[0]}</Text>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            <Text style={{ fontWeight: "800", fontSize: 16, color: "#1D1D1D" }} numberOfLines={1}>{nom.split(" ")[0]}</Text>
+                            {of.conductor_fundador === "si" ? <InsigniaFundador /> : null}
+                          </View>
                           <Text style={{ fontSize: 13, color: "#555", marginTop: 1 }}>★ {of.conductor_calificacion ? Number(of.conductor_calificacion).toFixed(1) : "Nuevo"}</Text>
                           <Text style={{ fontSize: 12.5, color: "#8A8A8A", marginTop: 1 }} numberOfLines={1}>
                             {[of.conductor_vehiculo || vehLabel(of.conductor_tipo), of.conductor_veh_color, of.conductor_placa].filter(Boolean).join(" · ")}
@@ -4093,6 +4096,7 @@ function PedirCarreraScreen({ navigation, route }) {
                     <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>{carrera.conductor_nombre}</Text>
                     <Estrellas valor={carrera.conductor_calificacion} size={14} />
                   </View>
+                  {carrera.conductor_fundador === "si" ? <View style={{ marginTop: 4 }}><InsigniaFundador grande /></View> : null}
                   {rep && (
                     <TouchableOpacity onPress={() => setVerRep(true)} style={{ marginTop: 3 }}>
                       <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700" }}>
@@ -4854,6 +4858,16 @@ function PedirCarreraScreen({ navigation, route }) {
   );
 }
 
+/** Insignia dorada de los conductores fundadores (los primeros de la Red). */
+function InsigniaFundador({ grande }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 4, backgroundColor: "#FFF4D6", borderWidth: 1, borderColor: "#F5B301", borderRadius: 999, paddingVertical: grande ? 4 : 2, paddingHorizontal: grande ? 10 : 7 }}>
+      <Text style={{ fontSize: grande ? 13 : 11 }}>🏅</Text>
+      <Text style={{ fontSize: grande ? 12.5 : 11, fontWeight: "800", color: "#8A5A00" }}>{grande ? "Conductor Fundador" : "Fundador"}</Text>
+    </View>
+  );
+}
+
 function ConductorScreen({ navigation, route }) {
   const { usuario } = route.params;
   // en Samsung y otros con botones de navegacion en pantalla, la barra del
@@ -4861,6 +4875,11 @@ function ConductorScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const [disponibles, setDisponibles] = useState([]);
   const [mias, setMias] = useState([]);
+  const [esFundador, setEsFundador] = useState(usuario.fundador === "si");
+  useEffect(() => {
+    fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json())
+      .then(p => { if (p && p.fundador) setEsFundador(p.fundador === "si"); }).catch(() => {});
+  }, []);
   const [avisoCancelada, setAvisoCancelada] = useState(null); // carrera que el pasajero cancelo
   const [sobreOk, setSobreOk] = useState(puedeSobreponer());  // "Mostrar encima de otras apps"
   useEffect(() => {
@@ -5694,8 +5713,9 @@ function ConductorScreen({ navigation, route }) {
       </Modal>
       <View style={[styles.header, { backgroundColor: "#187830", flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, mias.length > 0 && { paddingTop: 44, paddingBottom: 9 }]}>
         <View>
-          <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕{usuario.fundador === "si" ? "  ·  🏅 Fundador" : ""}</Text>
+          <Text style={styles.headerSub}>Hola, {usuario.nombre} 🚕</Text>
           <Text style={[styles.headerTitle, mias.length > 0 && { fontSize: 19, marginTop: 1 }]}>Carreras</Text>
+          {esFundador && mias.length === 0 ? <View style={{ marginTop: 6 }}><InsigniaFundador grande /></View> : null}
         </View>
         <TouchableOpacity onPress={() => navigation.navigate("Configuracion", { usuario })} style={{ padding: 4 }}>
           <Text style={{ fontSize: 24 }}>⚙️</Text>
@@ -6636,6 +6656,21 @@ function AdminCarrerasScreen({ navigation }) {
     }, "Sí, eliminar");
   };
 
+  const cambiarFundador = (u) => {
+    const nuevo = u.fundador === "si" ? "no" : "si";
+    confirmar(nuevo === "si" ? "Marcar como fundador" : "Quitar fundador",
+      nuevo === "si" ? `${u.nombre} tendrá la insignia 🏅 Conductor Fundador en su app y los pasajeros la verán.` : `${u.nombre} dejará de mostrar la insignia de fundador.`,
+      () => adminFetch(`${API}/admin/usuarios/${u.id}/fundador?valor=${nuevo}`, { method: "PUT" })
+        .then(async r => {
+          const d = await r.json().catch(() => null);
+          if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
+          buscarUsuarios(); cargar();
+          avisar("Listo", nuevo === "si" ? `${u.nombre} ya es 🏅 Conductor Fundador.` : `${u.nombre} ya no es fundador.`);
+        })
+        .catch(() => avisar("Error", "No hay conexión.")),
+      nuevo === "si" ? "Sí, marcar" : "Quitar");
+  };
+
   const reactivarUsuario = (u) => {
     adminFetch(`${API}/admin/usuarios/${u.id}/reactivar`, { method: "POST" })
       .then(async r => {
@@ -6745,7 +6780,7 @@ function AdminCarrerasScreen({ navigation }) {
     <View key={u.id} style={{ backgroundColor: "#fff", borderRadius: 8, padding: 10, marginTop: 8, borderWidth: u.activo === "no" ? 1 : 0, borderColor: "#C0392B" }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontWeight: "700", fontSize: 14 }}>
-          {u.nombre || "(sin nombre)"}{u.activo === "no" ? <Text style={{ color: "#C0392B", fontWeight: "800" }}>  · BLOQUEADO</Text> : null}
+          {u.nombre || "(sin nombre)"}{u.fundador === "si" ? "  🏅" : ""}{u.activo === "no" ? <Text style={{ color: "#C0392B", fontWeight: "800" }}>  · BLOQUEADO</Text> : null}
         </Text>
         <Text style={{ fontSize: 11, color: "#854F0B", fontWeight: "700" }}>{u.rol}</Text>
       </View>
@@ -6757,6 +6792,11 @@ function AdminCarrerasScreen({ navigation }) {
         {u.rol === "conductor" && (
           <TouchableOpacity onPress={() => probarTonoConductor(u)}>
             <Text style={{ color: "#F06000", fontWeight: "700", fontSize: 12 }}>🔔 Probar tono</Text>
+          </TouchableOpacity>
+        )}
+        {u.rol === "conductor" && (
+          <TouchableOpacity onPress={() => cambiarFundador(u)}>
+            <Text style={{ color: "#8A5A00", fontWeight: "700", fontSize: 12 }}>{u.fundador === "si" ? "🏅 Quitar fundador" : "🏅 Marcar fundador"}</Text>
           </TouchableOpacity>
         )}
         {u.rol === "conductor" && (

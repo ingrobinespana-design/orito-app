@@ -1264,7 +1264,7 @@ def buscar_usuarios(buscar: str = "", rol: str = "", db: Session = Depends(get_d
         salida.append({
             "id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol,
             "municipio": u.municipio, "calificacion": u.calificacion, "disponible": u.disponible,
-            "activo": u.activo or "si",
+            "activo": u.activo or "si", "fundador": u.fundador or "no",
             "carreras_cliente": db.query(Carrera).filter(Carrera.cliente_id == u.id).count(),
             "carreras_conductor": db.query(Carrera).filter(Carrera.conductor_id == u.id).count(),
             "activas": db.query(Carrera).filter(
@@ -1303,6 +1303,20 @@ def eliminar_usuario(usuario_id: int, db: Session = Depends(get_db), admin: Usua
         modo = "eliminado"
     db.commit()
     return {"ok": True, "modo": modo, "nombre": nombre}
+
+@app.put("/admin/usuarios/{usuario_id}/fundador")
+def marcar_fundador(usuario_id: int, valor: str, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Marca o quita la insignia 🏅 Conductor Fundador (los primeros de la Red)."""
+    if valor not in ("si", "no"):
+        raise HTTPException(status_code=400, detail="valor: si o no")
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.rol != "conductor":
+        raise HTTPException(status_code=400, detail="Solo los conductores pueden ser fundadores")
+    u.fundador = valor
+    db.commit()
+    return {"ok": True, "nombre": u.nombre, "fundador": u.fundador}
 
 @app.post("/admin/usuarios/{usuario_id}/reactivar")
 def reactivar_usuario(usuario_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
@@ -1818,6 +1832,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "conductor_pagos": medios_pago(conductor) if conductor else None,
         "conductor_foto": conductor.foto_conductor if conductor else None,
         "conductor_foto_vehiculo": conductor.foto_vehiculo if conductor else None,
+        "conductor_fundador": (conductor.fundador or "no") if conductor else "no",
         "conductor_lat": conductor.ubic_lat if conductor else None,
         "conductor_lon": conductor.ubic_lon if conductor else None,
         "conductor_ubic_fecha": conductor.ubic_fecha if conductor else None,
@@ -3072,6 +3087,7 @@ def oferta_dict(o: Oferta, conductor: Usuario = None):
         "conductor_foto": conductor.foto_conductor if conductor else None,
         "conductor_calificacion": conductor.calificacion if conductor else None,
         "conductor_veh_color": conductor.veh_color if conductor else None,
+        "conductor_fundador": (conductor.fundador or "no") if conductor else "no",
     }
 
 @app.post("/carreras/{carrera_id}/ofertas")
@@ -3747,7 +3763,7 @@ def obtener_perfil(usuario_id: int, db: Session = Depends(get_db)):
             "verificado": u.verificado or "no", "disponible": u.disponible,
             "calificacion": u.calificacion, "suscripcion_hasta": u.suscripcion_hasta,
             "dias_restantes": dias_restantes(u), "al_dia": suscripcion_al_dia(u, db),
-            "pagos": medios_pago(u), "fotos": fotos_de(u)}
+            "pagos": medios_pago(u), "fotos": fotos_de(u), "fundador": u.fundador or "no"}
 
 @app.get("/usuarios/{usuario_id}/lugares")
 def listar_lugares_guardados(usuario_id: int, db: Session = Depends(get_db)):
