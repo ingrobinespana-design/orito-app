@@ -28,6 +28,7 @@ class Usuario(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String)
     telefono = Column(String, unique=True)
+    creado = Column(DateTime, nullable=True, default=datetime.now)   # cuando se registro (desde 2026-11-05)
     password = Column(String)
     rol = Column(String, default="cliente")
     # llave de sesion que se entrega al entrar. El panel de administracion la
@@ -507,7 +508,7 @@ def crear_tablas():
                     "verificado VARCHAR DEFAULT 'no'",
                     "codigo_referido VARCHAR", "referido_por VARCHAR",
                     "promo_bienvenida_hasta TIMESTAMP", "promo_bienvenida_pct INTEGER",
-                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR", "foto_perfil VARCHAR", "push_canal VARCHAR"):
+                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR", "foto_perfil VARCHAR", "push_canal VARCHAR", "creado TIMESTAMP"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))

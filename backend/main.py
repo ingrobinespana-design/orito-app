@@ -817,6 +817,49 @@ def completar_registro(usuario_id: int, nombre: str, telefono: str = None, db: S
     db.commit()
     return {"ok": True, "nombre": u.nombre, "telefono": u.telefono, "completo": not _registro_incompleto(u)}
 
+@app.get("/admin/novedades")
+def novedades(dias: int = 1, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Resumen rapido de lo que paso (hoy o ultimos N dias) para la ventana 'Lo nuevo'."""
+    ahora = datetime.now()
+    desde = ahora - timedelta(days=max(1, min(dias, 30))) if dias > 1 else         (ahora_colombia().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=5))
+    def hace(f):
+        if not f:
+            return None
+        m = int((ahora - f).total_seconds() // 60)
+        return "ahora" if m < 1 else f"hace {m} min" if m < 60 else f"hace {m // 60} h" if m < 1440 else f"hace {m // 1440} d"
+    def persona(u):
+        return {"id": u.id, "nombre": u.nombre, "rol": u.rol, "municipio": u.municipio, "telefono": u.telefono,
+                "hace": hace(u.creado), "tipo_vehiculo": u.tipo_vehiculo}
+    reg = db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), Usuario.creado >= desde).order_by(Usuario.id.desc()).all()
+    ultimos = db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), ~Usuario.telefono.like("ELIMINADO-%"))         .order_by(Usuario.id.desc()).limit(8).all()
+    cs = db.query(Carrera).filter(Carrera.fecha >= desde).all()
+    fin = [c for c in cs if c.estado == "finalizada"]
+    ciudades = {}
+    for c in cs:
+        ciudades[c.municipio or "—"] = ciudades.get(c.municipio or "—", 0) + 1
+    calif = [c for c in fin if c.estrellas_conductor]
+    comentarios = [{"estrellas": c.estrellas_conductor, "texto": c.comentario_conductor, "conductor": c.conductor_id}
+                   for c in sorted(calif, key=lambda c: c.id, reverse=True) if c.comentario_conductor][:3]
+    conectados = db.query(Usuario).filter(Usuario.rol == "conductor", Usuario.ubic_fecha >= desde).count()
+    visitas = db.query(Evento).filter(Evento.fecha >= desde, Evento.tipo == "visita_pagina").count()
+    descargas = db.query(Evento).filter(Evento.fecha >= desde, Evento.tipo == "descarga_apk").count()
+    return {
+        "dias": dias,
+        "nuevos": [persona(u) for u in reg],
+        "nuevos_pasajeros": sum(1 for u in reg if u.rol == "cliente"),
+        "nuevos_conductores": sum(1 for u in reg if u.rol == "conductor"),
+        "ultimos_registros": [persona(u) for u in ultimos],
+        "carreras": len(cs), "finalizadas": len(fin),
+        "canceladas": sum(1 for c in cs if c.estado == "cancelada"),
+        "en_curso": sum(1 for c in cs if c.estado in ("buscando", "aceptada", "en_sitio", "en_camino")),
+        "movido": sum((c.tarifa or 0) for c in fin),
+        "ciudad_top": max(ciudades.items(), key=lambda x: x[1])[0] if ciudades else None,
+        "calificacion_prom": round(sum(c.estrellas_conductor for c in calif) / len(calif), 1) if calif else None,
+        "comentarios": comentarios,
+        "conductores_conectados": conectados,
+        "visitas": visitas, "descargas": descargas,
+    }
+
 @app.post("/admin/incompletos/avisar")
 def avisar_incompletos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     """Notificacion a quienes tienen el registro incompleto para que lo completen."""

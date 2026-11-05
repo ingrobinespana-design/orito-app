@@ -7097,6 +7097,92 @@ function ConductorScreen({ navigation, route }) {
   );
 }
 
+/* ===== "Lo nuevo": resumen rapido y animado para el admin (gerencia) ===== */
+function Contador({ valor, prefijo = "", estilo }) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    const fin = Number(valor) || 0, pasos = 18;
+    let i = 0;
+    const t = setInterval(() => { i++; setV(Math.round(fin * i / pasos)); if (i >= pasos) clearInterval(t); }, 35);
+    return () => clearInterval(t);
+  }, [valor]);
+  return <Text style={estilo}>{prefijo}{v.toLocaleString()}</Text>;
+}
+function FilaAparece({ indice, children }) {
+  const a = useRef(new Animated.Value(0)).current;
+  useEffect(() => { Animated.timing(a, { toValue: 1, duration: 380, delay: 120 + indice * 90, useNativeDriver: true }).start(); }, []);
+  return <Animated.View style={{ opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }] }}>{children}</Animated.View>;
+}
+function NovedadesAdmin({ onAbrir }) {
+  const [dias, setDias] = useState(1);
+  const [d, setD] = useState(null);
+  const cargarN = () => adminFetch(`${API}/admin/novedades?dias=${dias}`).then(r => r.json()).then(x => { if (x && !x.detail) setD(x); }).catch(() => {});
+  useEffect(() => { setD(null); cargarN(); const t = setInterval(cargarN, 30000); return () => clearInterval(t); }, [dias]);
+  const lista = d ? (d.nuevos.length ? d.nuevos : d.ultimos_registros) : [];
+  return (
+    <View style={{ backgroundColor: "#0F3D22", borderRadius: 20, padding: 16, marginBottom: 16 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ color: "#fff", fontSize: 17, fontWeight: "800" }}>✨ Lo nuevo</Text>
+        <View style={{ flexDirection: "row", backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 999, padding: 3 }}>
+          {[[1, "Hoy"], [7, "7 días"]].map(([k, lbl]) => (
+            <TouchableOpacity key={k} onPress={() => setDias(k)} style={{ paddingVertical: 5, paddingHorizontal: 12, borderRadius: 999, backgroundColor: dias === k ? "#fff" : "transparent" }}>
+              <Text style={{ fontSize: 12.5, fontWeight: "800", color: dias === k ? "#0F3D22" : "#CFE5D6" }}>{lbl}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+      {!d ? <ActivityIndicator color="#fff" style={{ marginVertical: 24 }} /> : (
+        <>
+          <View style={{ flexDirection: "row", marginTop: 14 }}>
+            {[[d.nuevos_pasajeros, "Pasajeros\nnuevos", ""], [d.nuevos_conductores, "Conductores\nnuevos", ""], [d.carreras, "Carreras", ""], [d.movido, "Movido", "$"]].map(([v, lbl, pre]) => (
+              <View key={lbl} style={{ flex: 1, alignItems: "center" }}>
+                <Contador valor={v} prefijo={pre} estilo={{ color: "#F5B301", fontSize: pre ? 17 : 24, fontWeight: "900" }} />
+                <Text style={{ color: "#CFE5D6", fontSize: 11, textAlign: "center", marginTop: 2 }}>{lbl}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 14 }}>
+            {[
+              d.ciudad_top ? `🔥 Más movida: ${nombreCiudad(d.ciudad_top)}` : null,
+              d.finalizadas ? `✅ ${d.finalizadas} terminadas` : null,
+              d.canceladas ? `✖ ${d.canceladas} canceladas` : null,
+              d.calificacion_prom ? `⭐ ${d.calificacion_prom} promedio` : null,
+              d.conductores_conectados ? `🟢 ${d.conductores_conectados} conductores activos` : null,
+              (d.visitas || d.descargas) ? `📲 ${d.visitas} visitas · ${d.descargas} descargas` : null,
+            ].filter(Boolean).map(t => (
+              <View key={t} style={{ backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 999, paddingVertical: 5, paddingHorizontal: 10 }}>
+                <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>{t}</Text>
+              </View>
+            ))}
+          </View>
+          {d.comentarios && d.comentarios.length ? d.comentarios.map((c, i) => (
+            <Text key={i} style={{ color: "#E6F2EA", fontSize: 12.5, marginTop: 8, fontStyle: "italic" }} numberOfLines={2}>💬 "{c.texto}" · {"★".repeat(c.estrellas)}</Text>
+          )) : null}
+          <Text style={{ color: "#CFE5D6", fontSize: 12, fontWeight: "800", marginTop: 16, marginBottom: 6, letterSpacing: 0.5 }}>
+            {d.nuevos.length ? (dias === 1 ? "LLEGARON HOY" : "LLEGARON ESTA SEMANA") : "ÚLTIMOS REGISTROS"}
+          </Text>
+          {lista.length === 0 ? <Text style={{ color: "#CFE5D6", fontSize: 13 }}>Nadie nuevo todavía.</Text> : null}
+          {lista.slice(0, 8).map((u, i) => (
+            <FilaAparece key={`${dias}-${u.id}`} indice={i}>
+              <TouchableOpacity onPress={() => onAbrir(u)} activeOpacity={0.75}
+                style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: "rgba(255,255,255,0.08)" }}>
+                <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: u.rol === "conductor" ? "#F5B301" : "#2FA84F", alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ fontSize: 15 }}>{u.rol === "conductor" ? vehIcono(u.tipo_vehiculo || "carro") : "👤"}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }} numberOfLines={1}>{(u.nombre || "").trim() || "⚠️ Sin nombre"}</Text>
+                  <Text style={{ color: "#CFE5D6", fontSize: 12 }}>{u.rol === "conductor" ? "Conductor" : "Pasajero"} · {nombreCiudad(u.municipio || "—")}</Text>
+                </View>
+                {u.hace ? <Text style={{ color: "#F5B301", fontSize: 11.5, fontWeight: "800" }}>{u.hace}</Text> : null}
+              </TouchableOpacity>
+            </FilaAparece>
+          ))}
+        </>
+      )}
+    </View>
+  );
+}
+
 function AdminCarrerasScreen({ navigation, route }) {
   const [conductores, setConductores] = useState([]);
   const [carreras, setCarreras] = useState([]);
@@ -7512,6 +7598,7 @@ function AdminCarrerasScreen({ navigation, route }) {
         {/* ===================== INICIO (tablero) ===================== */}
         {pestana === "inicio" && (
           <>
+            <NovedadesAdmin onAbrir={(u) => abrirFicha(u.rol === "conductor" ? "conductor" : "usuario", u)} />
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
               {[["🛣️", hoy.length, "Carreras hoy", "#1D1D1D", () => setPestana("carreras")],
                 ["🟠", enCurso.length, "En curso ahora", "#B85C00", () => { setFiltroCarr("curso"); setPestana("carreras"); }],
