@@ -702,6 +702,9 @@ function LoginScreen({ navigation }) {
   // comoMe: el vehiculo exacto (o "cliente"). Se elige en 2 pasos.
   const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "", categoria: "cliente", comoMe: "cliente", placa: "" });
   const [zonaAbierta, setZonaAbierta] = useState(false);
+  // al escribir telefono/contraseña la pantalla baja para que el teclado no los tape
+  const scrollLogin = useRef(null);
+  const verCampos = () => setTimeout(() => { try { scrollLogin.current && scrollLogin.current.scrollToEnd({ animated: true }); } catch (e) {} }, 300);
   const [municipios, setMunicipios] = useState([]);
   const [cargandoMun, setCargandoMun] = useState(true);
   const [verPass, setVerPass] = useState(false);   // mostrar/ocultar la contraseña
@@ -793,8 +796,8 @@ function LoginScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+      <ScrollView ref={scrollLogin} contentContainerStyle={{ paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
         {/* portada: logo y nombre centrados sobre el verde de la marca */}
         <View style={{ backgroundColor: "#187830", paddingTop: 60, paddingBottom: 70, alignItems: "center", borderBottomLeftRadius: 32, borderBottomRightRadius: 32 }}>
           <Image source={require("./assets/icon.png")} style={{ width: 84, height: 84, borderRadius: 24, borderWidth: 3, borderColor: "rgba(255,255,255,0.9)" }} />
@@ -963,10 +966,10 @@ function LoginScreen({ navigation }) {
             </>
           )}
           <Text style={estEtiqueta}>Tu número de celular</Text>
-          <TextInput placeholder="Escribe aquí tu celular (ej: 3001234567)" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" />
+          <TextInput placeholder="Escribe aquí tu celular (ej: 3001234567)" value={form.telefono} onChangeText={(t) => setForm({ ...form, telefono: t })} style={styles.input} keyboardType="phone-pad" onFocus={verCampos} />
           <Text style={estEtiqueta}>{modo === "login" ? "Tu contraseña" : "Crea una contraseña"}</Text>
           <View style={{ justifyContent: "center" }}>
-            <TextInput placeholder={modo === "login" ? "Escribe aquí tu contraseña" : "Mínimo 6 caracteres, que no olvides"} value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} />
+            <TextInput placeholder={modo === "login" ? "Escribe aquí tu contraseña" : "Mínimo 6 caracteres, que no olvides"} value={form.password} onChangeText={(t) => setForm({ ...form, password: t })} style={[styles.input, { paddingRight: 50 }]} secureTextEntry={!verPass} onFocus={verCampos} />
             <TouchableOpacity style={{ position: "absolute", right: 6, padding: 10, top: 2 }} onPress={() => setVerPass(v => !v)}>
               <Text style={{ fontSize: 18 }}>{verPass ? "🙈" : "👁️"}</Text>
             </TouchableOpacity>
@@ -4444,7 +4447,7 @@ function PedirCarreraScreen({ navigation, route }) {
         </SafeAreaView>
       </Modal>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView ref={scrollForm} contentContainerStyle={{ padding: 16, paddingBottom: 160 }} keyboardShouldPersistTaps="handled">
         {/* sus solicitudes siguen vivas mientras pide otra cosa */}
         {activas.length > 0 && (
@@ -7474,6 +7477,7 @@ function CambiarClave({ usuario }) {
   const [actual, setActual] = useState("");
   const [nueva, setNueva] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [ver, setVer] = useState(false);   // mostrar/ocultar lo que se escribe
   const guardar = () => {
     if (nueva.trim().length < 6) { avisar("Muy corta", "La nueva contraseña debe tener al menos 6 caracteres."); return; }
     setEnviando(true);
@@ -7498,9 +7502,19 @@ function CambiarClave({ usuario }) {
   return (
     <View style={{ marginTop: 14, backgroundColor: "#F4F5F1", borderRadius: 12, padding: 12 }}>
       <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Contraseña actual</Text>
-      <TextInput value={actual} onChangeText={setActual} secureTextEntry placeholder="La que usas hoy (o la temporal)" style={[styles.input, { marginBottom: 10, backgroundColor: "#fff" }]} />
+      <View style={{ justifyContent: "center" }}>
+        <TextInput value={actual} onChangeText={setActual} secureTextEntry={!ver} placeholder="La que usas hoy (o la temporal)" style={[styles.input, { marginBottom: 10, backgroundColor: "#fff", paddingRight: 50 }]} />
+        <TouchableOpacity style={{ position: "absolute", right: 6, padding: 10, top: 2 }} onPress={() => setVer(v => !v)}>
+          <Text style={{ fontSize: 18 }}>{ver ? "🙈" : "👁️"}</Text>
+        </TouchableOpacity>
+      </View>
       <Text style={{ fontSize: 13, fontWeight: "700", color: "#3A3A3A", marginBottom: 6 }}>Nueva contraseña</Text>
-      <TextInput value={nueva} onChangeText={setNueva} secureTextEntry placeholder="Mínimo 6 caracteres" style={[styles.input, { marginBottom: 10, backgroundColor: "#fff" }]} />
+      <View style={{ justifyContent: "center" }}>
+        <TextInput value={nueva} onChangeText={setNueva} secureTextEntry={!ver} placeholder="Mínimo 6 caracteres" style={[styles.input, { marginBottom: 10, backgroundColor: "#fff", paddingRight: 50 }]} />
+        <TouchableOpacity style={{ position: "absolute", right: 6, padding: 10, top: 2 }} onPress={() => setVer(v => !v)}>
+          <Text style={{ fontSize: 18 }}>{ver ? "🙈" : "👁️"}</Text>
+        </TouchableOpacity>
+      </View>
       <View style={{ flexDirection: "row", gap: 10 }}>
         <TouchableOpacity onPress={guardar} disabled={enviando} style={{ flex: 1, backgroundColor: "#187830", borderRadius: 10, paddingVertical: 11, alignItems: "center" }}>
           {enviando ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800" }}>Guardar</Text>}
@@ -7676,7 +7690,8 @@ function ConfiguracionScreen({ navigation, route }) {
           <Text style={styles.headerTitle}>Configuracion</Text>
         </View>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
         <View style={[styles.card, { marginBottom: 14 }]}>
           {!esConductor && (
             <TouchableOpacity onPress={() => subirFoto("perfil")} style={{ flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -7944,6 +7959,7 @@ function ConfiguracionScreen({ navigation, route }) {
           </View>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
