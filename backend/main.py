@@ -777,6 +777,58 @@ CODIGOS_COMUNIDAD = {
                 "mensaje": "🏅 ¡Eres Conductor Fundador! Usas Tukán gratis durante todo el lanzamiento."},
 }
 
+def _validar_nombre(nombre: str) -> str:
+    nombre = " ".join((nombre or "").split())
+    letras = sum(1 for ch in nombre if ch.isalpha())
+    if letras < 3 or "@" in nombre or len(nombre) > 60:
+        raise HTTPException(status_code=400, detail="Escribe tu nombre y apellido (sin correo ni números).")
+    if any(ch.isdigit() for ch in nombre):
+        raise HTTPException(status_code=400, detail="Tu nombre no debe llevar números.")
+    return nombre
+
+def _validar_celular(telefono: str) -> str:
+    t = "".join(ch for ch in (telefono or "") if ch.isdigit())
+    if t.startswith("57") and len(t) == 12:
+        t = t[2:]
+    if len(t) != 10 or not t.startswith("3"):
+        raise HTTPException(status_code=400, detail="Escribe un número de celular válido de 10 dígitos (ej: 3001234567).")
+    return t
+
+def _registro_incompleto(u: Usuario) -> bool:
+    n = (u.nombre or "").strip()
+    t = "".join(ch for ch in (u.telefono or "") if ch.isdigit())
+    return (sum(1 for ch in n if ch.isalpha()) < 3 or "@" in n or any(ch.isdigit() for ch in n)
+            or len(t) != 10 or (u.telefono or "").startswith("ELIMINADO-"))
+
+@app.put("/usuarios/{usuario_id}/completar")
+def completar_registro(usuario_id: int, nombre: str, telefono: str = None, db: Session = Depends(get_db),
+                       actual: Usuario = Depends(usuario_actual)):
+    """La persona completa su propio registro (nombre y, si le falta, celular)."""
+    exigir_dueño(actual, usuario_id)
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    u.nombre = _validar_nombre(nombre)
+    if telefono:
+        t = _validar_celular(telefono)
+        if t != u.telefono and db.query(Usuario).filter(Usuario.telefono == t, Usuario.id != u.id).first():
+            raise HTTPException(status_code=400, detail="Ese número ya está registrado en otra cuenta.")
+        u.telefono = t
+    db.commit()
+    return {"ok": True, "nombre": u.nombre, "telefono": u.telefono, "completo": not _registro_incompleto(u)}
+
+@app.post("/admin/incompletos/avisar")
+def avisar_incompletos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Notificacion a quienes tienen el registro incompleto para que lo completen."""
+    gente = [u for u in db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), Usuario.activo != "no").all()
+             if _registro_incompleto(u)]
+    con_token = [u for u in gente if u.push_token]
+    mensajes = [push.mensaje(u.push_token, "👋 Completa tu registro en Tukán",
+                             "A tu cuenta le falta tu nombre o tu celular. Abre la app y complétalo en un minuto.",
+                             {"tipo": "completar_registro"}) for u in con_token]
+    limpiar_tokens_muertos(push.enviar(mensajes))
+    return {"incompletos": len(gente), "avisados": len(con_token), "sin_notificaciones": len(gente) - len(con_token)}
+
 @app.post("/registro")
 def registrar_usuario(request: Request, nombre: str, telefono: str, password: str, municipio: str = "Orito",
                       tipo_vehiculo: str = None, placa: str = None, vehiculo: str = None,

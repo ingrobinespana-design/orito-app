@@ -2072,6 +2072,75 @@ function IconoServicio({ emoji, size = 82 }) {
   );
 }
 
+/** Registro incompleto (cuentas viejas sin nombre o sin celular): pantalla obligatoria
+ *  para que la persona lo complete. Mismas reglas que el registro nuevo. */
+const nombreValido = (n) => { n = (n || "").trim(); return (n.match(/[A-Za-zÁÉÍÓÚáéíóúÑñÜü]/g) || []).length >= 3 && !n.includes("@") && !/\d/.test(n); };
+const celularValido = (t) => { const d = String(t || "").replace(/\D/g, ""); return d.length === 10 && d.startsWith("3"); };
+function CompletarRegistro({ usuario }) {
+  const [falta, setFalta] = useState(null);       // { nombre: bool, telefono: bool }
+  const [nombre, setNombre] = useState("");
+  const [tel, setTel] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!usuario || !usuario.id) return;
+    fetch(`${API}/usuarios/${usuario.id}/perfil`).then(r => r.json()).then(p => {
+      if (!p || p.detail) return;
+      const fn = !nombreValido(p.nombre), ft = !celularValido(p.telefono);
+      if (fn || ft) { setFalta({ nombre: fn, telefono: ft }); setNombre(fn ? "" : p.nombre); setTel(ft ? "" : p.telefono); }
+    }).catch(() => {});
+  }, [usuario && usuario.id]);
+  if (!falta) return null;
+  const guardar = () => {
+    if (!nombreValido(nombre)) { setError("Escribe tu nombre y apellido (sin correo ni números)."); return; }
+    if (falta.telefono && !celularValido(tel)) { setError("Escribe tu celular de 10 dígitos (ej: 3001234567)."); return; }
+    setGuardando(true); setError("");
+    userFetch(`${API}/usuarios/${usuario.id}/completar?${qs({ nombre: nombre.trim(), telefono: falta.telefono ? tel : null })}`, { method: "PUT" })
+      .then(async r => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok) { setError((d && d.detail) || "No se pudo guardar. Intenta de nuevo."); return; }
+        const s2 = await leerSesion();
+        if (s2) await guardarSesion({ ...s2, nombre: d.nombre, telefono: d.telefono });
+        usuario.nombre = d.nombre; usuario.telefono = d.telefono;
+        setFalta(null);
+        avisar("¡Listo! ✅", "Tu registro quedó completo. Gracias.");
+      })
+      .catch(() => setError("No hay conexión. Intenta de nuevo."))
+      .finally(() => setGuardando(false));
+  };
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={() => {}}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        <View style={{ flex: 1, backgroundColor: "rgba(8,30,18,0.6)", justifyContent: "center", padding: 22 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 22, padding: 22 }}>
+            <Text style={{ fontSize: 30, textAlign: "center" }}>👋</Text>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: "#1D1D1D", textAlign: "center", marginTop: 6 }}>Completa tu registro</Text>
+            <Text style={{ fontSize: 14, color: "#666", textAlign: "center", marginTop: 6, marginBottom: 16, lineHeight: 20 }}>
+              A tu cuenta le falta {falta.nombre && falta.telefono ? "tu nombre y tu celular" : falta.nombre ? "tu nombre" : "tu celular"}. Así {usuario.rol === "conductor" ? "los pasajeros te reconocen" : "tu conductor sabe a quién recoge"}.
+            </Text>
+            {falta.nombre ? (
+              <>
+                <Text style={estEtiqueta}>Tu nombre</Text>
+                <TextInput value={nombre} onChangeText={setNombre} placeholder="Escribe aquí tu nombre y apellido" autoCapitalize="words" style={styles.input} />
+              </>
+            ) : null}
+            {falta.telefono ? (
+              <>
+                <Text style={estEtiqueta}>Tu número de celular</Text>
+                <TextInput value={tel} onChangeText={setTel} placeholder="Ej: 3001234567" keyboardType="phone-pad" style={styles.input} />
+              </>
+            ) : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <TouchableOpacity onPress={guardar} disabled={guardando} style={[styles.button, { backgroundColor: "#187830" }]}>
+              {guardando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Guardar y continuar</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 const MOSTRAR_COMIDA = false;   // domicilios de comida: apagado hasta que el modulo este listo
 
 /* ======================= EVENTOS DE CADA CIUDAD ======================= */
@@ -2536,6 +2605,7 @@ function ElegirServicioScreen({ navigation, route }) {
         <Text style={{ color: "#999", fontSize: 13 }}>Salir</Text>
       </TouchableOpacity>
       <AnuncioPromo promo={promo} nombre={nombre} onPedir={() => ir("carrera")} />
+      <CompletarRegistro usuario={usuario} />
     </SafeAreaView>
   );
 }
@@ -7022,6 +7092,7 @@ function ConductorScreen({ navigation, route }) {
           })()}
         </View>
       </Modal>
+      <CompletarRegistro usuario={usuario} />
     </SafeAreaView>
   );
 }
@@ -8088,7 +8159,16 @@ function AdminCarrerasScreen({ navigation, route }) {
             <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800" }}>Registros incompletos</Text>
           </View>
           <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-            <Text style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Cuentas creadas antes de que el registro exigiera datos completos. Puedes escribirles para que completen, o eliminarlas.</Text>
+            <Text style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Cuentas creadas antes de que el registro exigiera datos completos. Al abrir la app les sale "Completa tu registro" y no pueden seguir sin hacerlo.</Text>
+            {incompletos.length > 0 ? (
+              <TouchableOpacity onPress={() => confirmar("Avisar a los incompletos", "Se les manda una notificación: \"Completa tu registro en Tukán\". Les llega aunque tengan la app cerrada.", () =>
+                adminFetch(`${API}/admin/incompletos/avisar`, { method: "POST" }).then(r => r.json())
+                  .then(d => avisar("Aviso enviado 📣", `${d.avisados} de ${d.incompletos} recibieron la notificación.${d.sin_notificaciones ? `\n${d.sin_notificaciones} no tienen notificaciones activas: escríbeles por WhatsApp o elimínalos.` : ""}`))
+                  .catch(() => avisar("Error", "No hay conexión.")), "Enviar aviso")}
+                style={{ backgroundColor: "#187830", borderRadius: 12, paddingVertical: 13, alignItems: "center", marginBottom: 14 }}>
+                <Text style={{ color: "#fff", fontWeight: "800" }}>📣 Avisar a todos para que completen</Text>
+              </TouchableOpacity>
+            ) : null}
             {incompletos.length === 0 ? <Text style={{ color: "#187830", fontWeight: "700" }}>✅ No quedan registros incompletos.</Text> : null}
             {incompletos.map(u => fila(`i${u.rol}${u.id}`, u, null, nombreDe(u), `${u.rol === "conductor" ? "🚕 Conductor" : "👤 Pasajero"} · ${u.telefono || "sin teléfono"} · ${nombreCiudad(u.municipio || "—")}`,
               null, () => { setVerIncompletos(false); abrirFicha(u.rol === "conductor" ? "conductor" : "usuario", u); }))}
