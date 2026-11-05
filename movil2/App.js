@@ -2091,32 +2091,69 @@ function fechaEvento(ini, fin) {
 function EventosCiudad({ municipio, onIr }) {
   const [eventos, setEventos] = useState([]);
   const [abierto, setAbierto] = useState(null);
+  const [verTodos, setVerTodos] = useState(false);
   useEffect(() => {
     if (!municipio) return;
     fetch(`${API}/eventos?municipio=${encodeURIComponent(municipio)}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setEventos(d); }).catch(() => {});
   }, [municipio]);
   if (!eventos.length) return null;
-  return (
-    <View style={{ marginTop: 22 }}>
-      <Text style={{ fontSize: 17, fontWeight: "800", color: "#1D1D1D", marginBottom: 12, letterSpacing: -0.2 }}>🎉 Eventos en {municipio}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 6 }}>
-        {eventos.map(e => (
-          <TouchableOpacity key={e.id} activeOpacity={0.88} onPress={() => setAbierto(e)}
-            style={{ width: 250, backgroundColor: "#fff", borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#E1E5DD" }}>
-            {e.imagen ? (
-              <Image source={{ uri: e.imagen }} style={{ width: "100%", height: 120, backgroundColor: "#EEE" }} />
-            ) : (
-              <View style={{ height: 120, backgroundColor: "#187830", alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 44 }}>🎉</Text></View>
-            )}
-            <View style={{ padding: 12 }}>
-              <Text style={{ fontSize: 12, fontWeight: "800", color: "#F06000" }}>{fechaEvento(e.inicio, e.fin).toUpperCase()}</Text>
-              <Text style={{ fontSize: 15.5, fontWeight: "800", color: "#1D1D1D", marginTop: 2 }} numberOfLines={2}>{e.titulo}</Text>
-              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 2 }} numberOfLines={1}>📍 {e.lugar}</Text>
-            </View>
+  // agenda informativa (no publicidad): filas compactas, fecha a la izquierda, "Ir" pequeño
+  const cuando = (ini) => {
+    if (!ini) return "";
+    const [y, m, d] = ini.split(" ")[0].split("-").map(Number);
+    const hoyD = new Date(); hoyD.setHours(0, 0, 0, 0);
+    const dias = Math.round((new Date(y, m - 1, d) - hoyD) / 86400000);
+    return dias <= 0 ? "Hoy" : dias === 1 ? "Mañana" : dias < 8 ? `En ${dias} días` : "";
+  };
+  const filaEvento = (e) => {
+    const [y, m, d] = (e.inicio || "").split(" ")[0].split("-").map(Number);
+    const rel = cuando(e.inicio);
+    return (
+      <TouchableOpacity key={e.id} activeOpacity={0.75} onPress={() => { setVerTodos(false); setAbierto(e); }}
+        style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#F0F1EE" }}>
+        <View style={{ width: 46, alignItems: "center", backgroundColor: "#F4F5F1", borderRadius: 10, paddingVertical: 5 }}>
+          <Text style={{ fontSize: 18, fontWeight: "800", color: "#1D1D1D", lineHeight: 21 }}>{d || ""}</Text>
+          <Text style={{ fontSize: 10.5, fontWeight: "800", color: "#8A8A8A", letterSpacing: 0.5 }}>{(MESES_CORTOS[(m || 1) - 1] || "").toUpperCase()}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 14.5, fontWeight: "700", color: "#1D1D1D" }} numberOfLines={1}>{e.titulo}</Text>
+          <Text style={{ fontSize: 12.5, color: "#8A8A8A", marginTop: 1 }} numberOfLines={1}>
+            {rel ? <Text style={{ color: "#187830", fontWeight: "700" }}>{rel} · </Text> : null}{e.lugar}
+          </Text>
+        </View>
+        {e.lat != null ? (
+          <TouchableOpacity onPress={() => { setVerTodos(false); onIr(e); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ backgroundColor: "#EAF6EC", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 }}>
+            <Text style={{ color: "#187830", fontWeight: "800", fontSize: 12.5 }}>🚕 Ir</Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
+  return (
+    <View style={{ marginTop: 22, backgroundColor: "#fff", borderRadius: 18, paddingHorizontal: 14, paddingTop: 14, paddingBottom: 6, borderWidth: 1, borderColor: "#ECEEE8" }}>
+      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}>
+        <Text style={{ fontSize: 15.5, fontWeight: "800", color: "#1D1D1D" }}>📅 Agenda en {nombreCiudad(municipio)}</Text>
+        <Text style={{ fontSize: 12, color: "#8A8A8A" }}>Pide tu carrera con tiempo</Text>
+      </View>
+      <View style={{ marginTop: 4 }}>{eventos.slice(0, 3).map(filaEvento)}</View>
+      {eventos.length > 3 ? (
+        <TouchableOpacity onPress={() => setVerTodos(true)} style={{ paddingVertical: 10, alignItems: "center" }}>
+          <Text style={{ color: "#187830", fontWeight: "800", fontSize: 13 }}>Ver agenda completa ({eventos.length}) ›</Text>
+        </TouchableOpacity>
+      ) : <View style={{ height: 6 }} />}
+      <Modal visible={verTodos} animationType="slide" onRequestClose={() => setVerTodos(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
+          <View style={{ paddingTop: 44, paddingBottom: 12, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 1, borderBottomColor: "#F0F1EE" }}>
+            <TouchableOpacity onPress={() => setVerTodos(false)} style={{ padding: 4 }}><Text style={{ fontSize: 22 }}>←</Text></TouchableOpacity>
+            <Text style={{ fontSize: 19, fontWeight: "800", color: "#1D1D1D" }}>📅 Agenda en {nombreCiudad(municipio)}</Text>
+          </View>
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 30 }}>
+            {eventos.map(filaEvento)}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
       <Modal visible={!!abierto} transparent animationType="slide" onRequestClose={() => setAbierto(null)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
           {abierto ? (
