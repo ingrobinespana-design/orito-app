@@ -3036,6 +3036,32 @@ def eventos_de_ciudad(municipio: str, db: Session = Depends(get_db)):
     vigentes.sort(key=lambda e: e.inicio or ahora)
     return [_evento_dict(e) for e in vigentes[:20]]
 
+@app.post("/eventos/importar")
+async def importar_eventos(clave: str, request: Request, db: Session = Depends(get_db)):
+    """Carga varios eventos de una (lista JSON) con RESPALDO_CLAVE. No duplica: si ya
+    existe uno con la misma ciudad, titulo e inicio, lo deja como esta."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    lista = await request.json()
+    creados, saltados = [], 0
+    for x in lista if isinstance(lista, list) else []:
+        ini = _fecha_evento(x.get("inicio"))
+        ya = db.query(EventoCiudad).filter(EventoCiudad.municipio == x.get("municipio"),
+                                           EventoCiudad.titulo == x.get("titulo"), EventoCiudad.inicio == ini).first()
+        if ya:
+            saltados += 1
+            continue
+        e = EventoCiudad(municipio=x["municipio"], titulo=x["titulo"][:120], lugar=x["lugar"][:160],
+                         lat=x.get("lat"), lon=x.get("lon"), inicio=ini,
+                         fin=_fecha_evento(x.get("fin")) if x.get("fin") else None,
+                         descripcion=(x.get("descripcion") or "")[:600] or None,
+                         imagen=x.get("imagen") or None, enlace=x.get("enlace") or None, activo="si")
+        db.add(e)
+        creados.append(e.titulo)
+    db.commit()
+    return {"creados": creados, "ya_existian": saltados}
+
 @app.get("/admin/eventos")
 def eventos_admin(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     ahora = ahora_colombia()
