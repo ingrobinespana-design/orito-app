@@ -7442,7 +7442,9 @@ function AdminCarrerasScreen({ navigation, route }) {
   const nombreDe = (u) => (u.nombre || "").trim() || "⚠️ Sin nombre";
   // incompleto o invalido: sin nombre, correo como nombre, o celular que no es colombiano
   // (los robots de prueba de Google Play se registran con numeros de EE. UU., ej. 650...)
-  const incompleto = (u) => !nombreValido(u.nombre) || !celularValido(u.telefono);
+  const eliminada = (u) => String(u.telefono || "").startsWith("ELIMINADO-");
+  const incompleto = (u) => !eliminada(u) && (!nombreValido(u.nombre) || !celularValido(u.telefono));
+  const eliminadas = [...conductores.map(x => ({ ...x, rol: "conductor" })), ...clientes].filter(eliminada);
   const incompletos = [...conductores.map(x => ({ ...x, rol: "conductor" })), ...clientes].filter(incompleto);
   const enLinea = conductores.filter(x => x.disponible === "si" && x.activo !== "no").length;
   const porVerificar = conductores.filter(x => x.verificado !== "si" && x.activo !== "no");
@@ -7475,10 +7477,10 @@ function AdminCarrerasScreen({ navigation, route }) {
       <Text style={{ color: "#C4C8BE", fontSize: 20, marginLeft: 2 }}>›</Text>
     </TouchableOpacity>
   );
-  const SECCIONES_MAS = [["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
+  const SECCIONES_MAS = [["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
   const TITULOS = { inicio: "Inicio", conductores: "Conductores", usuarios: "Pasajeros", carreras: "Carreras", mas: "Más",
-    numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte" };
-  const enMas = ["mas", "numeros", "ciudades", "eventos", "cobro"].includes(pestana);
+    numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
+  const enMas = ["mas", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
   const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
   const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
 
@@ -7577,7 +7579,7 @@ function AdminCarrerasScreen({ navigation, route }) {
               <Text style={{ fontSize: 13, color: "#888", marginTop: 10 }}>No se encontró a nadie.</Text>
             ) : (
               <View style={{ marginTop: 10 }}>
-                {usuariosHallados.map(u => fila(`b${u.id}`, u, null, nombreDe(u), `${u.rol === "conductor" ? "🚕 Conductor" : "👤 Pasajero"} · ${u.telefono || "sin teléfono"} · ${u.municipio || "—"}`,
+                {usuariosHallados.filter(u => !eliminada(u)).map(u => fila(`b${u.id}`, u, null, nombreDe(u), `${u.rol === "conductor" ? "🚕 Conductor" : "👤 Pasajero"} · ${u.telefono || "sin teléfono"} · ${u.municipio || "—"}`,
                   u.activo === "no" ? chipEstado("Bloqueado", "#C0392B", "#FBECEC") : null,
                   () => abrirFicha(u.rol === "conductor" ? "conductor" : "usuario", u)))}
               </View>
@@ -7681,7 +7683,7 @@ function AdminCarrerasScreen({ navigation, route }) {
         )}
         {pestana === "conductores" && (() => {
           const q = buscaCond.trim().toLowerCase();
-          const lista = conductores
+          const lista = conductores.filter(x => !eliminada(x))
             .filter(x => filtroCond === "todos" ? x.activo !== "no"
               : filtroCond === "revisar" ? (x.verificado !== "si" && x.activo !== "no")
               : filtroCond === "verificados" ? (x.verificado === "si" && x.activo !== "no")
@@ -7689,7 +7691,7 @@ function AdminCarrerasScreen({ navigation, route }) {
               : x.activo === "no")
             .filter(x => !q || (x.nombre || "").toLowerCase().includes(q) || (x.telefono || "").includes(q.replace(/\D/g, "") || "~") || (x.placa || "").toLowerCase().includes(q))
             .sort((a, b) => (b.disponible === "si") - (a.disponible === "si") || (a.nombre || "").localeCompare(b.nombre || ""));
-          const n = (f) => conductores.filter(x => f === "todos" ? x.activo !== "no" : f === "revisar" ? (x.verificado !== "si" && x.activo !== "no") : f === "verificados" ? (x.verificado === "si" && x.activo !== "no") : f === "fundadores" ? x.fundador === "si" : x.activo === "no").length;
+          const n = (f) => conductores.filter(x => !eliminada(x)).filter(x => f === "todos" ? x.activo !== "no" : f === "revisar" ? (x.verificado !== "si" && x.activo !== "no") : f === "verificados" ? (x.verificado === "si" && x.activo !== "no") : f === "fundadores" ? x.fundador === "si" : x.activo === "no").length;
           return (
             <>
               <TextInput value={buscaCond} onChangeText={setBuscaCond} placeholder="Buscar por nombre, teléfono o placa" style={[styles.input, { backgroundColor: "#fff" }]} />
@@ -7714,13 +7716,14 @@ function AdminCarrerasScreen({ navigation, route }) {
 
         {pestana === "usuarios" && (() => {
           const q = filtroCli.trim().toLowerCase();
+          const vivos = clientes.filter(u => !eliminada(u));
           const lista = q
-            ? clientes.filter(u => (u.nombre || "").toLowerCase().includes(q) || (u.telefono || "").includes(q.replace(/\D/g, "") || "~"))
-            : clientes;
+            ? vivos.filter(u => (u.nombre || "").toLowerCase().includes(q) || (u.telefono || "").includes(q.replace(/\D/g, "") || "~"))
+            : vivos;
           return (
             <>
               <TextInput value={filtroCli} onChangeText={setFiltroCli} placeholder="Buscar por nombre o teléfono" style={[styles.input, { backgroundColor: "#fff" }]} />
-              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 10 }}>{clientes.length} pasajeros · los más recientes primero</Text>
+              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 10 }}>{vivos.length} pasajeros · los más recientes primero</Text>
               {lista.length === 0 ? (
                 <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>{clientes.length === 0 ? "Aún no hay pasajeros." : "Nadie coincide con la búsqueda."}</Text>
               ) : lista.map(u => fila(`u${u.id}`, u, null, nombreDe(u),
@@ -7791,6 +7794,21 @@ function AdminCarrerasScreen({ navigation, route }) {
         })()}
 
         {pestana === "eventos" && <AdminEventos />}
+        {pestana === "eliminadas" && (
+          <>
+            <Text style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Cuentas que se eliminaron: sus datos personales se borraron y sus viajes quedan anónimos solo para las estadísticas. Su número quedó libre para registrarse de nuevo.</Text>
+            {eliminadas.length === 0 ? <Text style={{ color: "#888", textAlign: "center", padding: 20 }}>No hay cuentas eliminadas.</Text> : null}
+            {eliminadas.map(u => (
+              <View key={`e${u.rol}${u.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#ECEEE8", opacity: 0.75 }}>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "#F1F2EF", alignItems: "center", justifyContent: "center" }}><Text>🗑️</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "700", color: "#555" }}>Cuenta #{u.id}</Text>
+                  <Text style={{ fontSize: 12.5, color: "#8A8A8A" }}>{u.rol === "conductor" ? "Conductor" : "Pasajero"} · {nombreCiudad(u.municipio || "—")}{u.carreras_cliente || u.carreras_conductor ? ` · ${(u.carreras_cliente || 0) + (u.carreras_conductor || 0)} viajes en el historial` : ""}</Text>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
         {pestana === "ciudades" && (
           <>
             {/* --- formulario: abrir ciudad nueva --- */}
