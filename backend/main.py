@@ -2471,10 +2471,108 @@ _RX_CRUCE = _re_bus.compile(
     r"^\s*" + _VIAS + r"\.?\s*(\d+\s*[a-z]?(?:\s*(?:bis|norte|sur|n|s|oeste|este))?)\s+(?:con|y|x|&|#|n[o°º]\.?)\s*"
     + r"(?:" + _VIAS + r"\.?\s*)?(\d+\s*[a-z]?)\s*(?:-\s*(\d+))?\s*$", _re_bus.I)
 
+import difflib as _dl
+import concurrent.futures as _cf
+
+def _sin_tildes(t: str) -> str:
+    return "".join(c for c in _ud_bus.normalize("NFD", t or "") if _ud_bus.category(c) != "Mn").lower()
+
+# como la gente escribe el tipo de via (con errores) -> forma que entiende el mapa
+_VIA_TYPOS = {
+    "carrera": "Carrera", "carera": "Carrera", "carerra": "Carrera", "carrrera": "Carrera", "karrera": "Carrera",
+    "carrea": "Carrera", "carreara": "Carrera", "cra": "Carrera", "cr": "Carrera", "kr": "Carrera", "kra": "Carrera",
+    "crr": "Carrera", "carr": "Carrera", "cra.": "Carrera", "kra.": "Carrera",
+    "calle": "Calle", "cale": "Calle", "cll": "Calle", "cl": "Calle", "clle": "Calle", "calel": "Calle", "cll.": "Calle", "cl.": "Calle",
+    "avenida": "Avenida", "av": "Avenida", "av.": "Avenida", "ave": "Avenida", "avda": "Avenida", "aveneda": "Avenida", "avenid": "Avenida",
+    "diagonal": "Diagonal", "dg": "Diagonal", "diag": "Diagonal", "diagonla": "Diagonal",
+    "transversal": "Transversal", "tv": "Transversal", "tr": "Transversal", "transv": "Transversal", "trasversal": "Transversal",
+}
+# palabras comunes de sitios: se corrigen si estan mal escritas (plasa -> plaza)
+_VOCAB = ["plaza", "centro", "comercial", "terminal", "transporte", "transportes", "hospital", "clinica",
+          "universidad", "colegio", "escuela", "parque", "estadio", "iglesia", "barrio", "aeropuerto",
+          "jardin", "unicentro", "chipichape", "cosmocentro", "imbanaco", "pasoancho", "palmetto",
+          "mercado", "galeria", "estacion", "bomba", "supermercado", "drogueria", "farmacia", "banco",
+          "alcaldia", "gobernacion", "batallon", "policia", "notaria", "registraduria", "gimnasio",
+          "universitario", "valle", "norte", "sur", "oeste", "oriente", "principal", "puente", "glorieta",
+          "condominio", "conjunto", "urbanizacion", "edificio", "torre", "hotel", "restaurante", "panaderia",
+          "cementerio", "polideportivo", "coliseo", "biblioteca", "museo", "zoologico", "teatro", "plazoleta"]
+
+def _corregir_vias(t: str) -> str:
+    """Solo el tipo de via (cra, kra, carera, cll...): seguro, no toca nombres."""
+    return " ".join(_VIA_TYPOS.get(_sin_tildes(w).strip(","), w) for w in (t or "").split())
+
+def _corregir_palabras(t: str) -> str:
+    """Palabras comunes mal escritas (plasa -> plaza). SOLO de respaldo, cuando la
+    busqueda original trae poco: un nombre real (Centenario) no se debe 'corregir'."""
+    salida = []
+    for w in (t or "").split():
+        base = _sin_tildes(w).strip(",.")
+        if len(base) >= 4 and base.isalpha() and base not in _VOCAB:
+            m = _dl.get_close_matches(base, _VOCAB, n=1, cutoff=0.8)
+            if m:
+                salida.append(m[0]); continue
+        salida.append(w)
+    return " ".join(salida)
+
+def _lugares_conocidos(t: str, municipio: str, db: Session, lat=None, lon=None):
+    """Sitios que Tukan ya aprendio en esa ciudad (con coordenadas), tolerando errores
+    de escritura. Clave en pueblos donde el mapa tiene pocos datos (Putumayo)."""
+    if not municipio:
+        return []
+    q = _sin_tildes(t).strip()
+    if len(q) < 3:
+        return []
+    candidatos = []
+    for l in db.query(Lugar).filter(Lugar.municipio == municipio, Lugar.lat.isnot(None)).all():
+        n = _sin_tildes(l.nombre)
+        if q in n:
+            score = 1.0
+        else:
+            score = max(_dl.SequenceMatcher(None, q, n).ratio(),
+                        _dl.SequenceMatcher(None, q, n[:len(q) + 2]).ratio())
+        if score >= 0.78:
+            candidatos.append((score, l.usos or 0, l))
+    candidatos.sort(key=lambda x: (-x[0], -x[1]))
+    return [{"nombre": f"{l.nombre}, {municipio}", "titulo": l.nombre, "detalle": municipio,
+             "lat": l.lat, "lon": l.lon} for _, _, l in candidatos[:3]]
+
+def _mapbox_suggest(t, cerca_lat, cerca_lon):
+    """Search Box /suggest + /retrieve: el que MEJOR tolera errores ("imbanco" ->
+    Imbanaco). Se usa solo de respaldo (cuando lo demas trae poco)."""
+    import urllib.request as _ur, urllib.parse as _up, json as _json, uuid as _uuid
+    sesion = str(_uuid.uuid4())
+    params = {"q": t, "access_token": MAPBOX_TOKEN, "country": "co", "language": "es", "limit": "5",
+              "session_token": sesion, "types": "poi,address,street,neighborhood,place,locality"}
+    if cerca_lat is not None and cerca_lon is not None:
+        params["proximity"] = f"{cerca_lon},{cerca_lat}"
+    hdr = {"Referer": MAPBOX_REFERER, "User-Agent": "tukan-app/1.0"}
+    req = _ur.Request("https://api.mapbox.com/search/searchbox/v1/suggest?" + _up.urlencode(params), headers=hdr)
+    with _ur.urlopen(req, timeout=5) as r:
+        sug = (_json.loads(r.read().decode("utf-8")).get("suggestions") or [])[:4]
+
+    def traer(sg):
+        try:
+            u = ("https://api.mapbox.com/search/searchbox/v1/retrieve/" + _up.quote(sg["mapbox_id"]) + "?"
+                 + _up.urlencode({"access_token": MAPBOX_TOKEN, "session_token": sesion}))
+            with _ur.urlopen(_ur.Request(u, headers=hdr), timeout=5) as r:
+                f = (_json.loads(r.read().decode("utf-8")).get("features") or [None])[0]
+            c = (f or {}).get("geometry", {}).get("coordinates")
+            if not (c and len(c) == 2):
+                return None
+            pr = f.get("properties", {}) or {}
+            titulo = pr.get("name") or sg.get("name")
+            detalle = pr.get("full_address") or pr.get("place_formatted") or ""
+            return {"nombre": f"{titulo}, {detalle}" if detalle else titulo, "titulo": titulo,
+                    "detalle": detalle, "lat": c[1], "lon": c[0]}
+        except Exception:
+            return None
+    with _cf.ThreadPoolExecutor(max_workers=4) as ex:
+        return [x for x in ex.map(traer, [g for g in sug if g.get("mapbox_id")]) if x]
+
 def _normalizar_busqueda(t: str) -> str:
     """'barrio San Fernando' -> 'San Fernando'; 'Calle 5 con Carrera 66' (la forma
     como hablamos en Colombia) -> 'Calle 5 # 66-00', que Mapbox SI ubica en la esquina."""
-    t = (t or "").strip()
+    t = _corregir_vias((t or "").strip())
     t = _re_bus.sub(r"^(barrio|br|b/|urbanizacion|urbanización|conjunto)\s+", "", t, flags=_re_bus.I)
     m = _RX_CRUCE.match(t)
     if m:
@@ -2564,6 +2662,11 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         except Exception:
             pass
 
+    # 0) sitios que Tukan ya conoce en esa ciudad (tolera errores)
+    try:
+        agregar(_lugares_conocidos(original, municipio or _ciudad_cercana(cerca_lat, cerca_lon, db), db))
+    except Exception:
+        pass
     # una esquina ("Calle 5 con 66") la ubica mejor la nomenclatura (v6); lo demas,
     # el Search Box. Cada fuente en try/except: si una falla, siguen las otras.
     if es_cruce:
@@ -2582,6 +2685,14 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         ciudad = municipio or _ciudad_cercana(cerca_lat, cerca_lon, db)
         # OSM encuentra mejor los sitios si se le dice la ciudad ("Terminal ... Cali")
         intentar(_nominatim_geo, f"{t}, {ciudad}" if ciudad else t, cerca_lat, cerca_lon)
+    # respaldo 1: palabras comunes mal escritas (jardin plasa -> jardin plaza)
+    if len(resultados) < 3:
+        corregido = _corregir_palabras(t)
+        if corregido.lower() != t.lower():
+            intentar(_mapbox_searchbox, corregido, cerca_lat, cerca_lon)
+    # respaldo 2: el mas tolerante a errores de escritura (imbanco -> Imbanaco)
+    if len(resultados) < 3:
+        intentar(_mapbox_suggest, original, cerca_lat, cerca_lon)
     return resultados[:7]
 
 @app.get("/ubicacion/buscar")
