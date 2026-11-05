@@ -3658,7 +3658,13 @@ function PedirCarreraScreen({ navigation, route }) {
   }, [origenCoords]);
 
   // cuando hay origen, destino y vehiculo, estima distancia y tarifa sugerida
-  const pedidoTarifa = useRef(0);   // solo vale la respuesta del ULTIMO vehiculo/ruta elegido
+  const pedidoTarifa = useRef(0);
+  const intercambiarPuntos = () => {
+    setForm((f) => ({ ...f, origen: f.destino, destino: f.origen,
+      origen_detalle: f.destino_detalle, destino_detalle: f.origen_detalle }));
+    const o = origenCoords, d = destinoCoords;
+    setOrigenCoords(d); setDestinoCoords(o);
+  };   // solo vale la respuesta del ULTIMO vehiculo/ruta elegido
   useEffect(() => {
     if (!muni || !muni.usa_gps || !origenCoords || !destinoCoords || !vehiculo) { setEstimado(null); return; }
     const p = qs({
@@ -4532,7 +4538,7 @@ function PedirCarreraScreen({ navigation, route }) {
               <View style={{ width: 2, flex: 1, backgroundColor: "#DADDD5", marginVertical: 4 }} />
               <View style={{ width: 13, height: 13, borderRadius: 3, backgroundColor: "#F06000", borderWidth: 3, borderColor: "#FAD6B8" }} />
             </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
+            <View style={{ flex: 1, marginLeft: 10, marginRight: (origenCoords || destinoCoords) ? 44 : 0 }}>
               <TouchableOpacity onPress={() => setMapaAbierto("origen")} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#E9EBE5" }}>
                 <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>RECOGIDA</Text>
                 <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: origenCoords ? "#1C2B22" : "#B9B3A6" }}>
@@ -4546,6 +4552,15 @@ function PedirCarreraScreen({ navigation, route }) {
                 </Text>
               </TouchableOpacity>
             </View>
+            {/* ⇅ intercambiar recogida y destino (si se eligio al reves) */}
+            {(origenCoords || destinoCoords) ? (
+              <TouchableOpacity onPress={intercambiarPuntos} activeOpacity={0.8}
+                style={{ position: "absolute", right: 12, top: "50%", marginTop: -19, width: 38, height: 38, borderRadius: 19,
+                  backgroundColor: "#fff", borderWidth: 1.5, borderColor: "#DADDD5", alignItems: "center", justifyContent: "center",
+                  shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}>
+                <Text style={{ fontSize: 19, color: "#187830", fontWeight: "800" }}>⇅</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           {/* guardar el destino actual como Casa / Trabajo (para la próxima) */}
