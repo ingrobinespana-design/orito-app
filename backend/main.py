@@ -832,7 +832,7 @@ def novedades(dias: int = 1, db: Session = Depends(get_db), admin: Usuario = Dep
                 "hace": hace(u.creado), "tipo_vehiculo": u.tipo_vehiculo}
     reg = db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), Usuario.creado >= desde).order_by(Usuario.id.desc()).all()
     ultimos = db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), ~Usuario.telefono.like("ELIMINADO-%"))         .order_by(Usuario.id.desc()).limit(8).all()
-    cs = db.query(Carrera).filter(Carrera.fecha >= desde).all()
+    cs = [c for c in db.query(Carrera).filter(Carrera.fecha >= desde).all() if not es_de_prueba(c)]
     fin = [c for c in cs if c.estado == "finalizada"]
     ciudades = {}
     for c in cs:
@@ -1361,7 +1361,7 @@ def demanda_por_zona(db: Session = Depends(get_db), admin: Usuario = Depends(sol
     hoy0 = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
     semana0 = hoy0 - timedelta(days=hoy0.weekday())
     munis = db.query(Municipio).order_by(Municipio.nombre).all()
-    carreras = db.query(Carrera).all()
+    carreras = [c for c in db.query(Carrera).all() if not es_de_prueba(c)]
     usuarios = db.query(Usuario).all()
     activos = ("buscando", "aceptada", "en_sitio", "en_camino")
     ciudades = []
@@ -4109,9 +4109,13 @@ def _periodos_desde():
         "total": datetime.min,
     }
 
+def es_de_prueba(c) -> bool:
+    """Carrera hecha por una cuenta de revision de Google Play: no cuenta en cifras."""
+    return "".join(ch for ch in (c.cliente_telefono or "") if ch.isdigit())[-10:] in CUENTAS_PRUEBA_PLAY
+
 def _resumen(carreras, desde):
-    """Cuenta carreras y suma lo ganado (tarifa) desde una fecha."""
-    hechas = [c for c in carreras if c.fecha and c.fecha >= desde]
+    """Cuenta carreras y suma lo ganado (tarifa) desde una fecha (sin las de prueba)."""
+    hechas = [c for c in carreras if c.fecha and c.fecha >= desde and not es_de_prueba(c)]
     return {"carreras": len(hechas), "ganado": sum((c.tarifa or 0) for c in hechas)}
 
 @app.get("/conductores/{conductor_id}/estadisticas")
@@ -4133,7 +4137,7 @@ def estadisticas_globales(db: Session = Depends(get_db), admin: Usuario = Depend
     finalizadas = db.query(Carrera).filter(Carrera.estado == "finalizada").all()
     periodos = _periodos_desde()
     resumen = {p: _resumen(finalizadas, desde) for p, desde in periodos.items()}
-    todas = db.query(Carrera).all()
+    todas = [c for c in db.query(Carrera).all() if not es_de_prueba(c)]
     conductores = db.query(Usuario).filter(Usuario.rol == "conductor").all()
     # embudo de difusion: visitas a /app y descargas del APK, hoy y total
     hoy = periodos["hoy"]
