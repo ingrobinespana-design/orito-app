@@ -1946,14 +1946,14 @@ def avisar_carrera_nueva(carrera_id: int):
     db = SessionLocal()
     hay_cercanos = False
     mensajes = []
+    tel_excl, dueno_avisado = "", False
     try:
         carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
         if not carrera or carrera.estado != "buscando":
             return
         ahora = datetime.now()
+        # (aunque no haya candidatos se sigue: puede faltar programar el aviso al dueño)
         candidatos = _candidatos_carrera(carrera, db)
-        if not candidatos:
-            return
         cercanos = [c for c in candidatos
                     if (km_conductor_a_recogida(c, carrera, ahora) or 1e9) <= RADIO_CERCANIA_KM]
         hay_cercanos = len(cercanos) > 0
@@ -1961,9 +1961,14 @@ def avisar_carrera_nueva(carrera_id: int):
         # se le avisa a todos de una
         objetivo = cercanos if hay_cercanos else candidatos
         mensajes = _mensajes_carrera(carrera, objetivo, "Nueva carrera")
+        # ¿el dueño (ruta exclusiva) quedo por fuera por su radio? -> al minuto se le avisa
+        tel_excl = _cfg_exclusivo()[0]
+        dueno_avisado = bool(tel_excl) and any(_digitos(c.telefono)[-10:] == tel_excl for c in objetivo)
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
+    if tel_excl and not dueno_avisado:
+        threading.Timer(EXCLUSIVO_ESPERA_SEG + 1, avisar_dueno_si_sigue_libre, args=[carrera_id]).start()
     # arrancamos solo con los cercanos: si en 30s sigue libre, se abre a TODOS
     if hay_cercanos:
         threading.Timer(VENTANA_CERCANIA_SEG, avisar_carrera_a_todos, args=[carrera_id]).start()
@@ -2557,10 +2562,39 @@ def le_sirve_la_carrera(conductor: Usuario, carrera: Carrera, con_radio: bool = 
     if conductor.tipo_vehiculo != carrera.vehiculo_pedido:
         return False
     if es_dueno and con_radio and radio > 0:
-        km = km_conductor_a_recogida(conductor, carrera, datetime.now())
-        if km is not None and km > radio:
-            return False   # sin GPS reciente no se le oculta nada
+        ahora = datetime.now()
+        # el radio solo vale el PRIMER MINUTO: si nadie la toma, tambien es para el
+        edad = (ahora - carrera.fecha).total_seconds() if carrera.fecha else 1e9
+        if edad < EXCLUSIVO_ESPERA_SEG:
+            km = km_conductor_a_recogida(conductor, carrera, ahora)
+            # sin GPS reciente tampoco (antes le aparecia tarde, a los minutos)
+            if km is None or km > radio:
+                return False
     return True
+
+EXCLUSIVO_ESPERA_SEG = 60   # tras 1 min sin que nadie la tome, el dueño tambien la recibe
+
+@nunca_falla
+def avisar_dueno_si_sigue_libre(carrera_id: int):
+    """Al minuto: si la carrera sigue buscando y el dueño no la recibio por el radio,
+    se le avisa ahora (push normal, igual que a cualquier conductor)."""
+    db = SessionLocal()
+    mensajes = []
+    try:
+        carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+        if not carrera or carrera.estado != "buscando":
+            return
+        tel_excl, _r, _t = _cfg_exclusivo()
+        if not tel_excl:
+            return
+        con_oferta = {o.conductor_id for o in db.query(Oferta).filter(
+            Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente").all()}
+        duenos = [c for c in _candidatos_carrera(carrera, db)
+                  if _digitos(c.telefono)[-10:] == tel_excl and c.id not in con_oferta]
+        mensajes = _mensajes_carrera(carrera, duenos, "Carrera libre")
+    finally:
+        db.close()
+    limpiar_tokens_muertos(push.enviar(mensajes))
 
 @app.get("/lugares")
 def obtener_lugares(buscar: str = None, zona: str = None, municipio: str = None,
