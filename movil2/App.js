@@ -3658,6 +3658,7 @@ function PedirCarreraScreen({ navigation, route }) {
   }, [origenCoords]);
 
   // cuando hay origen, destino y vehiculo, estima distancia y tarifa sugerida
+  const pedidoTarifa = useRef(0);   // solo vale la respuesta del ULTIMO vehiculo/ruta elegido
   useEffect(() => {
     if (!muni || !muni.usa_gps || !origenCoords || !destinoCoords || !vehiculo) { setEstimado(null); return; }
     const p = qs({
@@ -3665,12 +3666,16 @@ function PedirCarreraScreen({ navigation, route }) {
       origen_lat: origenCoords.lat, origen_lon: origenCoords.lon,
       destino_lat: destinoCoords.lat, destino_lon: destinoCoords.lon,
     });
+    const mio = ++pedidoTarifa.current;
     fetch(`${API}/tarifa?${p}`).then(r => r.json())
       .then(d => {
+        if (mio !== pedidoTarifa.current) return;   // ya eligio otro vehiculo/ruta
         if (d && !d.detail) {
           setEstimado(d);
-          // precarga la oferta con la sugerencia para que el cliente arranque de ahi
-          if (d.tarifa_sugerida && !oferta) setOferta(String(d.tarifa_sugerida));
+          // la oferta arranca SIEMPRE en el sugerido (con descuento) del vehiculo y ruta
+          // elegidos: al cambiar moto/carro o la ruta se actualiza sola (antes quedaba
+          // pegada en el primer valor, p. ej. el de moto aunque luego eligiera carro)
+          setOferta(d.tarifa_sugerida ? String(d.tarifa_sugerida) : "");
         }
       }).catch(() => {});
   }, [origenCoords, destinoCoords, muni, vehiculo]);
@@ -4844,7 +4849,7 @@ function PedirCarreraScreen({ navigation, route }) {
                   ) : null}
                 </View>
                 <Text style={{ fontSize: 12, color: "#9a5a3a", marginTop: 2 }}>
-                  Precio de lanzamiento para ~{estimado.distancia_km} km. ¡Aprovecha!
+                  Precio de lanzamiento. ¡Aprovecha!
                 </Text>
                 {String(estimado.tarifa_sugerida) !== oferta && (
                   <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#E8470A", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
@@ -4857,7 +4862,7 @@ function PedirCarreraScreen({ navigation, route }) {
                 <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>💵 TARIFA SUGERIDA (mínimo)</Text>
                 <Text style={{ fontSize: 26, fontWeight: "800", color: "#187830", marginTop: 2 }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
                 <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>
-                  Para ~{estimado.distancia_km} km. Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido.
+                  Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido.
                 </Text>
                 {String(estimado.tarifa_sugerida) !== oferta && (
                   <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#187830", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
