@@ -3716,7 +3716,7 @@ function PedirCarreraScreen({ navigation, route }) {
   const usarComoDestino = (l) => {
     if (l.lat == null) return;
     setDestinoCoords({ lat: l.lat, lon: l.lon });
-    setForm(f => ({ ...f, destino: l.direccion || l.etiqueta || "Destino guardado" }));
+    setForm(f => ({ ...f, destino: limpiaDir(l.direccion) || l.etiqueta || "Destino guardado" }));
   };
   const guardarDestino = (etiqueta) => {
     if (!destinoCoords) { avisar("Marca el destino", "Primero marca a dónde vas para poder guardarlo."); return; }
@@ -4668,7 +4668,7 @@ function PedirCarreraScreen({ navigation, route }) {
                     <TouchableOpacity key={"r" + i} onPress={() => usarComoDestino(l)}
                       style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#F7F8F5", borderWidth: 1, borderColor: "#E6E8E2", borderRadius: 20, paddingVertical: 9, paddingHorizontal: 14 }}>
                       <Text style={{ fontSize: 14 }}>🕘</Text>
-                      <Text numberOfLines={1} style={{ color: "#555", fontWeight: "600", fontSize: 13, maxWidth: 150 }}>{l.direccion || "Reciente"}</Text>
+                      <Text numberOfLines={1} style={{ color: "#555", fontWeight: "600", fontSize: 13, maxWidth: 150 }}>{limpiaDir(l.direccion) || "Reciente"}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -5009,7 +5009,7 @@ function PedirCarreraScreen({ navigation, route }) {
                   ) : null}
                 </View>
                 <Text style={{ fontSize: 12, color: "#9a5a3a", marginTop: 2 }}>
-                  Precio de lanzamiento. ¡Aprovecha!
+                  Precio especial. ¡Aprovecha!
                 </Text>
                 {String(estimado.tarifa_sugerida) !== oferta && (
                   <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#E8470A", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
