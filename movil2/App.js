@@ -6860,7 +6860,7 @@ function ConductorScreen({ navigation, route }) {
                   {/* esperando sin solicitudes = el mapa manda (ocupa casi toda la
                       pantalla); cuando entra una solicitud se achica para dejar ver
                       la tarjeta. Nunca baja de 360. */}
-                  <View style={{ height: (disponibles.length > 0 || expresosDisp.length > 0) ? 300 : Math.max(360, Dimensions.get("window").height - 330), borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
+                  <View style={{ height: disponibles.length > 0 ? 300 : Math.max(360, Dimensions.get("window").height - 330), borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
                     <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")}
                       conductor={miUbic}
                       vehiculo={usuario.tipo_vehiculo}
@@ -6900,17 +6900,6 @@ function ConductorScreen({ navigation, route }) {
             {/* Solicitudes: SOLO cuando hay alguna (encabezado + tarjetas). Conectado
                 SIN solicitudes = el mapa grande + el banner "Buscando viajes" de abajo
                 es el unico indicador (no se repite el mensaje ni se deja el hueco). */}
-            {mias.length === 0 && disponible && expresosDisp.length > 0 && (
-              <>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, marginTop: 4 }}>
-                  <Text style={styles.seccionTitulo}>🚌 Viajes a otra ciudad</Text>
-                  <View style={{ backgroundColor: "#F06000", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
-                    <Text style={{ fontSize: 11, color: "#fff", fontWeight: "800" }}>{expresosDisp.length} NUEVO{expresosDisp.length > 1 ? "S" : ""}</Text>
-                  </View>
-                </View>
-                {expresosDisp.map(tarjetaExpreso)}
-              </>
-            )}
             {mias.length === 0 && disponibles.length > 0 && (
               <>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -7089,7 +7078,6 @@ function ConductorScreen({ navigation, route }) {
         let e;
         if (!disponible) e = { txt: "Desconectado", sub: "Toca aquí para conectarte y recibir viajes", color: "#C0392B", pulse: false };
         else if (hayDisp) e = { txt: "🚗 ¡Viaje disponible!", sub: `${disponibles.length} solicitud${disponibles.length > 1 ? "es" : ""} esperando`, color: "#F06000", pulse: true };
-        else if (expresosDisp.length > 0) e = { txt: "🚌 ¡Viaje a otra ciudad!", sub: `${expresosDisp.length} esperando conductor · míralo arriba`, color: "#F06000", pulse: true };
         else e = { txt: "Buscando viajes…", sub: "Estás conectado. Te avisamos apenas entre uno", color: "#187830", pulse: true };
         return (
           <TouchableOpacity activeOpacity={enServicio ? 1 : 0.7} onPress={enServicio ? undefined : cambiarDisponibilidad}
