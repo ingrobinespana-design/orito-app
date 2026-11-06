@@ -7896,6 +7896,102 @@ function precioDe(t, km, rec) {
 }
 // aviso a todos (notificacion): mensajes listos + uno propio, a quien y cuantos lo reciben
 // diagnostico rapido: que le falta a cada usuario + aviso a cada uno con lo suyo
+// admin: viajes y acarreos a otra ciudad (exclusiva del dueño por ciudad + viajes activos)
+function AdminExpresos() {
+  const [cfg, setCfg] = useState(null);
+  const [lista, setLista] = useState(null);
+  const cargar = () => {
+    adminFetch(`${API}/admin/expresos/config`).then(r => r.json()).then(d => d && d.ciudades && setCfg(d)).catch(() => {});
+    adminFetch(`${API}/admin/expresos`).then(r => r.json()).then(d => Array.isArray(d) && setLista(d)).catch(() => {});
+  };
+  useEffect(() => { cargar(); const t = setInterval(cargar, 10000); return () => clearInterval(t); }, []);
+  const guardar = (cambios) => adminFetch(`${API}/admin/expresos/config?${qs(cambios)}`, { method: "PUT" })
+    .then(r => r.json()).then(d => d && d.ciudades && setCfg(d)).catch(() => avisar("Error", "No hay conexión."));
+  const alternarCiudad = (c) => {
+    const ex = cfg.excluir.includes(c) ? cfg.excluir.filter(x => x !== c) : [...cfg.excluir, c];
+    guardar({ excluir: ex.join(",") });
+  };
+  const accion = (e, que) => confirmar(que === "liberar" ? "Liberar a todos" : "Cancelar viaje",
+    que === "liberar" ? "Se les envía ya a todos los conductores de la ciudad de salida." : "Se cancela y se les avisa al pasajero y al conductor. ¿Seguro?",
+    () => adminFetch(`${API}/admin/expresos/${e.id}/${que}`, { method: "PUT" }).then(cargar).catch(() => {}), que === "liberar" ? "Liberar" : "Sí, cancelar");
+  const ESTADO = { buscando: "🟠 Esperando conductor", aceptado: "🟢 Asignado", en_camino: "🚗 En camino" };
+  return (
+    <View style={{ gap: 12 }}>
+      <View style={styles.card}>
+        <Text style={styles.seccionTitulo}>⭐ Exclusiva del dueño</Text>
+        {!cfg ? <ActivityIndicator color="#187830" /> : (
+          <>
+            <Text style={{ fontSize: 12.5, color: "#777", marginTop: -4, marginBottom: 10 }}>
+              Los viajes que salen de una ciudad marcada le llegan primero solo a {cfg.dueno || "el dueño"} (si está conectado en ese departamento). Si lo descarta o pasan los minutos, les llega a todos. Las ciudades sin marcar van directo a los conductores de la zona.
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+              {[["si", "Encendida"], ["no", "Apagada"]].map(([k, t]) => (
+                <TouchableOpacity key={k} onPress={() => guardar({ activo: k })} style={[styles.chip, (cfg.activo ? "si" : "no") === k && styles.chipOn]}>
+                  <Text style={[styles.chipTxt, (cfg.activo ? "si" : "no") === k && styles.chipTxtOn]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {cfg.activo ? (
+              <>
+                <Text style={styles.etiqueta}>MINUTOS SOLO PARA EL DUEÑO</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                  {[5, 10, 15, 30].map(m => (
+                    <TouchableOpacity key={m} onPress={() => guardar({ minutos: m })} style={[styles.chip, cfg.minutos === m && styles.chipOn]}>
+                      <Text style={[styles.chipTxt, cfg.minutos === m && styles.chipTxtOn]}>{m} min</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.etiqueta}>CIUDADES CON EXCLUSIVA (toca para cambiar)</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {cfg.ciudades.map(c => {
+                    const on = !cfg.excluir.includes(c);
+                    return (
+                      <TouchableOpacity key={c} onPress={() => alternarCiudad(c)} style={[styles.chip, on && styles.chipOn]}>
+                        <Text style={[styles.chipTxt, on && styles.chipTxtOn]}>{on ? "⭐ " : ""}{nombreCiudad(c)}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+          </>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.seccionTitulo}>🛣️ Viajes activos ({lista ? lista.length : "…"})</Text>
+        {!lista ? <ActivityIndicator color="#187830" /> : lista.length === 0 ? <Text style={{ color: "#888" }}>No hay viajes a otra ciudad activos.</Text> : lista.map(e => (
+          <View key={e.id} style={{ borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingVertical: 10 }}>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+              <Text style={{ flex: 1, fontWeight: "800", color: "#1C2B22" }}>{esExpCarga(e) ? "🚚" : "🧍"} #{e.id} · {nombreCiudad(e.origen_municipio)} → {nombreCiudad(e.destino_municipio)}</Text>
+              <Text style={{ fontSize: 11.5, color: "#555", fontWeight: "700" }}>{ESTADO[e.estado] || e.estado}</Text>
+            </View>
+            <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>
+              {cuposDe(e)} · ${e.precio_por_cupo.toLocaleString()}{porCupo(e)} · {e.salida ? `sale ${fmtRecogida(e.salida)}` : "lo antes posible"}
+            </Text>
+            <Text style={{ fontSize: 12.5, color: "#555" }}>👤 {e.cliente_nombre} · {e.cliente_telefono}{e.conductor_nombre ? `   🚗 ${e.conductor_nombre}` : ""}</Text>
+            {e.en_exclusiva ? <Text style={{ fontSize: 12, color: "#8A5A00", fontWeight: "700", marginTop: 2 }}>⭐ En exclusiva del dueño</Text> : null}
+            {e.vencido ? <Text style={{ fontSize: 12, color: "#B85C00", fontWeight: "700", marginTop: 2 }}>⏰ Vencido (ya no se les muestra a los conductores)</Text> : null}
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+              {e.en_exclusiva ? (
+                <TouchableOpacity onPress={() => accion(e, "liberar")} style={{ backgroundColor: "#FFF6DB", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
+                  <Text style={{ color: "#8A5A00", fontWeight: "800", fontSize: 12 }}>Liberar a todos</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity onPress={() => whatsapp(e.cliente_telefono)} style={{ backgroundColor: "#25D366", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
+                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>WhatsApp cliente</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => accion(e, "cancelar")} style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#E6BDBD", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
+                <Text style={{ color: "#C0392B", fontWeight: "800", fontSize: 12 }}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // aviso para activar "Mostrar encima de otras apps" (sin ese permiso los avisos no saltan
 // encima de otra app). Se esconde solo cuando ya esta activo.
 function PermisoEncima({ texto }) {
@@ -8757,10 +8853,10 @@ function AdminCarrerasScreen({ navigation, route }) {
       <Text style={{ color: "#C4C8BE", fontSize: 20, marginLeft: 2 }}>›</Text>
     </TouchableOpacity>
   );
-  const SECCIONES_MAS = [["aviso", "📣", "Enviar aviso a todos"], ["bonos", "🎁", "Bonos de agradecimiento"], ["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
+  const SECCIONES_MAS = [["otraciudad", "🛣️", "Viajes a otra ciudad"], ["aviso", "📣", "Enviar aviso a todos"], ["bonos", "🎁", "Bonos de agradecimiento"], ["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
   const TITULOS = { inicio: "Inicio", conductores: "Conductores", usuarios: "Pasajeros", carreras: "Carreras", mas: "Más",
-    aviso: "Enviar aviso", bonos: "Bonos", numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
-  const enMas = ["mas", "aviso", "bonos", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
+    otraciudad: "Viajes a otra ciudad", aviso: "Enviar aviso", bonos: "Bonos", numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
+  const enMas = ["mas", "otraciudad", "aviso", "bonos", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
   const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
   const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
 
@@ -9088,6 +9184,7 @@ function AdminCarrerasScreen({ navigation, route }) {
 
         {pestana === "eventos" && <AdminEventos />}
         {pestana === "bonos" && <AdminBonos />}
+        {pestana === "otraciudad" && <AdminExpresos />}
         {pestana === "aviso" && <><AdminDiagnostico /><View style={{ height: 12 }} /><AdminAviso /></>}
         {pestana === "eliminadas" && (
           <>
