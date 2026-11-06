@@ -6232,7 +6232,7 @@ function ConductorScreen({ navigation, route }) {
   }, [porConfirmar && porConfirmar.id]);
   const [confirmando, setConfirmando] = useState(false);
   const darRecibido = (x) => {
-    setConfirmando(true);
+    setConfirmando(true); setSubExp("mios");
     userFetch(`${API}/expresos/${x.id}/recibido`, { method: "PUT" })
       .then(async (r) => { if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); } cargarExpresos(); })
       .catch(() => avisar("Error", "No hay conexión."))
@@ -6243,6 +6243,7 @@ function ConductorScreen({ navigation, route }) {
       .then(() => { cargarExpresos(); if (conAviso) avisar("Liberado", "Ya les llega a los demás conductores de esa ciudad."); })
       .catch(() => {});
   };
+  const [subExp, setSubExp] = useState("disp");   // pestaña Otra ciudad: "disp" (disponibles) | "mios" (tomados)
   const expVistos = useRef(null);   // ids de viajes a otra ciudad ya vistos (para avisar los nuevos)
   const [expNuevo, setExpNuevo] = useState(false);
   const cargarExpresos = () => {
@@ -6282,8 +6283,8 @@ function ConductorScreen({ navigation, route }) {
       () => userFetch(`${API}/expresos/${e.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" }).then(async r => {
         const d = await r.json().catch(() => null);
         if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); cargarExpresos(); return; }
-        avisar("✅ Viaje tomado", "Ya es tuyo. Contacta al cliente para coordinar la salida.");
-        cargarExpresos();
+        avisar("✅ Viaje tomado", "Ya es tuyo. Lo encuentras en 'Mis viajes'. Contacta al cliente para coordinar la salida.");
+        setSubExp("mios"); cargarExpresos();
       }).catch(() => avisar("Error", "No hay conexión.")), "Sí, tomar");
   };
 
@@ -7021,14 +7022,31 @@ function ConductorScreen({ navigation, route }) {
 
         {tab === "otraciudad" && (
           <>
-            <View style={{ backgroundColor: "#EAF1FB", borderRadius: 10, padding: 12, marginBottom: 12 }}>
-              <Text style={{ fontWeight: "800", color: "#1A56B8", fontSize: 14 }}>🚌 Viajes a otra ciudad (expresos)</Text>
-              <Text style={{ fontSize: 12, color: "#3a5a8a", marginTop: 2 }}>Viajes que salen de {usuario.municipio}. Tómalos al precio del cliente o propón tu precio por cupo.</Text>
+            <View style={{ flexDirection: "row", backgroundColor: "#fff", borderRadius: 12, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: "#E9EBE5" }}>
+              {[["disp", "🆕 Disponibles", expresosDisp.length], ["mios", "🚗 Mis viajes", misExpresos.length]].map(([k, lbl, n]) => {
+                const on = subExp === k;
+                return (
+                  <TouchableOpacity key={k} activeOpacity={0.85} onPress={() => setSubExp(k)}
+                    style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6, backgroundColor: on ? "#187830" : "transparent" }}>
+                    <Text style={{ fontSize: 13.5, fontWeight: "800", color: on ? "#fff" : "#5A6B5F" }}>{lbl}</Text>
+                    {n > 0 ? (
+                      <View style={{ minWidth: 20, height: 20, borderRadius: 10, backgroundColor: on ? "#fff" : "#F06000", alignItems: "center", justifyContent: "center", paddingHorizontal: 5 }}>
+                        <Text style={{ fontSize: 11, fontWeight: "800", color: on ? "#187830" : "#fff" }}>{n}</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
-            {misExpresos.length > 0 && (
+            {subExp === "mios" && misExpresos.length === 0 && (
+              <View style={{ alignItems: "center", padding: 24 }}>
+                <Text style={{ fontSize: 34 }}>🚗</Text>
+                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>No tienes viajes a otra ciudad tomados.{"\n"}Los que tomes o te acepten aparecen aquí.</Text>
+              </View>
+            )}
+            {subExp === "mios" && misExpresos.length > 0 && (
               <>
-                <Text style={styles.seccionTitulo}>Tus viajes tomados</Text>
                 {misExpresos.map(e => (
                   <View key={e.id} style={[styles.card, { marginBottom: 10, borderLeftWidth: 3, borderLeftColor: "#187830" }]}>
                     <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
@@ -7091,13 +7109,12 @@ function ConductorScreen({ navigation, route }) {
               </>
             )}
 
-            <Text style={styles.seccionTitulo}>Disponibles</Text>
-            {expresosDisp.length === 0 ? (
+            {subExp === "disp" && (expresosDisp.length === 0 ? (
               <View style={{ alignItems: "center", padding: 24 }}>
                 <Text style={{ fontSize: 34 }}>🚌</Text>
-                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>No hay viajes a otra ciudad ahora.{"\n"}Cuando alguien publique uno desde {usuario.municipio}, aparece aquí.</Text>
+                <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>No hay viajes a otra ciudad disponibles ahora.{"\n"}Cuando alguien publique uno, aparece aquí.</Text>
               </View>
-            ) : expresosDisp.map(tarjetaExpreso)}
+            ) : expresosDisp.map(tarjetaExpreso))}
           </>
         )}
 
