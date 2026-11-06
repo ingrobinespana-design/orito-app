@@ -6594,7 +6594,7 @@ function ConductorScreen({ navigation, route }) {
             <Text style={sl.precio}>
               <Text style={sl.moneda}>$ </Text>{of ? of.toLocaleString() : "A convenir"}
             </Text>
-            {c.bono ? <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "800" }}>🎁 + ${c.bono.toLocaleString()} que te paga Tukán</Text> : null}
+            {c.bono ? <Text style={{ fontSize: 12.5, color: "#B85C00", fontWeight: "800" }}>🎁 Cliente nuevo: incluye bono de bienvenida de ${c.bono.toLocaleString()}</Text> : null}
           </View>
           <View style={sl.vehBadge}><Text style={{ fontSize: 22 }}>{vehIcono(c.vehiculo_pedido)}</Text></View>
         </View>
@@ -7336,7 +7336,7 @@ function ConductorScreen({ navigation, route }) {
             <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Carrera terminada</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
               {cobrando && cobrando.tarifa != null
-                ? `Precio acordado: $${cobrando.tarifa.toLocaleString()}. Confirma, o ajustalo solo si cambio.${cobrando.bono ? ` Además, Tukán te paga $${cobrando.bono.toLocaleString()} del bono del pasajero.` : ""}`
+                ? `Precio acordado: $${cobrando.tarifa.toLocaleString()}. Confirma, o ajustalo solo si cambio.${cobrando.bono ? ` (Ya incluye el bono de bienvenida de $${cobrando.bono.toLocaleString()} al cliente nuevo. ¡Gracias por apoyar!)` : ""}`
                 : "Cuanto cobraste?"}
             </Text>
             <TextInput
@@ -7583,7 +7583,7 @@ function ConductorScreen({ navigation, route }) {
                     <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>🔔 NUEVA SOLICITUD</Text>
                     {c.tarifa_ofrecida ? <Text style={{ fontSize: 24, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text> : null}
                   </View>
-                  {c.bono ? <Text style={{ fontSize: 13, color: "#187830", fontWeight: "800", textAlign: "right" }}>🎁 + ${c.bono.toLocaleString()} que te paga Tukán</Text> : null}
+                  {c.bono ? <Text style={{ fontSize: 13, color: "#B85C00", fontWeight: "800", textAlign: "right" }}>🎁 Cliente nuevo: incluye bono de bienvenida de ${c.bono.toLocaleString()}</Text> : null}
                   <Text style={{ fontSize: 15, fontWeight: "700", color: "#444", marginTop: 8 }}>
                     {vehIcono(c.vehiculo_pedido)} {vehLabel(c.vehiculo_pedido)}{esCarga(c.vehiculo_pedido) ? " · trasteo" : ""}{c.zona === "rural" ? " · 🌄 vereda" : ""}
                   </Text>
@@ -7959,7 +7959,7 @@ function AdminBonos() {
     <View style={{ gap: 12 }}>
       <View style={styles.card}>
         <Text style={styles.seccionTitulo}>🎁 Bonos de agradecimiento</Text>
-        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $2.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%). Tú le repones los $2.000 al conductor. Los demás: $2.000 por Nequi cuando lo reclamen.</Text>
+        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $2.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%); lo asume el conductor como bienvenida a los primeros clientes. Los demás: $2.000 por Nequi cuando lo reclamen.</Text>
         <View style={{ flexDirection: "row", marginBottom: 12 }}>
           {num(d.carrera.disponibles, "Bonos de carrera sin usar")}
           {num(d.carrera.usados, "Usados")}
@@ -7988,20 +7988,6 @@ function AdminBonos() {
         ))}
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.seccionTitulo}>🚗 Reponer a conductores ({d.reponer_conductores.length})</Text>
-        {d.reponer_conductores.length === 0 ? <Text style={{ color: "#888" }}>Ninguna carrera con bono terminada todavía.</Text> : d.reponer_conductores.map(c => (
-          <View key={c.carrera_id} style={{ flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingVertical: 9 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: "800" }}>{c.conductor} · ${c.valor.toLocaleString()}</Text>
-              <Text style={{ color: "#555", fontSize: 13 }}>Carrera #{c.carrera_id} de {c.pasajero} · {c.telefono}</Text>
-            </View>
-            <TouchableOpacity onPress={() => repuesto(c)} style={{ backgroundColor: "#187830", borderRadius: 8, paddingVertical: 7, paddingHorizontal: 10 }}>
-              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>Pagado</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
-      </View>
     </View>
   );
 }
