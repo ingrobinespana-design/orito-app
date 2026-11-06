@@ -4252,6 +4252,13 @@ function PedirCarreraScreen({ navigation, route }) {
       .catch(() => {});
   }, [origenCoords]);
 
+  // mientras no marque la recogida: la ciudad de su cuenta (o la del GPS), sin preguntar
+  useEffect(() => {
+    if (muni || origenCoords || !municipios.length) return;
+    const m = municipios.find((x) => x.nombre === usuario.municipio);
+    if (m) aplicarMuni(m);
+  }, [municipios]);
+
   // cuando hay origen, destino y vehiculo, estima distancia y tarifa sugerida
   const pedidoTarifa = useRef(0);
   const intercambiarPuntos = () => {
@@ -4294,6 +4301,16 @@ function PedirCarreraScreen({ navigation, route }) {
       } catch (e) {}
     })();
   }, []);
+  // con GPS: la ciudad donde esta (si aun no marco la recogida)
+  useEffect(() => {
+    if (origenCoords || !gpsRapido) return;
+    fetch(`${API}/ubicacion/municipio?lat=${gpsRapido.lat}&lon=${gpsRapido.lon}`)
+      .then(r => r.json())
+      .then(d => { if (d && !d.detail && !origenRef.current) aplicarMuni(d); })
+      .catch(() => {});
+  }, [gpsRapido]);
+  const origenRef = useRef(null);
+  useEffect(() => { origenRef.current = origenCoords; }, [origenCoords]);
 
   const centroMapa = (punto) => {
     if (punto === "origen" && origenCoords) return origenCoords;
@@ -5177,8 +5194,8 @@ function PedirCarreraScreen({ navigation, route }) {
             <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 10 }}>📍 Ubicándote para la recogida…</Text>
           ) : null}
 
-          {/* la ciudad la define el GPS; solo si no la detecto se pide elegirla */}
-          {muni ? null : (
+          {/* la ciudad sale sola (ciudad del usuario / GPS / recogida): no se pregunta */}
+          {false && (
             <TouchableOpacity style={[styles.muniBanner, { backgroundColor: "#FFF4E0", marginTop: 12, marginBottom: 0 }]} onPress={() => setEligiendoMuni(true)}>
               <Text style={{ fontSize: 13, color: "#8A5A00", fontWeight: "700" }}>¿En qué municipio estás?</Text>
               <Text style={{ fontSize: 12, color: "#8A5A00" }}>elegir ›</Text>
