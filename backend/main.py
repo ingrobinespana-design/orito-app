@@ -2376,12 +2376,10 @@ def avisar_contraoferta(carrera_id: int, conductor_id: int, monto: int):
         conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
         if not cliente or not cliente.push_token or not conductor:
             return
-        mensajes = [push.mensaje(
-            cliente.push_token,
-            "Un conductor te propone un precio",
-            f"{conductor.nombre} ofrece hacerla por ${monto:,}".replace(",", "."),
-            {"tipo": "contraoferta", "carrera_id": carrera_id},
-        )]
+        # como las carreras: push normal + de datos (sale a pantalla completa)
+        mensajes = push_conductor(cliente, "💬 Te proponen un precio",
+                                  f"{conductor.nombre} ofrece hacerla por ${monto:,}".replace(",", "."),
+                                  {"tipo": "contraoferta", "carrera_id": carrera_id})
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
@@ -3800,9 +3798,9 @@ def avisar_expreso_contraoferta(expreso_id: int, conductor_id: int, monto: int):
         conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
         if not cliente or not cliente.push_token or not conductor:
             return
-        mensajes = [push.mensaje(cliente.push_token, "Te proponen un precio (otra ciudad)",
-                                 f"{conductor.nombre}: ${monto:,}/cupo".replace(",", "."),
-                                 {"tipo": "expreso_contraoferta", "expreso_id": e.id})]
+        mensajes = push_conductor(cliente, "💬 Te proponen un precio (otra ciudad)",
+                                  f"{conductor.nombre}: ${monto:,}/cupo · {e.origen_municipio} → {e.destino_municipio}".replace(",", "."),
+                                  {"tipo": "expreso_contraoferta", "expreso_id": e.id})
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))

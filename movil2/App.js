@@ -98,7 +98,8 @@ let activasFondo = null;     // carreras en curso del conductor (para detectar c
 let ultimoSonido = 0;        // anti-rebote: no sonar dos veces (fondo + pantalla)
 // solicitud que se aviso a pantalla completa: al abrir la app se muestra de una
 let solicitudDesdeFondo = null;
-let expresoDesdeFondo = null;   // viaje a otra ciudad que se abrio desde el aviso a pantalla completa
+let expresoDesdeFondo = null;
+let abrirViajeExpresoAlVolver = false;   // pasajero: le propusieron precio en un viaje a otra ciudad   // viaje a otra ciudad que se abrio desde el aviso a pantalla completa
 
 // evita sonar dos veces seguidas (cuando app abierta corren el ping y el fondo)
 function puedeSonar() {
@@ -343,10 +344,13 @@ async function manejarPushFondo(d) {
   if (d.tipo === "expreso_nuevo") expresoDesdeFondo = Number(d.expreso_id) || expresoDesdeFondo;
   if (alFrente()) { diagFondo("app_activa", { tipo: d.tipo }); return; }   // con la app al frente la maneja la pantalla
   // APK con receptor nativo: el aviso tipo llamada ya lo mostro Android (no se duplica)
-  if (avisoNativo() && d.tipo !== "expreso_nuevo") { diagFondo("nativo", { tipo: d.tipo }); return; }
+  // el receptor nativo del APK solo hace carreras nuevas/canceladas; lo demas lo muestra la app
+  if (avisoNativo() && (d.tipo === "carrera_nueva" || d.tipo === "carrera_cancelada")) { diagFondo("nativo", { tipo: d.tipo }); return; }
+  if (d.tipo === "expreso_contraoferta") abrirViajeExpresoAlVolver = true;
   if (d.tipo === "expreso_nuevo" && !puedeSonar()) return;   // el servicio de fondo ya sono por este
   const titulo = d.titulo || "Tukán", cuerpo = d.cuerpo || "";
-  const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : d.tipo === "expreso_nuevo" ? `expreso-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
+  const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : d.tipo === "expreso_nuevo" ? `expreso-${d.expreso_id}`
+    : d.tipo === "contraoferta" ? `oferta-${d.carrera_id}` : d.tipo === "expreso_contraoferta" ? `expoferta-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
   traerTukanAlFrente();
   const ok = await avisoPantallaCompleta(id, titulo, cuerpo);
   diagFondo("aviso", { tipo: d.tipo, ok });
@@ -3745,11 +3749,30 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   };
   useEffect(() => { cargarMios(); const t = setInterval(cargarMios, 5000); return () => clearInterval(t); }, []);
 
+  const ofVistas = useRef(null);            // ids de propuestas ya mostradas
+  const [ofEntrante, setOfEntrante] = useState(null);   // { e, of } propuesta nueva en ventana
   useEffect(() => {
-    mios.filter(e => e.estado === "buscando").forEach(e => {
-      fetch(`${API}/expresos/${e.id}/ofertas`).then(r => r.json())
-        .then(d => { if (Array.isArray(d)) setOfertas(o => ({ ...o, [e.id]: d })); }).catch(() => {});
-    });
+    const buscando = mios.filter(e => e.estado === "buscando");
+    Promise.all(buscando.map(e => fetch(`${API}/expresos/${e.id}/ofertas`).then(r => r.json())
+      .then(d => (Array.isArray(d) ? [e, d] : null)).catch(() => null)))
+      .then(res => {
+        const nuevas = {};
+        let nueva = null;
+        const primera = ofVistas.current === null;
+        if (primera) ofVistas.current = new Set();
+        res.filter(Boolean).forEach(([e, d]) => {
+          nuevas[e.id] = d;
+          d.forEach(of => {
+            const k = `${of.id}-${of.monto}`;   // si el conductor cambia su precio, tambien avisa
+            if (!ofVistas.current.has(k)) { ofVistas.current.add(k); if (!primera && !nueva) nueva = { e, of }; }
+          });
+        });
+        setOfertas(o => ({ ...o, ...nuevas }));
+        if (nueva) {
+          try { Vibration.vibrate([0, 400, 180, 400]); } catch (x) {}
+          setOfEntrante(nueva);
+        }
+      });
   }, [mios]);
 
   const publicar = () => {
@@ -4017,6 +4040,35 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
         onConfirmar={confirmarReprog}
         onCerrar={() => setReprogE(null)} />
 
+      <Modal visible={!!ofEntrante} transparent animationType="fade" onRequestClose={() => setOfEntrante(null)}>
+        <View style={styles.fondoModal}>
+          <View style={styles.ventanaModal}>
+            {ofEntrante && (() => {
+              const { e, of } = ofEntrante;
+              return (
+                <>
+                  <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>💬 TE PROPONEN UN PRECIO</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "800", color: "#1C2B22", marginTop: 8 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
+                  <Text style={{ fontSize: 14, color: "#444", marginTop: 6 }}>
+                    {of.conductor_nombre}{of.conductor_calificacion ? `  ★ ${Number(of.conductor_calificacion).toFixed(1)}` : ""}{of.conductor_placa ? `  ·  ${of.conductor_placa}` : ""}
+                  </Text>
+                  <Text style={{ fontSize: 26, fontWeight: "bold", color: "#187830", marginTop: 8 }}>${of.monto.toLocaleString()}<Text style={{ fontSize: 14, color: "#888" }}>/cupo</Text></Text>
+                  <Text style={{ fontSize: 13, color: "#666" }}>Total {e.cupos} cupo(s): ${(of.monto * e.cupos).toLocaleString()} · tú ofreciste ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setOfEntrante(null)}>
+                      <Text style={{ color: "#888", fontWeight: "600" }}>Ahora no</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.button, { flex: 1.3, backgroundColor: "#187830" }]} onPress={() => { setOfEntrante(null); aceptarOferta(e, of); }}>
+                      <Text style={styles.buttonText}>Aceptar ${of.monto.toLocaleString()}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
       <MapaSelector visible={mapaOpen} titulo="Marca dónde te recogen"
         centro={pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
         municipio={miMuni}
@@ -4078,7 +4130,8 @@ function PedirCarreraScreen({ navigation, route }) {
   const [estimado, setEstimado] = useState(null);   // {distancia_km, tarifa_sugerida}
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
-  const [modo, setModo] = useState("local");         // "local" (en la ciudad) | "expreso" (otra ciudad)
+  const [modo, setModo] = useState((route.params && route.params.vista === "expreso") ? "expreso" : "local");   // "local" | "expreso" (otra ciudad)
+  useEffect(() => { if (route.params && route.params.vista === "expreso") setModo("expreso"); }, [route.params && route.params.vistaT]);
   const scrollForm = useRef(null);                   // para subir el campo de oferta sobre el teclado
   // sube CUALQUIER campo por encima del teclado al enfocarlo (no solo la oferta):
   // usa el metodo nativo del ScrollView, que mide el input y lo deja visible.
@@ -9288,6 +9341,40 @@ function ConfiguracionScreen({ navigation, route }) {
 
 export default function App() {
   const [listo, setListo] = useState(false);
+  // pasajero: aviso de un viaje a otra ciudad (propuesta de precio, lo tomaron...) -> a su viaje
+  useEffect(() => {
+    const irAlViaje = async (n) => {
+      try {
+        const d = (n && n.request && n.request.content && n.request.content.data) || {};
+        if (!String(d.tipo || "").startsWith("expreso_") || d.tipo === "expreso_nuevo") return;
+        const ses = await leerSesion();
+        if (!ses || ses.rol === "conductor" || ses.rol === "admin" || !navRef.isReady()) return;
+        navRef.navigate("PedirCarrera", { usuario: ses, vista: "expreso", vistaT: Date.now() });
+      } catch (e) {}
+    };
+    const sub = Notifications.addNotificationResponseReceivedListener((r) => irAlViaje(r && r.notification));
+    // con la app abierta en otra pantalla: ventana para ir a ver la propuesta
+    const llega = Notifications.addNotificationReceivedListener(async (n) => {
+      try {
+        const d = n.request.content.data || {};
+        if (d.tipo !== "expreso_contraoferta") return;
+        const ses = await leerSesion();
+        if (!ses || ses.rol === "conductor" || ses.rol === "admin" || !navRef.isReady()) return;
+        const r = navRef.getCurrentRoute();
+        if (r && r.name === "PedirCarrera" && r.params && r.params.vista === "expreso") return;   // ya la esta viendo
+        try { Vibration.vibrate([0, 400, 180, 400]); } catch (e) {}
+        Alert.alert(n.request.content.title || "💬 Te proponen un precio", n.request.content.body || "",
+          [{ text: "Ahora no", style: "cancel" }, { text: "Ver propuesta", onPress: () => irAlViaje(n) }]);
+      } catch (e) {}
+    });
+    // abrio Tukan desde el aviso a pantalla completa de una propuesta (otra ciudad)
+    const alVolver = AppState.addEventListener("change", (st) => {
+      if (st !== "active" || !abrirViajeExpresoAlVolver) return;
+      abrirViajeExpresoAlVolver = false;
+      irAlViaje({ request: { content: { data: { tipo: "expreso_contraoferta" } } } });
+    });
+    return () => { sub.remove(); llega.remove(); alVolver.remove(); };
+  }, []);
   // marca que hay pantalla de verdad (ver alFrente)
   useEffect(() => {
     pantallaVisible = AppState.currentState === "active";
