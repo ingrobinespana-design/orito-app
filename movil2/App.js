@@ -3212,6 +3212,7 @@ function mapaSeguimientoHTML() {
       if(carro){ var cc=carro.getLngLat(); var pp=proy(cc.lng,cc.lat,0,pts.length); if(pp){ carIdx=pp.i; carT=pp.t; carro.setLngLat(pp.pt); recortarRuta(pp.pt[0],pp.pt[1],pp.i); } else map.getSource('ruta').setData(line(pts)); }
       else map.getSource('ruta').setData(line(pts));
       ultimaRuta=[la,lo];
+      rutaTotalM=r.distance||0; rutaTotalS=r.duration||0; ultimoInfoKm=null;
       if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(JSON.stringify({km:r.distance/1000,min:Math.round(r.duration/60)})); }
     }).catch(function(){ if(map.getSource('ruta')) map.getSource('ruta').setData(line(dLat!=null?[[lo,la],[dLon,dLat]]:[])); });
   }
@@ -3222,8 +3223,21 @@ function mapaSeguimientoHTML() {
     map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',5); map.setPaintProperty('ctx','line-opacity',0.9);
     fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
+      if(metaRuta==='destino') return;   // llego tarde: el viaje ya arranco, no se repinta
       map.getSource('ctx').setData(line(d.routes[0].geometry.coordinates));
-    }).catch(function(){ if(map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
+    }).catch(function(){ if(metaRuta!=='destino'&&map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
+  }
+  // lo que FALTA de la ruta desde el carro (para que "faltan X km · Y min" baje al avanzar)
+  var rutaTotalM=0,rutaTotalS=0,ultimoInfoKm=null;
+  function metros(a,b){ var cl=Math.cos(a[1]*Math.PI/180); var dx=(b[0]-a[0])*cl*111320, dy=(b[1]-a[1])*110540; return Math.sqrt(dx*dx+dy*dy); }
+  function informarRestante(lng,lat,seg){
+    if(!rutaPts||!window.ReactNativeWebView||!rutaTotalM) return;
+    var m=0, prev=[lng,lat];
+    for(var i=seg+1;i<rutaPts.length;i++){ m+=metros(prev,rutaPts[i]); prev=rutaPts[i]; }
+    var km=Math.round(m/100)/10;
+    if(ultimoInfoKm!==null&&Math.abs(km-ultimoInfoKm)<0.1) return;
+    ultimoInfoKm=km;
+    window.ReactNativeWebView.postMessage(JSON.stringify({km:m/1000,min:Math.max(1,Math.round(rutaTotalS*(m/rutaTotalM)/60))}));
   }
   function previa(){
     if(recLat==null||destLat==null||!map.getSource('ctx')) return;
@@ -3277,6 +3291,7 @@ function mapaSeguimientoHTML() {
     if(p.i>carIdx){ for(var k=carIdx+1;k<=p.i;k++){ seq.push(rutaPts[k]); segs.push(k); } }
     seq.push(p.pt); segs.push(p.i);
     carIdx=p.i; carT=p.t;
+    informarRestante(p.pt[0],p.pt[1],p.i);
     animarSecuencia(seq,segs);
     return true;
   }
