@@ -154,6 +154,17 @@ function quitarAviso(id) {
   try { if (notifee) notifee.cancelNotification(id); } catch (e) {}
   try { if (TukanOverlay && TukanOverlay.quitarAvisos) TukanOverlay.quitarAvisos(); } catch (e) {}
 }
+// quita SOLO los avisos de esa solicitud (no toca los de otras que esten sonando)
+async function quitarAvisoDe(idNotif, dato, valor) {
+  try { if (notifee) notifee.cancelNotification(idNotif); } catch (e) {}
+  try {
+    const lista = await Notifications.getPresentedNotificationsAsync();
+    for (const n of lista || []) {
+      const d = n && n.request && n.request.content && n.request.content.data;
+      if (d && Number(d[dato]) === Number(valor)) Notifications.dismissNotificationAsync(n.request.identifier).catch(() => {});
+    }
+  } catch (e) {}
+}
 // una carrera ya se respondio (contraoferta o aceptada): fuera sus avisos con el precio
 // viejo y no se vuelve a sonar por ella nunca mas (ni en primer plano ni en el fondo)
 const carrerasRespondidas = new Set();
@@ -5818,6 +5829,8 @@ function ConductorScreen({ navigation, route }) {
   const idsAlertados = useRef(null);
   // recuadro tipo Uber cuando entra una solicitud: salta, vibra y cuenta 10s
   const [entrante, setEntrante] = useState(null);
+  const entranteRef = useRef(null);
+  useEffect(() => { entranteRef.current = entrante; }, [entrante]);
   const barraEntrante = useRef(new Animated.Value(1)).current;   // ancho de la barra (10s)
   const escalaEntrante = useRef(new Animated.Value(0.85)).current; // animacion de entrada
   const [ahora, setAhora] = useState(Date.now());
@@ -5926,6 +5939,12 @@ function ConductorScreen({ navigation, route }) {
         if (!Array.isArray(d)) return;
         const t = Date.now();
         const idsAhora = new Set(d.map(c => c.id));
+        // las que YA NO estan (otro conductor la tomo, el pasajero cancelo): fuera su
+        // ventana y su notificacion, para que el panel quede siempre fresco
+        if (idsVistos.current) {
+          idsVistos.current.forEach((id) => { if (!idsAhora.has(id)) quitarAvisoDe(`solicitud-${id}`, "carrera_id", id); });
+        }
+        if (entranteRef.current && !entranteRef.current._expreso && !idsAhora.has(entranteRef.current.id)) cerrarEntrante();
         // primera vez que vemos cada solicitud -> arranca su ventana de 6s
         d.forEach(c => { if (!recibidas.current[c.id]) recibidas.current[c.id] = t; });
         idsVistos.current = idsAhora;
@@ -6168,6 +6187,15 @@ function ConductorScreen({ navigation, route }) {
         {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
         {e.notas ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📝 {e.notas}</Text> : null}
         <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
+        {e.exclusivo ? (
+          <View style={{ backgroundColor: "#FFF6DB", borderRadius: 8, padding: 9, marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ flex: 1, fontSize: 12.5, color: "#8A5A00", fontWeight: "700" }}>⭐ Solo para ti por ahora. Si no te sirve, libéralo para los demás.</Text>
+            <TouchableOpacity onPress={() => confirmar("Liberar viaje", "Se les enviará a los demás conductores de esa ciudad. ¿Seguro?", () => liberarExpreso(e, true), "Sí, liberar")}
+              style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#E2C77A", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
+              <Text style={{ color: "#8A5A00", fontWeight: "800", fontSize: 12 }}>No me sirve</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <TouchableOpacity onPress={() => setVerExp(e)} style={{ marginTop: 8, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }}>
           <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 13 }}>🔍 Ver detalles y mapa</Text>
         </TouchableOpacity>
@@ -6210,6 +6238,11 @@ function ConductorScreen({ navigation, route }) {
       .catch(() => avisar("Error", "No hay conexión."))
       .finally(() => setConfirmando(false));
   };
+  const liberarExpreso = (e, conAviso) => {
+    userFetch(`${API}/expresos/${e.id}/descartar`, { method: "PUT" })
+      .then(() => { cargarExpresos(); if (conAviso) avisar("Liberado", "Ya les llega a los demás conductores de esa ciudad."); })
+      .catch(() => {});
+  };
   const expVistos = useRef(null);   // ids de viajes a otra ciudad ya vistos (para avisar los nuevos)
   const [expNuevo, setExpNuevo] = useState(false);
   const cargarExpresos = () => {
@@ -6228,6 +6261,7 @@ function ConductorScreen({ navigation, route }) {
           }
         }
         expVistos.current = [...new Set([...(expVistos.current || []), ...ids])].slice(-200);
+        if (entranteRef.current && entranteRef.current._expreso && !ids.includes(entranteRef.current.id)) { quitarAvisoDe(`expreso-${entranteRef.current.id}`, "expreso_id", entranteRef.current.id); cerrarEntrante(); }
         const tSal = (x) => (x.salida ? new Date(x.salida).getTime() : 0);
         d.sort((a, b) => (tSal(a) - tSal(b)) || (new Date(a.fecha) - new Date(b.fecha)));
         // abrio Tukan desde el aviso a pantalla completa de un viaje a otra ciudad
@@ -7349,7 +7383,7 @@ function ConductorScreen({ navigation, route }) {
                       <Text style={{ color: "#187830", fontWeight: "700" }}>Proponer otro</Text>
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity style={{ padding: 10, marginTop: 4 }} onPress={cerrarEntrante}>
+                  <TouchableOpacity style={{ padding: 10, marginTop: 4 }} onPress={() => { const x = entrante; cerrarEntrante(); if (x && x.exclusivo) liberarExpreso(x, false); }}>
                     <Text style={{ textAlign: "center", color: "#999", fontSize: 13 }}>Descartar</Text>
                   </TouchableOpacity>
                 </View>

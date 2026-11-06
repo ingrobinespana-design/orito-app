@@ -351,6 +351,8 @@ class Expreso(Base):
     conductor_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     tarifa_cupo = Column(Integer, nullable=True)       # $/cupo ACORDADO al asignarse
     conductor_confirmo = Column(DateTime, nullable=True)  # el conductor dio "Recibido" a la asignacion
+    exclusivo_hasta = Column(DateTime, nullable=True)   # mientras tanto SOLO lo ve el dueño (luego, todos)
+    exclusivo_dueno = Column(Integer, nullable=True)    # id del dueño que lo tuvo en exclusiva
     estado = Column(String, default="buscando")        # buscando/aceptado/finalizado/cancelado
     fecha = Column(DateTime, default=datetime.now)
 
@@ -557,7 +559,8 @@ def crear_tablas():
                 conn.execute(text(f"ALTER TABLE municipios ADD COLUMN {columna}"))
         except Exception:
             pass
-    for columna in ("destino_lat FLOAT", "destino_lon FLOAT", "conductor_confirmo TIMESTAMP"):
+    for columna in ("destino_lat FLOAT", "destino_lon FLOAT", "conductor_confirmo TIMESTAMP",
+                    "exclusivo_hasta TIMESTAMP", "exclusivo_dueno INTEGER"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE expresos ADD COLUMN {columna}"))

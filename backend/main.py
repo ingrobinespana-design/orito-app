@@ -3784,7 +3784,12 @@ def avisar_expreso_nuevo(expreso_id: int):
         cuando = "lo antes posible" if not e.salida else e.salida.strftime("%d/%m %I:%M %p")
         cuerpo = f"{e.origen_municipio} → {e.destino_municipio} · {e.cupos} cupo(s) a ${e.precio_por_cupo:,}/cupo · {cuando}".replace(",", ".")
         # como una carrera: push normal + push de datos (despierta la app y sale a pantalla completa)
-        mensajes = [m for c in _conductores_expreso(e, db)
+        if _expreso_en_exclusiva(e):
+            d = db.query(Usuario).filter(Usuario.id == e.exclusivo_dueno).first()
+            destinatarios = [d] if d and d.push_token else []
+        else:
+            destinatarios = [c for c in _conductores_expreso(e, db) if c.id != e.exclusivo_dueno]
+        mensajes = [m for c in destinatarios
                     for m in push_conductor(c, "🚌 Viaje a otra ciudad", cuerpo,
                                             {"tipo": "expreso_nuevo", "expreso_id": e.id})]
     finally:
@@ -3849,6 +3854,60 @@ def _municipio_tukan(lat, lon, db, radio_km=40):
             mejor, mejor_km = m, km
     return mejor.nombre if mejor and mejor_km <= radio_km else None
 
+# ---------- VIAJES A OTRA CIUDAD EN EXCLUSIVA PARA EL DUEÑO ----------
+# Todo viaje que SALE del departamento donde esta el dueño (el de la ruta exclusiva) le
+# llega primero SOLO a el. Cuando lo descarta (o pasan N minutos sin respuesta) se
+# libera y les llega a los demas conductores de la ciudad de salida.
+def _dueno_exclusivo(db):
+    tel = _cfg_exclusivo()[0]
+    if not tel:
+        return None
+    return next((u for u in db.query(Usuario).filter(Usuario.rol == "conductor").all()
+                 if _digitos(u.telefono)[-10:] == tel), None)
+
+def _depto_de_municipio(nombre, db):
+    if not nombre:
+        return None
+    m = db.query(Municipio).filter(Municipio.nombre == nombre).first()
+    return _sin_tildes(m.departamento or "").lower() if m and m.departamento else None
+
+def _depto_actual(u, db):
+    """Departamento donde esta AHORA el conductor (por su GPS); si no, el de su ciudad."""
+    ciudad = _municipio_tukan(u.ubic_lat, u.ubic_lon, db) or u.municipio
+    return _depto_de_municipio(ciudad, db)
+
+def _es_dueno(u):
+    tel = _cfg_exclusivo()[0]
+    return bool(tel) and u is not None and _digitos(u.telefono)[-10:] == tel
+
+def _expreso_en_exclusiva(e):
+    return bool(e.exclusivo_hasta) and e.exclusivo_hasta > datetime.now()
+
+def puede_ver_expreso(c, e, db):
+    """¿Este conductor puede ver/tomar/ofertar este viaje a otra ciudad?"""
+    if _es_dueno(c):
+        if e.origen_municipio == c.municipio:
+            return True
+        d = _depto_actual(c, db)
+        return d is not None and d == _depto_de_municipio(e.origen_municipio, db)
+    return e.origen_municipio == c.municipio and not _expreso_en_exclusiva(e)
+
+@nunca_falla
+def liberar_expreso(expreso_id: int):
+    """Se acabo la exclusiva (el dueño lo descarto o no respondio): a todos."""
+    db = SessionLocal()
+    try:
+        e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+        if not e or not e.exclusivo_hasta:
+            return            # ya se habia liberado
+        e.exclusivo_hasta = None
+        db.commit()
+        sigue = e.estado == "buscando"
+    finally:
+        db.close()
+    if sigue:
+        avisar_expreso_nuevo(expreso_id)
+
 @app.post("/expresos")
 def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
                   cupos: int, precio_por_cupo: int, tareas: BackgroundTasks,
@@ -3888,11 +3947,38 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         origen_lat=origen_lat, origen_lon=origen_lon, destino_detalle=destino_detalle,
         destino_lat=destino_lat, destino_lon=destino_lon,
         cupos=cupos, precio_por_cupo=precio_por_cupo, salida=salida_dt, notas=notas)
+    dueno = _dueno_exclusivo(db)
+    minutos = 0
+    if (dueno and dueno.id != cliente.id and (dueno.verificado or "no") == "si" and dueno.activo != "no"
+            and dueno.disponible == "si" and dueno.push_token
+            and (origen_mun == dueno.municipio
+                 or _depto_actual(dueno, db) == _depto_de_municipio(origen_mun, db))):
+        try:
+            minutos = max(1, int(leer_config("expreso_exclusivo_min", db, "15") or 15))
+        except Exception:
+            minutos = 15
+        e.exclusivo_hasta = datetime.now() + timedelta(minutes=minutos)
+        e.exclusivo_dueno = dueno.id
     db.add(e)
     db.commit()
     db.refresh(e)
     tareas.add_task(avisar_expreso_nuevo, e.id)
+    if minutos:
+        threading.Timer(minutos * 60 + 2, liberar_expreso, args=[e.id]).start()
     return expreso_dict(e)
+
+@app.put("/expresos/{expreso_id}/descartar")
+def descartar_expreso(expreso_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                      actual: Usuario = Depends(usuario_actual)):
+    """El dueño ya lo vio y no le sirve: se libera para los demas conductores."""
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    if e.exclusivo_dueno != actual.id:
+        return {"ok": True, "liberado": False}
+    if e.exclusivo_hasta:
+        tareas.add_task(liberar_expreso, e.id)
+    return {"ok": True, "liberado": True}
 
 @app.get("/expresos/disponibles")
 def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)):
@@ -3911,14 +3997,14 @@ def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
         conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
         if not conductor:
             raise HTTPException(status_code=404, detail="Conductor no encontrado")
-        q = q.filter(Expreso.origen_municipio == conductor.municipio)
-        expresos = q.all()
+        expresos = [e for e in q.all() if puede_ver_expreso(conductor, e, db)]
         mis = {o.expreso_id: o.monto for o in db.query(OfertaExpreso).filter(
             OfertaExpreso.conductor_id == conductor_id, OfertaExpreso.estado == "pendiente").all()}
         salida = []
         for e in expresos:
             d = expreso_dict(e)
             d["mi_oferta"] = mis.get(e.id)
+            d["exclusivo"] = _expreso_en_exclusiva(e) and e.exclusivo_dueno == conductor.id
             salida.append(d)
         return salida
     return [expreso_dict(e) for e in q.all()]
@@ -3976,8 +4062,8 @@ def aceptar_expreso(expreso_id: int, conductor_id: int, tareas: BackgroundTasks,
     if not suscripcion_al_dia(conductor, db):
         raise HTTPException(status_code=402, detail="Tu suscripcion se vencio. Renuevala para tomar viajes.")
     e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
-    if e and e.origen_municipio != conductor.municipio:
-        raise HTTPException(status_code=403, detail="Ese viaje sale de otra ciudad")
+    if e and not puede_ver_expreso(conductor, e, db):
+        raise HTTPException(status_code=403, detail="Ese viaje no está disponible para ti")
     tomado = db.query(Expreso).filter(Expreso.id == expreso_id, Expreso.estado == "buscando").update(
         {"conductor_id": conductor_id, "estado": "aceptado", "tarifa_cupo": e.precio_por_cupo if e else None,
          "conductor_confirmo": datetime.now()},
@@ -4007,8 +4093,8 @@ def contraofertar_expreso(expreso_id: int, conductor_id: int, monto: int, tareas
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
     if e.estado != "buscando":
         raise HTTPException(status_code=409, detail="Ese viaje ya no esta disponible")
-    if e.origen_municipio != conductor.municipio:
-        raise HTTPException(status_code=403, detail="Ese viaje sale de otra ciudad")
+    if not puede_ver_expreso(conductor, e, db):
+        raise HTTPException(status_code=403, detail="Ese viaje no está disponible para ti")
     oferta = db.query(OfertaExpreso).filter(
         OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.conductor_id == conductor_id,
         OfertaExpreso.estado == "pendiente").first()
@@ -4457,6 +4543,20 @@ def _auto_habilitar(u: Usuario, db: Session, tareas: BackgroundTasks = None):
         else:
             limpiar_tokens_muertos(push.enviar(msg))
     return True
+
+@app.on_event("startup")
+def _retomar_exclusivas_expresos():
+    """Si el servidor se reinicio durante una exclusiva, se reprograma su liberacion."""
+    db = SessionLocal()
+    try:
+        ahora = datetime.now()
+        for e in db.query(Expreso).filter(Expreso.exclusivo_hasta.isnot(None), Expreso.estado == "buscando").all():
+            seg = max(1, (e.exclusivo_hasta - ahora).total_seconds() + 2)
+            threading.Timer(seg, liberar_expreso, args=[e.id]).start()
+    except Exception:
+        pass
+    finally:
+        db.close()
 
 @app.on_event("startup")
 def _revisar_conductores_al_arrancar():
