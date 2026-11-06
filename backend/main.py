@@ -3768,7 +3768,8 @@ def expreso_vencido(e):
     ahora = datetime.now()
     if e.salida is None:
         return bool(e.fecha) and e.fecha < ahora - timedelta(hours=EXPRESO_ASAP_HORAS)
-    return e.salida < ahora - timedelta(hours=3)
+    # la salida la escribe el cliente en hora de COLOMBIA (el servidor corre en UTC)
+    return e.salida < ahora_colombia() - timedelta(hours=3)
 
 def _revisar_expresos_vencidos():
     """Cada 10 min: a los pasajeros con viaje vencido se les avisa UNA vez."""
@@ -4084,7 +4085,7 @@ def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
     # por si el viaje arranca tarde), se consideran colgados y no se muestran. Los "lo
     # antes posible" (salida = None) siempre se ven. El cliente los maneja desde su
     # lista con Reprogramar / Ejecutado / Cancelar.
-    limite = datetime.now() - timedelta(hours=3)
+    limite = ahora_colombia() - timedelta(hours=3)   # la salida esta en hora de Colombia
     q = (db.query(Expreso)
          .filter(Expreso.estado == "buscando")
          .filter(((Expreso.salida.is_(None)) & (Expreso.fecha >= datetime.now() - timedelta(hours=EXPRESO_ASAP_HORAS)))
