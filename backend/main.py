@@ -2238,6 +2238,8 @@ def le_toca_aviso(u, carrera, ahora):
     """¿A este conductor ya le corresponde el aviso fuerte de esta carrera?
     Primeros 30s: solo los cercanos (<=1.5 km con GPS reciente). Pasada la ventana:
     todos. Asi el de al lado tiene ventaja, pero si no responde no se pierde."""
+    if carrera.vehiculo_pedido in VEHICULOS_CARGA:
+        return True     # acarreo: a todos los acarreadores de la zona al instante
     if not carrera.fecha or (ahora - carrera.fecha).total_seconds() >= VENTANA_CERCANIA_SEG:
         return True
     d = km_conductor_a_recogida(u, carrera, ahora)
@@ -2305,8 +2307,9 @@ def avisar_carrera_nueva(carrera_id: int):
         ahora = datetime.now()
         # (aunque no haya candidatos se sigue: puede faltar programar el aviso al dueño)
         candidatos = _candidatos_carrera(carrera, db)
-        cercanos = [c for c in candidatos
-                    if (km_conductor_a_recogida(c, carrera, ahora) or 1e9) <= RADIO_CERCANIA_KM]
+        cercanos = [] if carrera.vehiculo_pedido in VEHICULOS_CARGA else [
+            c for c in candidatos
+            if (km_conductor_a_recogida(c, carrera, ahora) or 1e9) <= RADIO_CERCANIA_KM]
         hay_cercanos = len(cercanos) > 0
         # si no hay ninguno cerca (o sin GPS reciente), no tiene sentido esperar:
         # se le avisa a todos de una
@@ -4636,6 +4639,48 @@ def _auto_habilitar(u: Usuario, db: Session, tareas: BackgroundTasks = None):
         else:
             limpiar_tokens_muertos(push.enviar(msg))
     return True
+
+ACARREO_ESPERA_MIN = 15
+
+def _revisar_acarreos_sin_tomar():
+    """Cada minuto: los acarreos 'lo antes posible' que nadie tomo en 15 min se cancelan
+    y se le pide al cliente que lo vuelva a pedir (los programados no se tocan)."""
+    while True:
+        try:
+            db = SessionLocal()
+            avisos = []
+            try:
+                limite = datetime.now() - timedelta(minutes=ACARREO_ESPERA_MIN)
+                for c in db.query(Carrera).filter(Carrera.estado == "buscando",
+                                                  Carrera.vehiculo_pedido.in_(list(VEHICULOS_CARGA)),
+                                                  Carrera.recogida.is_(None),
+                                                  Carrera.fecha < limite).all():
+                    c.estado = "cancelada"
+                    c.cancelada_por = "sistema"
+                    c.motivo_cancelacion = f"Nadie lo tomó en {ACARREO_ESPERA_MIN} minutos"
+                    try:
+                        c.cancelada_en = datetime.now()
+                    except Exception:
+                        pass
+                    db.query(Oferta).filter(Oferta.carrera_id == c.id, Oferta.estado == "pendiente").update(
+                        {"estado": "descartada"}, synchronize_session=False)
+                    cli = db.query(Usuario).filter(Usuario.id == c.cliente_id).first()
+                    if cli and cli.push_token:
+                        avisos.extend(push_conductor(cli, "⏰ Nadie tomó tu acarreo",
+                                                     "Vuelve a pedirlo; si puedes, ofrece un poco más o prográmalo.",
+                                                     {"tipo": "acarreo_vencido", "carrera_id": c.id}))
+                db.commit()
+            finally:
+                db.close()
+            if avisos:
+                limpiar_tokens_muertos(push.enviar(avisos))
+        except Exception:
+            pass
+        _time.sleep(60)
+
+@app.on_event("startup")
+def _arrancar_revision_acarreos():
+    threading.Thread(target=_revisar_acarreos_sin_tomar, daemon=True).start()
 
 @app.on_event("startup")
 def _retomar_exclusivas_expresos():

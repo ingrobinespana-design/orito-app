@@ -4722,6 +4722,8 @@ function PedirCarreraScreen({ navigation, route }) {
           if (prev && !act.find(c => c.id === prev.id)) {
             const fin = d.find(c => c.id === prev.id);
             if (fin && fin.estado === "finalizada" && !fin.estrellas_conductor) setPorCalificar(fin);
+            if (fin && fin.estado === "cancelada" && fin.cancelada_por === "sistema")
+              avisar("⏰ Nadie tomó tu acarreo", "Pasaron 15 minutos sin transportador. Vuelve a pedirlo; si puedes, ofrece un poco más o prográmalo para más tarde.");
           }
           return (prev && act.find(c => c.id === prev.id)) || act[0] || null;
         });
@@ -5876,7 +5878,7 @@ function ConductorScreen({ navigation, route }) {
   // cuenta regresiva de 6s por solicitud nueva: guardamos cuando la vimos por
   // primera vez. Mientras < 6s se muestra grande con contraoferta rapida; luego
   // baja al listado normal (sigue disponible). primeraCarga evita sonar al abrir.
-  const VENTANA = 10000;
+  const VENTANA = 6000;   // la ventana encima dura 6 s; luego queda en la lista
   const recibidas = useRef({});
   const idsVistos = useRef(null);
   // ids por las que YA sonamos/saltamos, para no repetir. Una carrera lejana no
