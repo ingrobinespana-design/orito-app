@@ -356,6 +356,7 @@ class Expreso(Base):
     aviso_vencido = Column(DateTime, nullable=True)     # cuando se le aviso al pasajero que nadie lo tomo
     tipo = Column(String, default="pasajeros")          # "pasajeros" (por cupos) | "carga" (acarreo a otra ciudad)
     vehiculo = Column(String, nullable=True)            # carga: vehiculo de carga pedido
+    datos_carga = Column(Text, nullable=True)           # carga: JSON con tipo, tamaño, fotos, ayudantes, pisos, quien recibe
     estado = Column(String, default="buscando")        # buscando/aceptado/finalizado/cancelado
     fecha = Column(DateTime, default=datetime.now)
 
@@ -564,7 +565,7 @@ def crear_tablas():
             pass
     for columna in ("destino_lat FLOAT", "destino_lon FLOAT", "conductor_confirmo TIMESTAMP",
                     "exclusivo_hasta TIMESTAMP", "exclusivo_dueno INTEGER", "aviso_vencido TIMESTAMP",
-                    "tipo VARCHAR DEFAULT 'pasajeros'", "vehiculo VARCHAR"):
+                    "tipo VARCHAR DEFAULT 'pasajeros'", "vehiculo VARCHAR", "datos_carga TEXT"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE expresos ADD COLUMN {columna}"))

@@ -3753,9 +3753,7 @@ function Estrellas({ valor, size = 13, color = "#B8860B" }) {
 // CLIENTE · viajes a OTRA ciudad (expresos por cupos). Se muestra dentro de Pedir
 // carrera cuando el cliente toca "A otra ciudad". Publica un viaje (destino, cupos,
 // $/cupo, punto de recogida, opcional agendado) y ve las contraofertas para elegir.
-function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, carga }) {
-  const [vehCarga, setVehCarga] = useState(null);   // acarreo: vehiculo de carga
-  const vehsCarga = Object.keys(VEHICULOS).filter(esCarga);
+function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, carga, carga_ui }) {
   // dos pestañas: PEDIR (solo el formulario) y MIS VIAJES (activos / finalizados / cancelados)
   const [vista, setVista] = useState(irMios ? "mios" : "pedir");
   const [filtro, setFiltro] = useState("activos");
@@ -3848,8 +3846,10 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
     const sinT = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
     if (origenCiudad && sinT(origenCiudad) === sinT(destino))
       return avisar("Misma ciudad", `La recogida y el destino están en ${origenCiudad}. Para un viaje dentro de la ciudad usa "En la ciudad".`);
-    if (carga && !vehCarga) return avisar("Falta el vehículo", "Elige el vehículo de carga que necesitas.");
-    if (carga && !notas.trim()) return avisar("Falta", "Cuéntanos qué vas a llevar.");
+    const dc = carga && carga_ui ? carga_ui.datos() : null;
+    if (carga && (!dc || !esCarga(dc.vehiculo))) return avisar("Falta el vehículo", "Elige el vehículo de carga que necesitas.");
+    if (carga && !dc.tipo_carga) return avisar("¿Qué vas a mover?", "Elige el tipo de acarreo: trasteo, mercancía, materiales…");
+    if (carga && !dc.tamano_carga) return avisar("¿Qué tan grande es?", "Elige el tamaño de la carga para que te coticen bien.");
     if (!carga && c <= 0) return avisar("Falta", "¿Cuántos cupos?");
     if (p <= 0) return avisar("Falta", carga ? "¿Cuánto ofreces por el acarreo?" : "¿Cuánto pagas por cupo?");
     if (programar && (!dia || hSel == null || mSel == null)) return avisar("Falta la fecha", "Elige el día, la hora y los minutos de salida, o cambia a 'Lo antes posible'.");
@@ -3858,7 +3858,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
     const params = qs({
       cliente_id: usuario.id, destino_municipio: destino, origen: origenTxt || "Punto marcado",
       cupos: carga ? 1 : c, precio_por_cupo: p, origen_lat: pin.lat,
-      ...(carga ? { tipo: "carga", vehiculo: vehCarga } : {}), origen_lon: pin.lon, origen_municipio: origenCiudad,
+      ...(carga ? { tipo: "carga", ...dc, notas: dc.notas || "" } : {}), origen_lon: pin.lon, origen_municipio: origenCiudad,
       destino_detalle: destinoDet, notas, ...(salidaISO ? { salida: salidaISO } : {}),
       ...(pinDest ? { destino_lat: pinDest.lat, destino_lon: pinDest.lon } : {}),
     });
@@ -3867,6 +3867,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
       if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
       setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setOrigenCiudad(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHSel(null); setMSel(null);
       avisar(carga ? "✅ Acarreo publicado" : "✅ Viaje publicado", (carga ? "Los transportadores de carga" : "Los conductores") + " de la ciudad de salida lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
+      if (carga && carga_ui) carga_ui.limpiar();
       cargarMios(); setVista("mios"); setFiltro("activos");
     }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
   };
@@ -3937,7 +3938,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
         <TouchableOpacity activeOpacity={0.8} onPress={() => { setVista("mios"); setFiltro("activos"); }}
           style={{ backgroundColor: "#EAF6EC", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 12, flexDirection: "row", alignItems: "center" }}>
           <Text style={{ flex: 1, color: "#187830", fontWeight: "700", fontSize: 13 }}>
-            🚌 Tienes {activos.length} viaje{activos.length > 1 ? "s" : ""} activo{activos.length > 1 ? "s" : ""}
+            {carga ? "🚚" : "🚌"} Tienes {activos.length} {carga ? "acarreo" : "viaje"}{activos.length > 1 ? "s" : ""} activo{activos.length > 1 ? "s" : ""}
           </Text>
           <Text style={{ color: "#187830", fontWeight: "800", fontSize: 13 }}>Ver ›</Text>
         </TouchableOpacity>
@@ -3980,21 +3981,15 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
       </View>
 
       {carga ? (
-        <View style={styles.card}>
-          <Text style={styles.etiqueta}>🚚 ¿QUÉ VEHÍCULO NECESITAS?</Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-            {vehsCarga.map(v => (
-              <TouchableOpacity key={v} onPress={() => setVehCarga(v)} style={[styles.chip, vehCarga === v && styles.chipOn]}>
-                <Text style={[styles.chipTxt, vehCarga === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
-              </TouchableOpacity>
-            ))}
+        <>
+          {carga_ui ? <View style={styles.card}>{carga_ui.vehiculos()}</View> : null}
+          {carga_ui ? <View style={styles.card}>{carga_ui.detalle()}</View> : null}
+          <View style={styles.card}>
+            <Text style={styles.etiqueta}>¿CUÁNTO OFRECES POR EL ACARREO?</Text>
+            <TextInput value={precio} onChangeText={t => setPrecio(t.replace(/\D/g, ""))} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
+            {(parseInt(precio || "0", 10) || 0) > 0 ? <Text style={{ fontSize: 13.5, color: "#187830", fontWeight: "700", marginTop: 8 }}>Ofreces ${(parseInt(precio, 10)).toLocaleString()} · el transportador puede aceptar o proponerte otro</Text> : null}
           </View>
-          <Text style={styles.etiqueta}>¿QUÉ VAS A LLEVAR?</Text>
-          <TextInput value={notas} onChangeText={setNotas} multiline placeholder="Ej: trasteo de apartamento, 1 nevera, 1 cama, 10 cajas" style={[styles.input, { minHeight: 70, textAlignVertical: "top" }]} />
-          <Text style={styles.etiqueta}>OFRECES $ (PRECIO TOTAL)</Text>
-          <TextInput value={precio} onChangeText={t => setPrecio(t.replace(/\D/g, ""))} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
-          {(parseInt(precio || "0", 10) || 0) > 0 ? <Text style={{ fontSize: 13.5, color: "#187830", fontWeight: "700", marginTop: 8 }}>Ofreces ${(parseInt(precio, 10)).toLocaleString()} · el transportador puede proponerte otro</Text> : null}
-        </View>
+        </>
       ) : (
       <View style={styles.card}>
         <View style={{ flexDirection: "row", gap: 10 }}>
@@ -4062,13 +4057,15 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
           </View>
           {lista.length === 0 ? (
             <View style={{ alignItems: "center", padding: 28 }}>
-              <Text style={{ fontSize: 34 }}>{filtro === "activos" ? "🚌" : filtro === "finalizados" ? "🏁" : "🗂️"}</Text>
+              <Text style={{ fontSize: 34 }}>{filtro === "activos" ? (carga ? "🚚" : "🚌") : filtro === "finalizados" ? "🏁" : "🗂️"}</Text>
               <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>
-                {filtro === "activos" ? "No tienes viajes activos." : filtro === "finalizados" ? "Aún no tienes viajes finalizados." : "No tienes viajes cancelados."}
+                {(carga
+                  ? { activos: "No tienes acarreos activos.", finalizados: "Aún no tienes acarreos finalizados.", cancelados: "No tienes acarreos cancelados." }
+                  : { activos: "No tienes viajes activos.", finalizados: "Aún no tienes viajes finalizados.", cancelados: "No tienes viajes cancelados." })[filtro]}
               </Text>
               {filtro === "activos" ? (
                 <TouchableOpacity onPress={() => setVista("pedir")} style={{ marginTop: 12, backgroundColor: "#F06000", borderRadius: 10, paddingVertical: 10, paddingHorizontal: 18 }}>
-                  <Text style={{ color: "#fff", fontWeight: "800" }}>Pedir un viaje</Text>
+                  <Text style={{ color: "#fff", fontWeight: "800" }}>{carga ? "Pedir un acarreo" : "Pedir un viaje"}</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -4082,6 +4079,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
                   <Text style={{ fontSize: 11, color: "#888" }}>{estadoExpreso(e.estado)}</Text>
                 </View>
                 <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · ${e.precio_por_cupo.toLocaleString()}{porCupo(e)}</Text>
+                {esExpCarga(e) ? <DetalleAcarreo c={e} compacto /> : null}
                 <Text style={{ fontSize: 12.5, fontWeight: "700", marginTop: 2, color: e.salida ? "#B85C00" : "#187830" }}>
                   {e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}
                 </Text>
@@ -4261,6 +4259,127 @@ function PedirCarreraScreen({ navigation, route }) {
   const [ascD, setAscD] = useState(null);
   const [recibeNombre, setRecibeNombre] = useState("");
   const [recibeTel, setRecibeTel] = useState("");
+  // bloques del ACARREO (vehiculo de carga + detalles de la carga): los usa el acarreo
+  // en la ciudad y tambien el acarreo A OTRA CIUDAD (copia fiel, mismos datos)
+  const vehCargaJSX = () => (<>
+                <Text style={[styles.etiqueta, { marginTop: modoServicio === "acarreo" ? 0 : 14 }]}>{modoServicio === "acarreo" ? "🚚 ¿QUÉ VEHÍCULO NECESITAS?" : "🚚 TRASTEO O ACARREO"}</Text>
+                <Text style={styles.ayuda}>{modoServicio === "acarreo" ? "Elige según el tamaño de lo que vas a mover" : "Para mudanzas, mercancia o carga"}</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                  {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.chip, vehiculo === v && styles.chipOn]}
+                      onPress={() => setVehiculo(v)}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Text style={styles.chipTxt}>{vehIcono(v)}</Text><Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehLabel(v)}</Text></View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+  </>);
+  const detalleCargaJSX = () => (<>
+            <Text style={styles.etiqueta}>¿QUÉ VAS A MOVER?</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {TIPOS_CARGA.map(([k, t]) => (
+                <TouchableOpacity key={k} style={[styles.chip, tipoCarga === k && styles.chipOn]} onPress={() => setTipoCarga(k)}>
+                  <Text style={[styles.chipTxt, tipoCarga === k && styles.chipTxtOn]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.etiqueta}>¿QUÉ TAN GRANDE ES?</Text>
+            <View style={{ gap: 6, marginBottom: 12 }}>
+              {TAMANOS_CARGA.map(([k, t]) => (
+                <TouchableOpacity key={k} onPress={() => setTamanoCarga(k)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, borderWidth: 1.5,
+                    borderColor: tamanoCarga === k ? "#187830" : "#E5E0D5", backgroundColor: tamanoCarga === k ? "#EAF6EC" : "#fff" }}>
+                  <Text style={{ fontSize: 14, fontWeight: "800", color: tamanoCarga === k ? "#187830" : "#333", width: 86 }}>{t}</Text>
+                  <Text style={{ fontSize: 12.5, color: "#777", flex: 1 }}>{ejemploTamano(tipoCarga, k)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.etiqueta}>DESCRIPCION DE LA CARGA</Text>
+            <TextInput
+              ref={refCarga}
+              onFocus={() => subirCampo(refCarga)}
+              value={form.notas}
+              onChangeText={(t) => setForm({ ...form, notas: t })}
+              placeholder="Ej: dos neveras, una lavadora y varias cajas"
+              style={[styles.input, { minHeight: 60 }]}
+              multiline
+            />
+            <Text style={[styles.ayuda, { marginTop: -2 }]}>Asi el transportador sabe que va a mover y con que ayuda</Text>
+
+            <Text style={[styles.etiqueta, { marginTop: 8 }]}>FOTOS DE LA CARGA (OPCIONAL, MÁX 3)</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+              {fotosCarga.map((u) => (
+                <View key={u}>
+                  <Image source={{ uri: u }} style={{ width: 70, height: 70, borderRadius: 10 }} />
+                  <TouchableOpacity onPress={() => setFotosCarga((f) => f.filter((x) => x !== u))}
+                    style={{ position: "absolute", top: -6, right: -6, backgroundColor: "#C0392B", borderRadius: 11, width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              {fotosCarga.length < 3 && (
+                <TouchableOpacity onPress={agregarFotoCarga} disabled={subiendoCarga}
+                  style={{ width: 70, height: 70, borderRadius: 10, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#B85C00", alignItems: "center", justifyContent: "center", backgroundColor: "#FFF7EC" }}>
+                  {subiendoCarga ? <ActivityIndicator color="#B85C00" /> : <Text style={{ fontSize: 24 }}>📷</Text>}
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={[styles.ayuda, { marginTop: 10 }]}>Con fotos te cotizan más rápido y más justo</Text>
+
+            <Text style={[styles.etiqueta, { marginTop: 8 }]}>¿NECESITAS AYUDA PARA CARGAR?</Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              {[[0, "No"], [1, "1 ayudante"], [2, "2 ayudantes"]].map(([n, t]) => (
+                <TouchableOpacity key={n} style={[styles.opcion, ayudantes === n && styles.opcionActiva]} onPress={() => setAyudantes(n)}>
+                  <Text style={[styles.opcionTexto, ayudantes === n && styles.opcionTextoActivo]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.etiqueta}>PISOS (SI ES APARTAMENTO O LOCAL EN ALTURA)</Text>
+            {[["Recoger en piso", pisoO, setPisoO, ascO, setAscO], ["Entregar en piso", pisoD, setPisoD, ascD, setAscD]].map(([lbl, val, setVal, asc, setAsc]) => (
+              <View key={lbl} style={{ marginBottom: 10 }}>
+                <Text style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>{lbl}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <TextInput value={val} onChangeText={(t) => setVal(t.replace(/\D/g, "").slice(0, 2))} keyboardType="number-pad" placeholder="1"
+                    style={[styles.input, { width: 58, marginBottom: 0, textAlign: "center" }]} />
+                  {[["si", "Con ascensor"], ["no", "Sin ascensor"]].map(([k, t]) => (
+                    <TouchableOpacity key={k} onPress={() => setAsc(asc === k ? null : k)}
+                      style={{ flex: 1, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: asc === k ? "#187830" : "#E5E0D5", backgroundColor: asc === k ? "#EAF6EC" : "#fff" }}>
+                      <Text style={{ fontSize: 12.5, color: asc === k ? "#187830" : "#666", fontWeight: "700" }}>{t}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ))}
+
+            <Text style={[styles.etiqueta, { marginTop: 6 }]}>¿QUIÉN RECIBE EN EL DESTINO? (OPCIONAL)</Text>
+            <TextInput value={recibeNombre} onChangeText={setRecibeNombre} placeholder="Nombre de quien recibe" style={styles.input} maxLength={80} />
+            <TextInput value={recibeTel} onChangeText={setRecibeTel} placeholder="Teléfono de quien recibe" keyboardType="phone-pad" style={styles.input} maxLength={15} />
+            <Text style={[styles.ayuda, { marginTop: -2 }]}>Útil si envías mercancía a un cliente o a una obra</Text>
+
+  </>);
+  // datos de la carga para publicar (mismo formato que el acarreo en la ciudad)
+  const datosCargaActual = () => {
+    const d = { vehiculo, tipo_carga: tipoCarga, tamano_carga: tamanoCarga, ayudantes, notas: form.notas };
+    if (fotosCarga.length) d.fotos_carga = fotosCarga.join(",");
+    if (pisoO.trim()) d.piso_origen = parseInt(pisoO, 10) || 0;
+    if (pisoD.trim()) d.piso_destino = parseInt(pisoD, 10) || 0;
+    if (ascO) d.ascensor_origen = ascO;
+    if (ascD) d.ascensor_destino = ascD;
+    if (recibeNombre.trim()) d.recibe_nombre = recibeNombre.trim();
+    if (recibeTel.trim()) d.recibe_telefono = recibeTel.trim();
+    return d;
+  };
+  const limpiarCarga = () => {
+    setTipoCarga(null); setTamanoCarga(null); setFotosCarga([]); setAyudantes(0);
+    setPisoO(""); setPisoD(""); setAscO(null); setAscD(null); setRecibeNombre(""); setRecibeTel("");
+    setForm((f) => ({ ...f, notas: "" }));
+  };
+
   const agregarFotoCarga = async () => {
     if (fotosCarga.length >= 3) { avisar("Máximo 3 fotos", "Con 3 fotos el transportador ya ve bien la carga."); return; }
     const uri = await tomarOElegirFoto();
@@ -5302,7 +5421,7 @@ function PedirCarreraScreen({ navigation, route }) {
         )}
         {/* switch: pedir EN la ciudad, o un viaje a OTRA ciudad (expreso por cupos) */}
         <View style={{ flexDirection: "row", backgroundColor: "#E9EBE5", borderRadius: 14, padding: 5, marginBottom: 16 }}>
-          {[["local", "🚕 En la ciudad"], ["expreso", "🚌 A otra ciudad"]].map(([mm, lbl]) => {
+          {[["local", modoServicio === "acarreo" ? "🚚 En la ciudad" : "🚕 En la ciudad"], ["expreso", modoServicio === "acarreo" ? "🛣️ A otra ciudad" : "🚌 A otra ciudad"]].map(([mm, lbl]) => {
             const on = modo === mm;
             return (
               <TouchableOpacity key={mm} activeOpacity={0.85}
@@ -5316,7 +5435,9 @@ function PedirCarreraScreen({ navigation, route }) {
         </View>
 
         {modo === "expreso" ? (
-          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} irMios={route.params && route.params.vistaT} carga={modoServicio === "acarreo"} />
+          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} irMios={route.params && route.params.vistaT}
+            carga={modoServicio === "acarreo"}
+            carga_ui={modoServicio === "acarreo" ? { vehiculos: vehCargaJSX, detalle: detalleCargaJSX, datos: datosCargaActual, limpiar: limpiarCarga } : null} />
         ) : (<>
         {/* ===== TU VIAJE: recogida + destino en una sola tarjeta con riel ===== */}
         <View style={styles.card}>
@@ -5470,19 +5591,7 @@ function PedirCarreraScreen({ navigation, route }) {
             )}
             {ordenVehiculos(vehiculosAqui).some(esCarga) && (
               <>
-                <Text style={[styles.etiqueta, { marginTop: modoServicio === "acarreo" ? 0 : 14 }]}>{modoServicio === "acarreo" ? "🚚 ¿QUÉ VEHÍCULO NECESITAS?" : "🚚 TRASTEO O ACARREO"}</Text>
-                <Text style={styles.ayuda}>{modoServicio === "acarreo" ? "Elige según el tamaño de lo que vas a mover" : "Para mudanzas, mercancia o carga"}</Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-                  {ordenVehiculos(vehiculosAqui).filter(esCarga).map((v) => (
-                    <TouchableOpacity
-                      key={v}
-                      style={[styles.chip, vehiculo === v && styles.chipOn]}
-                      onPress={() => setVehiculo(v)}
-                    >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Text style={styles.chipTxt}>{vehIcono(v)}</Text><Text style={[styles.chipTxt, vehiculo === v && styles.chipTxtOn]}>{vehLabel(v)}</Text></View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                {vehCargaJSX()}
               </>
             )}
           {/* UNA sola nota opcional para el conductor. (En acarreos la nota es la
@@ -5532,89 +5641,7 @@ function PedirCarreraScreen({ navigation, route }) {
         {/* 2b. TRASTEO: descripcion de la carga + hora de recogida (solo carga) */}
         {muni && esCarga(vehiculo) && (
           <View style={styles.card}>
-            <Text style={styles.etiqueta}>¿QUÉ VAS A MOVER?</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-              {TIPOS_CARGA.map(([k, t]) => (
-                <TouchableOpacity key={k} style={[styles.chip, tipoCarga === k && styles.chipOn]} onPress={() => setTipoCarga(k)}>
-                  <Text style={[styles.chipTxt, tipoCarga === k && styles.chipTxtOn]}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.etiqueta}>¿QUÉ TAN GRANDE ES?</Text>
-            <View style={{ gap: 6, marginBottom: 12 }}>
-              {TAMANOS_CARGA.map(([k, t]) => (
-                <TouchableOpacity key={k} onPress={() => setTamanoCarga(k)}
-                  style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, borderWidth: 1.5,
-                    borderColor: tamanoCarga === k ? "#187830" : "#E5E0D5", backgroundColor: tamanoCarga === k ? "#EAF6EC" : "#fff" }}>
-                  <Text style={{ fontSize: 14, fontWeight: "800", color: tamanoCarga === k ? "#187830" : "#333", width: 86 }}>{t}</Text>
-                  <Text style={{ fontSize: 12.5, color: "#777", flex: 1 }}>{ejemploTamano(tipoCarga, k)}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.etiqueta}>DESCRIPCION DE LA CARGA</Text>
-            <TextInput
-              ref={refCarga}
-              onFocus={() => subirCampo(refCarga)}
-              value={form.notas}
-              onChangeText={(t) => setForm({ ...form, notas: t })}
-              placeholder="Ej: dos neveras, una lavadora y varias cajas"
-              style={[styles.input, { minHeight: 60 }]}
-              multiline
-            />
-            <Text style={[styles.ayuda, { marginTop: -2 }]}>Asi el transportador sabe que va a mover y con que ayuda</Text>
-
-            <Text style={[styles.etiqueta, { marginTop: 8 }]}>FOTOS DE LA CARGA (OPCIONAL, MÁX 3)</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-              {fotosCarga.map((u) => (
-                <View key={u}>
-                  <Image source={{ uri: u }} style={{ width: 70, height: 70, borderRadius: 10 }} />
-                  <TouchableOpacity onPress={() => setFotosCarga((f) => f.filter((x) => x !== u))}
-                    style={{ position: "absolute", top: -6, right: -6, backgroundColor: "#C0392B", borderRadius: 11, width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>
-                    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-              {fotosCarga.length < 3 && (
-                <TouchableOpacity onPress={agregarFotoCarga} disabled={subiendoCarga}
-                  style={{ width: 70, height: 70, borderRadius: 10, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#B85C00", alignItems: "center", justifyContent: "center", backgroundColor: "#FFF7EC" }}>
-                  {subiendoCarga ? <ActivityIndicator color="#B85C00" /> : <Text style={{ fontSize: 24 }}>📷</Text>}
-                </TouchableOpacity>
-              )}
-            </View>
-            <Text style={[styles.ayuda, { marginTop: 10 }]}>Con fotos te cotizan más rápido y más justo</Text>
-
-            <Text style={[styles.etiqueta, { marginTop: 8 }]}>¿NECESITAS AYUDA PARA CARGAR?</Text>
-            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-              {[[0, "No"], [1, "1 ayudante"], [2, "2 ayudantes"]].map(([n, t]) => (
-                <TouchableOpacity key={n} style={[styles.opcion, ayudantes === n && styles.opcionActiva]} onPress={() => setAyudantes(n)}>
-                  <Text style={[styles.opcionTexto, ayudantes === n && styles.opcionTextoActivo]}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.etiqueta}>PISOS (SI ES APARTAMENTO O LOCAL EN ALTURA)</Text>
-            {[["Recoger en piso", pisoO, setPisoO, ascO, setAscO], ["Entregar en piso", pisoD, setPisoD, ascD, setAscD]].map(([lbl, val, setVal, asc, setAsc]) => (
-              <View key={lbl} style={{ marginBottom: 10 }}>
-                <Text style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>{lbl}</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <TextInput value={val} onChangeText={(t) => setVal(t.replace(/\D/g, "").slice(0, 2))} keyboardType="number-pad" placeholder="1"
-                    style={[styles.input, { width: 58, marginBottom: 0, textAlign: "center" }]} />
-                  {[["si", "Con ascensor"], ["no", "Sin ascensor"]].map(([k, t]) => (
-                    <TouchableOpacity key={k} onPress={() => setAsc(asc === k ? null : k)}
-                      style={{ flex: 1, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, alignItems: "center", borderColor: asc === k ? "#187830" : "#E5E0D5", backgroundColor: asc === k ? "#EAF6EC" : "#fff" }}>
-                      <Text style={{ fontSize: 12.5, color: asc === k ? "#187830" : "#666", fontWeight: "700" }}>{t}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            ))}
-
-            <Text style={[styles.etiqueta, { marginTop: 6 }]}>¿QUIÉN RECIBE EN EL DESTINO? (OPCIONAL)</Text>
-            <TextInput value={recibeNombre} onChangeText={setRecibeNombre} placeholder="Nombre de quien recibe" style={styles.input} maxLength={80} />
-            <TextInput value={recibeTel} onChangeText={setRecibeTel} placeholder="Teléfono de quien recibe" keyboardType="phone-pad" style={styles.input} maxLength={15} />
-            <Text style={[styles.ayuda, { marginTop: -2 }]}>Útil si envías mercancía a un cliente o a una obra</Text>
+            {detalleCargaJSX()}
 
             <Text style={[styles.etiqueta, { marginTop: 8 }]}>PARA CUANDO</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
@@ -6212,6 +6239,7 @@ function ConductorScreen({ navigation, route }) {
           <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
         </View>
         <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
+        {esExpCarga(e) ? <DetalleAcarreo c={e} compacto /> : null}
         <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
           <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
         </View>
@@ -7626,6 +7654,7 @@ function ConductorScreen({ navigation, route }) {
                   </View>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
                     <Text style={{ fontSize: 14, color: "#555" }}>{cuposDe(verExp)} · total</Text>
+                    {esExpCarga(verExp) ? <DetalleAcarreo c={verExp} /> : null}
                     <Text style={{ fontSize: 16, fontWeight: "700", color: "#333" }}>${total.toLocaleString()}</Text>
                   </View>
                   {verExp.notas ? <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>📝 {verExp.notas}</Text> : null}

@@ -3713,6 +3713,7 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
     return {
         "id": e.id, "cliente_id": e.cliente_id,
         "tipo": e.tipo or "pasajeros", "vehiculo": e.vehiculo,
+        **_datos_carga_de(e),
         "cliente_nombre": e.cliente_nombre, "cliente_telefono": e.cliente_telefono,
         "origen_municipio": e.origen_municipio, "destino_municipio": e.destino_municipio,
         "origen": e.origen, "origen_lat": e.origen_lat, "origen_lon": e.origen_lon,
@@ -3735,6 +3736,17 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
         "conductor_confirmo": e.conductor_confirmo,
         "vencido": expreso_vencido(e),
     }
+
+def _datos_carga_de(e):
+    """Detalles del acarreo a otra ciudad (mismos campos que un acarreo en la ciudad)."""
+    if not getattr(e, "datos_carga", None):
+        return {}
+    try:
+        import json as _j
+        d = _j.loads(e.datos_carga)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
 
 EXPRESO_ASAP_HORAS = 6     # "lo antes posible" sin conductor en 6 h -> se vence
 
@@ -3966,6 +3978,10 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
                   cupos: int, precio_por_cupo: int, tareas: BackgroundTasks,
                   origen_lat: float = None, origen_lon: float = None, origen_municipio: str = None,
                   tipo: str = "pasajeros", vehiculo: str = None,
+                  tipo_carga: str = None, tamano_carga: str = None, fotos_carga: str = None,
+                  ayudantes: int = None, piso_origen: int = None, piso_destino: int = None,
+                  ascensor_origen: str = None, ascensor_destino: str = None,
+                  recibe_nombre: str = None, recibe_telefono: str = None,
                   destino_detalle: str = None, destino_lat: float = None, destino_lon: float = None,
                   salida: str = None, notas: str = None,
                   db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
@@ -3990,8 +4006,15 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         if vehiculo not in VEHICULOS_CARGA:
             raise HTTPException(status_code=400, detail="Elige el vehículo de carga")
         cupos = 1     # en un acarreo el precio es TOTAL (no por cupo)
+        from types import SimpleNamespace
+        import json as _j
+        tmp = SimpleNamespace()
+        _datos_acarreo(tmp, tipo_carga, tamano_carga, fotos_carga, ayudantes, piso_origen, piso_destino,
+                       ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono)
+        datos_carga = _j.dumps({k: v for k, v in vars(tmp).items() if v is not None}, ensure_ascii=False)
     else:
         vehiculo = None
+        datos_carga = None
     if cupos <= 0 or cupos > 20:
         raise HTTPException(status_code=400, detail="Número de cupos inválido")
     if precio_por_cupo <= 0:
@@ -4008,7 +4031,7 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         origen_lat=origen_lat, origen_lon=origen_lon, destino_detalle=destino_detalle,
         destino_lat=destino_lat, destino_lon=destino_lon,
         cupos=cupos, precio_por_cupo=precio_por_cupo, salida=salida_dt, notas=notas,
-        tipo=tipo, vehiculo=vehiculo)
+        tipo=tipo, vehiculo=vehiculo, datos_carga=datos_carga)
     dueno = _dueno_exclusivo(db)
     minutos = 0
     if (dueno and dueno.id != cliente.id and vehiculo_sirve_expreso(dueno, e)
