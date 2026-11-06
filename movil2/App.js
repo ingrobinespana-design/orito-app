@@ -674,6 +674,24 @@ function avisar(titulo, mensaje) {
   Alert.alert(titulo, mensaje);
 }
 
+// le cuenta al servidor como estan los canales de sonido de este celular (importancia,
+// tono, vibracion). Asi se puede ver a distancia si Android silencio alguno.
+async function reportarCanales(usuarioId) {
+  try {
+    if (Platform.OS !== "android") return;
+    const res = { u: usuarioId, selva: TONO_SELVA };
+    const ch = await Notifications.getNotificationChannelAsync(CANAL_EXPO);
+    res.expo = ch ? { id: ch.id, imp: ch.importance, son: ch.sound, vib: ch.enableVibrate, dnd: ch.bypassDnd } : null;
+    if (notifee) {
+      for (const id of [CANAL_PANTALLA, "tukan_llamada_selva", "tukan_llamada"]) {
+        try { const c = await notifee.getChannel(id); if (c) res[id] = { imp: c.importance, son: c.sound, bloq: c.blocked }; } catch (e) {}
+      }
+      try { const s = await notifee.getNotificationSettings(); res.ajustes = { auth: s.authorizationStatus, fs: s.android && s.android.alarm }; } catch (e) {}
+    }
+    diagFondo("canales", res);
+  } catch (e) {}
+}
+
 /** Pide permiso, saca el token de Expo y lo guarda en el servidor. Devuelve un
  *  diagnostico {ok, motivo, token} para poder ver EN PANTALLA donde falla. */
 async function registrarNotificaciones(usuarioId) {
@@ -704,6 +722,7 @@ async function registrarNotificaciones(usuarioId) {
       estado = (await Notifications.requestPermissionsAsync()).status;
     }
     if (estado !== "granted") return { ok: false, motivo: "No diste permiso de notificaciones." };
+    reportarCanales(usuarioId);   // diagnostico: como quedo el sonido de cada canal en ESTE celular
 
     const projectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
