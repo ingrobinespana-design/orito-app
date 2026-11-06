@@ -351,7 +351,7 @@ async function manejarPushFondo(d) {
   const titulo = d.titulo || "Tukán", cuerpo = d.cuerpo || "";
   const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : d.tipo === "expreso_nuevo" ? `expreso-${d.expreso_id}`
     : d.tipo === "contraoferta" ? `oferta-${d.carrera_id}` : d.tipo === "expreso_contraoferta" ? `expoferta-${d.expreso_id}`
-    : d.tipo === "oferta_aceptada" ? `aceptada-${d.carrera_id}` : d.tipo === "expreso_asignado" ? `asignado-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
+    : d.tipo === "oferta_aceptada" ? `aceptada-${d.carrera_id}` : d.tipo === "expreso_aviso" ? `expaviso-${d.expreso_id}` : d.tipo === "expreso_asignado" ? `asignado-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
   traerTukanAlFrente();
   const ok = await avisoPantallaCompleta(id, titulo, cuerpo);
   diagFondo("aviso", { tipo: d.tipo, ok });
@@ -9410,6 +9410,12 @@ export default function App() {
     const llega = Notifications.addNotificationReceivedListener(async (n) => {
       try {
         const d = n.request.content.data || {};
+        // cancelo / no puede / cambio la fecha / confirmo: ventana encima, para pasajero y conductor
+        if (d.tipo === "expreso_aviso") {
+          try { Vibration.vibrate([0, 500, 200, 500]); } catch (e) {}
+          Alert.alert(n.request.content.title || "Tukán", n.request.content.body || "", [{ text: "Entendido" }]);
+          return;
+        }
         if (d.tipo !== "expreso_contraoferta") return;
         const ses = await leerSesion();
         if (!ses || ses.rol === "conductor" || ses.rol === "admin" || !navRef.isReady()) return;

@@ -2442,8 +2442,8 @@ def avisar_carrera_cancelada(carrera_id: int):
             mensajes.extend(push_conductor(conductor, "❌ El pasajero canceló la carrera",
                                            f"{c.origen} → {c.destino}. Motivo: {motivo}", datos))
         if c.cancelada_por in ("conductor", "admin") and cliente and cliente.push_token:
-            mensajes.append(push.mensaje(cliente.push_token, "❌ Tu conductor canceló la carrera",
-                                         f"Motivo: {motivo}. Puedes volver a pedir tu carrera.", datos))
+            mensajes.extend(push_conductor(cliente, "❌ Tu conductor canceló la carrera",
+                                           f"Motivo: {motivo}. Puedes volver a pedir tu carrera.", datos))
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
@@ -3755,16 +3755,18 @@ def _conductores_expreso(e: Expreso, db: Session):
     ]
 
 @nunca_falla
-def avisar_expreso_a(usuario_id: int, titulo: str, cuerpo: str, expreso_id: int, tipo: str = "expreso_estado"):
-    """Aviso puntual a una persona sobre un viaje a otra ciudad."""
+def avisar_expreso_a(usuario_id: int, titulo: str, cuerpo: str, expreso_id: int, tipo: str = "expreso_aviso"):
+    """Aviso puntual a una persona sobre un viaje a otra ciudad (cancelo, lo liberaron,
+    cambio de fecha, confirmo...). Sale a pantalla completa, como una solicitud."""
     db = SessionLocal()
+    mensajes = []
     try:
         u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
-        token = u.push_token if u else None
+        if u and u.push_token:
+            mensajes = push_conductor(u, titulo, cuerpo, {"tipo": tipo, "expreso_id": expreso_id})
     finally:
         db.close()
-    if token:
-        limpiar_tokens_muertos(push.enviar([push.mensaje(token, titulo, cuerpo, {"tipo": tipo, "expreso_id": expreso_id})]))
+    limpiar_tokens_muertos(push.enviar(mensajes))
 
 @nunca_falla
 def avisar_expreso_nuevo(expreso_id: int):
