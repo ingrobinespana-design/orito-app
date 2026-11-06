@@ -378,7 +378,7 @@ def configurar_exclusivo(clave: str, tel: str = None, radio_km: float = None,
             "municipio": dueno.municipio if dueno else None, "radio_km": r}
 
 @app.get("/diag-push")
-def diag_push(clave: str = None, telefono: str = None,
+def diag_push(clave: str = None, telefono: str = None, prueba: str = None,
               x_admin_token: str = Header(None), db: Session = Depends(get_db)):
     """Diagnostico: dice el estado real de un conductor y le manda un push directo
     SALTANDOSE todos los filtros (disponible/vehiculo/municipio/suscripcion).
@@ -406,6 +406,13 @@ def diag_push(clave: str = None, telefono: str = None,
     }
     if not u.push_token:
         return {"estado": estado, "enviado": False, "motivo": "sin push_token"}
+    if prueba == "acarreo":
+        # SOLO PRUEBA: el mismo aviso que recibe un acarreador (pantalla completa + tono),
+        # sin crear ningun pedido real (carrera_id 0 no existe)
+        muertos = push.enviar(push_conductor(u, "🚚 Nuevo acarreo",
+                                             "De Cra 1D, El Sena a Cl 5 #39, Tequendama · ofrece $80.000 (PRUEBA)",
+                                             {"tipo": "carrera_nueva", "carrera_id": 0}))
+        return {"estado": estado, "enviado": True, "prueba": "acarreo", "token_muerto": bool(muertos)}
     muertos = push.enviar([push.mensaje(
         u.push_token, "🔔 Prueba directa",
         "Si suena, la entrega funciona. El problema serian los filtros.",
