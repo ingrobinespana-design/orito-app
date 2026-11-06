@@ -5803,8 +5803,10 @@ function ConductorScreen({ navigation, route }) {
     // refresco en vivo cada 3s (mas la notificacion push instantanea) para que
     // las carreras nuevas aparezcan casi al momento y las tomadas desaparezcan ya
     const intervalo = setInterval(cargar, 3000);
-    const aviso = Notifications.addNotificationReceivedListener(cargar);
-    const toque = Notifications.addNotificationResponseReceivedListener(cargar);
+    // un aviso de viaje a otra ciudad: se recarga ya y, al tocarlo, se va a Solicitudes donde está la tarjeta
+    const esExpreso = (n) => { try { const d = n.request.content.data || {}; return String(d.tipo || "").startsWith("expreso"); } catch (e) { return false; } };
+    const aviso = Notifications.addNotificationReceivedListener((n) => { cargar(); if (esExpreso(n)) cargarExpresos(); });
+    const toque = Notifications.addNotificationResponseReceivedListener((r) => { cargar(); if (r && esExpreso(r.notification)) { cargarExpresos(); setTab("solicitudes"); } });
     // al volver del segundo plano refresca YA (ej. para mostrar una cancelacion)
     const alFrente = AppState.addEventListener("change", (s) => { if (s === "active") cargar(); });
     return () => { clearInterval(intervalo); aviso.remove(); toque.remove(); alFrente.remove(); };
@@ -5953,6 +5955,47 @@ function ConductorScreen({ navigation, route }) {
   // solicitud abierta en detalle (tipo inDrive: lista -> toque -> mapa + todo)
   const [detalle, setDetalle] = useState(null);
   const [rutaDet, setRutaDet] = useState(null);   // {km,min} hasta la recogida
+
+  // tarjeta de un viaje a otra ciudad (en Solicitudes y en la pestaña Otra ciudad)
+  const tarjetaExpreso = (e) => (
+      <View key={e.id} style={[styles.card, { marginBottom: 10 }]}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
+          <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
+        </View>
+        <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
+        <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
+          <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
+        </View>
+        <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
+        {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
+        {e.notas ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📝 {e.notas}</Text> : null}
+        <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
+        <TouchableOpacity onPress={() => setVerExp(e)} style={{ marginTop: 8, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }}>
+          <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 13 }}>🔍 Ver detalles y mapa</Text>
+        </TouchableOpacity>
+        {e.mi_oferta ? (
+          <View style={{ marginTop: 10 }}>
+            <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 13, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${e.mi_oferta.toLocaleString()}/cupo</Text>
+              <Text style={{ fontSize: 11.5, color: "#5a7a9a", marginTop: 2 }}>Esperando que el cliente responda.</Text>
+            </View>
+            <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 10, marginTop: 8 }]} onPress={() => { setMontoExp(String(e.mi_oferta)); setOfExpreso(e); }}>
+              <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Cambiar mi oferta</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptarExpreso(e)}>
+              <Text style={[styles.buttonText, { fontSize: 13 }]}>Tomar ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoExp(String(e.precio_por_cupo)); setOfExpreso(e); }}>
+              <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Proponer otro</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+  );
 
   const expVistos = useRef(null);   // ids de viajes a otra ciudad ya vistos (para avisar los nuevos)
   const [expNuevo, setExpNuevo] = useState(false);
@@ -6456,19 +6499,6 @@ function ConductorScreen({ navigation, route }) {
         {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
         {tab === "solicitudes" && (
           <>
-            {expresosDisp.length > 0 && (
-              <TouchableOpacity activeOpacity={0.8} onPress={() => { animar(); setTab("otraciudad"); setExpNuevo(false); }}
-                style={{ backgroundColor: expNuevo ? "#FFF1E6" : "#F7F8F5", borderWidth: 1, borderColor: expNuevo ? "#F5B98A" : "#E1E4DC", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Text style={{ fontSize: 20 }}>🚌</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: "800", color: "#1C2B22", fontSize: 13.5 }}>
-                    {expresosDisp.length === 1 ? "1 viaje a otra ciudad disponible" : `${expresosDisp.length} viajes a otra ciudad disponibles`}
-                  </Text>
-                  <Text style={{ color: "#7A7A7A", fontSize: 12 }}>Toca para verlos y tomarlos</Text>
-                </View>
-                <Text style={{ color: "#F06000", fontWeight: "800" }}>Ver ›</Text>
-              </TouchableOpacity>
-            )}
             {TukanOverlay && !sobreOk && (
               <TouchableOpacity
                 style={{ backgroundColor: "#EAF1FB", borderWidth: 1, borderColor: "#A9C4EA", borderRadius: 10, paddingVertical: 7, paddingHorizontal: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}
@@ -6603,7 +6633,7 @@ function ConductorScreen({ navigation, route }) {
                   {/* esperando sin solicitudes = el mapa manda (ocupa casi toda la
                       pantalla); cuando entra una solicitud se achica para dejar ver
                       la tarjeta. Nunca baja de 360. */}
-                  <View style={{ height: disponibles.length > 0 ? 300 : Math.max(360, Dimensions.get("window").height - 330), borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
+                  <View style={{ height: (disponibles.length > 0 || expresosDisp.length > 0) ? 300 : Math.max(360, Dimensions.get("window").height - 330), borderRadius: 14, overflow: "hidden", marginBottom: 8 }}>
                     <MapaSeguimiento key={"prev-" + (foco ? foco.id : "solo")}
                       conductor={miUbic}
                       vehiculo={usuario.tipo_vehiculo}
@@ -6643,6 +6673,17 @@ function ConductorScreen({ navigation, route }) {
             {/* Solicitudes: SOLO cuando hay alguna (encabezado + tarjetas). Conectado
                 SIN solicitudes = el mapa grande + el banner "Buscando viajes" de abajo
                 es el unico indicador (no se repite el mensaje ni se deja el hueco). */}
+            {mias.length === 0 && disponible && expresosDisp.length > 0 && (
+              <>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, marginTop: 4 }}>
+                  <Text style={styles.seccionTitulo}>🚌 Viajes a otra ciudad</Text>
+                  <View style={{ backgroundColor: "#F06000", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                    <Text style={{ fontSize: 11, color: "#fff", fontWeight: "800" }}>{expresosDisp.length} NUEVO{expresosDisp.length > 1 ? "S" : ""}</Text>
+                  </View>
+                </View>
+                {expresosDisp.map(tarjetaExpreso)}
+              </>
+            )}
             {mias.length === 0 && disponibles.length > 0 && (
               <>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -6806,45 +6847,7 @@ function ConductorScreen({ navigation, route }) {
                 <Text style={{ fontSize: 34 }}>🚌</Text>
                 <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>No hay viajes a otra ciudad ahora.{"\n"}Cuando alguien publique uno desde {usuario.municipio}, aparece aquí.</Text>
               </View>
-            ) : expresosDisp.map(e => (
-              <View key={e.id} style={[styles.card, { marginBottom: 10 }]}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
-                  <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
-                </View>
-                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
-                <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
-                  <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
-                </View>
-                <Text style={{ fontSize: 13, color: "#333", marginTop: 6 }}>🟢 Recoge: {e.origen}</Text>
-                {e.destino_detalle ? <Text style={{ fontSize: 13, color: "#333" }}>🏁 Deja: {e.destino_detalle}</Text> : null}
-                {e.notas ? <Text style={{ fontSize: 12, color: "#888", marginTop: 2 }}>📝 {e.notas}</Text> : null}
-                <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
-                <TouchableOpacity onPress={() => setVerExp(e)} style={{ marginTop: 8, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }}>
-                  <Text style={{ color: "#1A56B8", fontWeight: "700", fontSize: 13 }}>🔍 Ver detalles y mapa</Text>
-                </TouchableOpacity>
-                {e.mi_oferta ? (
-                  <View style={{ marginTop: 10 }}>
-                    <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, padding: 10 }}>
-                      <Text style={{ fontSize: 13, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${e.mi_oferta.toLocaleString()}/cupo</Text>
-                      <Text style={{ fontSize: 11.5, color: "#5a7a9a", marginTop: 2 }}>Esperando que el cliente responda.</Text>
-                    </View>
-                    <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 10, marginTop: 8 }]} onPress={() => { setMontoExp(String(e.mi_oferta)); setOfExpreso(e); }}>
-                      <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Cambiar mi oferta</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptarExpreso(e)}>
-                      <Text style={[styles.buttonText, { fontSize: 13 }]}>Tomar ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoExp(String(e.precio_por_cupo)); setOfExpreso(e); }}>
-                      <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Proponer otro</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ))}
+            ) : expresosDisp.map(tarjetaExpreso)}
           </>
         )}
 
@@ -6859,6 +6862,7 @@ function ConductorScreen({ navigation, route }) {
         let e;
         if (!disponible) e = { txt: "Desconectado", sub: "Toca aquí para conectarte y recibir viajes", color: "#C0392B", pulse: false };
         else if (hayDisp) e = { txt: "🚗 ¡Viaje disponible!", sub: `${disponibles.length} solicitud${disponibles.length > 1 ? "es" : ""} esperando`, color: "#F06000", pulse: true };
+        else if (expresosDisp.length > 0) e = { txt: "🚌 ¡Viaje a otra ciudad!", sub: `${expresosDisp.length} esperando conductor · míralo arriba`, color: "#F06000", pulse: true };
         else e = { txt: "Buscando viajes…", sub: "Estás conectado. Te avisamos apenas entre uno", color: "#187830", pulse: true };
         return (
           <TouchableOpacity activeOpacity={enServicio ? 1 : 0.7} onPress={enServicio ? undefined : cambiarDisponibilidad}
