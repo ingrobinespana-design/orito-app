@@ -2719,6 +2719,7 @@ function ElegirServicioScreen({ navigation, route }) {
           ))}
         </View>
 
+        <PermisoEncima texto='Activa "Mostrar encima de otras apps" para que las respuestas de los conductores (precio, llegó, cancelación) te salten aunque estés en otra app' />
         <TarjetaBono usuario={usuario} onIrCarrera={() => ir("carrera")} />
 
         {/* accesos directos: viajes y acarreos A OTRA CIUDAD */}
@@ -7876,6 +7877,24 @@ function precioDe(t, km, rec) {
 }
 // aviso a todos (notificacion): mensajes listos + uno propio, a quien y cuantos lo reciben
 // diagnostico rapido: que le falta a cada usuario + aviso a cada uno con lo suyo
+// aviso para activar "Mostrar encima de otras apps" (sin ese permiso los avisos no saltan
+// encima de otra app). Se esconde solo cuando ya esta activo.
+function PermisoEncima({ texto }) {
+  const [ok, setOk] = useState(puedeSobreponer());
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => { if (st === "active") setOk(puedeSobreponer()); });
+    return () => sub.remove();
+  }, []);
+  if (!TukanOverlay || ok || Platform.OS === "web") return null;
+  return (
+    <TouchableOpacity onPress={() => { try { TukanOverlay.pedirPermiso(); } catch (e) {} }}
+      style={{ backgroundColor: "#EAF1FB", borderWidth: 1, borderColor: "#A9C4EA", borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12, marginTop: 14, flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <Text style={{ fontSize: 18 }}>🪟</Text>
+      <Text style={{ flex: 1, fontSize: 12, color: "#1A56B8", fontWeight: "600" }}>{texto} · <Text style={{ textDecorationLine: "underline" }}>tocar</Text></Text>
+    </TouchableOpacity>
+  );
+}
+
 // bono de agradecimiento: $2.000 en su proxima carrera (Cali) o $2.000 por Nequi (resto)
 function TarjetaBono({ usuario, onIrCarrera }) {
   const [b, setB] = useState(null);
