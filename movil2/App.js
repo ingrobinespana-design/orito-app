@@ -4795,7 +4795,7 @@ function PedirCarreraScreen({ navigation, route }) {
                   <Text style={[styles.buttonText, { fontSize: 13 }]}>💬 Conductor</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 10 }]} onPress={() => soporteWhatsApp("3133714915", usuario)}>
-                  <Text style={[styles.buttonText, { fontSize: 13 }]}>🛟 Soporte</Text>
+                  <Text style={[styles.buttonText, { fontSize: 13 }]}>🎧 Soporte Tukán</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -7262,6 +7262,187 @@ function NovedadesAdmin({ onAbrir }) {
   );
 }
 
+/* ===== Admin: tarifas por vehiculo, recargo por horario y simulador ===== */
+const redondearMil = (v) => Math.ceil(v / 1000) * 1000;
+function precioDe(t, km, rec) {
+  if (!t || !t.valor_km) return null;
+  const vk = t.valor_km + (rec ? rec.km : 0), mn = (t.minima || 0) + (rec ? rec.minima : 0);
+  return Math.max(redondearMil((t.base || 0) + km * vk), mn);
+}
+function AdminTarifas() {
+  const [munis, setMunis] = useState([]);
+  const [ciudad, setCiudad] = useState("Cali");
+  const [edit, setEdit] = useState({});            // { vehiculo: {base, valor_km, minima} }
+  const [rec, setRec] = useState(null);            // { activo, config }
+  const [kmSim, setKmSim] = useState("10");
+  const cargarT = () => {
+    adminFetch(`${API}/municipios?todos=1`).then(r => r.json()).then(d => Array.isArray(d) && setMunis(d)).catch(() => {});
+    adminFetch(`${API}/admin/recargo`).then(r => r.json()).then(d => d && d.config && setRec({ activo: d.activo, config: d.config })).catch(() => {});
+  };
+  useEffect(cargarT, []);
+  const m = munis.find(x => x.nombre === ciudad);
+  const personas = m ? (m.vehiculos || []).filter(v => !esCarga(v)) : [];
+  const tarifaDe = (v) => {
+    const tv = m && m.tarifas_vehiculo && m.tarifas_vehiculo[v];
+    return tv ? tv : (m && m.valor_km ? { base: m.tarifa_base || 0, valor_km: m.valor_km, minima: m.tarifa_minima || 0, general: true } : null);
+  };
+  useEffect(() => {
+    if (!m) return;
+    const e = {};
+    personas.forEach(v => { const t = tarifaDe(v) || {}; e[v] = { base: String(t.base || 0), valor_km: String(t.valor_km || ""), minima: String(t.minima || "") }; });
+    setEdit(e);
+  }, [ciudad, munis]);
+  const num = (x) => parseInt(String(x || "").replace(/\D/g, ""), 10) || 0;
+  const guardarVeh = (v) => {
+    const e = edit[v];
+    adminFetch(`${API}/admin/tarifas?${qs({ municipio: ciudad, vehiculo: v, base: num(e.base), valor_km: num(e.valor_km), minima: num(e.minima) })}`, { method: "PUT" })
+      .then(async r => { const d = await r.json().catch(() => null); if (!r.ok) { avisar("No se pudo", (d && d.detail) || "Error"); return; } cargarT(); avisar("Tarifa guardada", `${vehLabel(v)} en ${nombreCiudad(ciudad)}: $${num(e.valor_km).toLocaleString()}/km, mínima $${num(e.minima).toLocaleString()}. Ya aplica a las carreras nuevas.`); })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
+  const setFranja = (i, k, v) => setRec(r => { const c = JSON.parse(JSON.stringify(r.config)); c.franjas[i][k] = v; return { ...r, config: c }; });
+  const guardarRec = () => {
+    const cfg = JSON.parse(JSON.stringify(rec.config));
+    cfg.franjas = cfg.franjas.map(f => ({ ...f, km: num(f.km), minima: num(f.minima) }));
+    adminFetch(`${API}/admin/recargo`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ activo: rec.activo, config: cfg }) })
+      .then(async r => { const d = await r.json().catch(() => null); if (!r.ok) { avisar("No se pudo", (d && d.detail) || "Error"); return; } setRec({ activo: d.activo, config: d.config }); avisar("Recargo guardado", "Ya aplica a las carreras nuevas."); })
+      .catch(() => avisar("Error", "No hay conexión."));
+  };
+  const km = parseFloat(String(kmSim).replace(",", ".")) || 0;
+  const pct = m && m.promo && m.promo.activa ? m.promo.pct : 0;
+  const recDe = (nombre) => {
+    if (!rec || !rec.activo || !(rec.config.ciudades || []).includes(ciudad.toLowerCase())) return null;
+    const f = (rec.config.franjas || []).find(x => x.nombre === nombre);
+    return f ? { km: num(f.km), minima: num(f.minima) } : null;
+  };
+  const conPromo = (v) => v == null ? null : (pct ? Math.round(v * (100 - pct) / 100 / 50) * 50 : v);
+  const fila3 = (lbl, val, set) => (
+    <View style={{ flex: 1 }}>
+      <Text style={{ fontSize: 11, fontWeight: "800", color: "#8A8A8A", marginBottom: 4 }}>{lbl}</Text>
+      <TextInput value={val} onChangeText={set} keyboardType="number-pad" style={[styles.input, { marginBottom: 0, paddingVertical: 10 }]} />
+    </View>
+  );
+  return (
+    <View style={{ marginBottom: 14 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 12 }}>
+        {munis.filter(x => x.activo !== "no").map(x => (
+          <TouchableOpacity key={x.nombre} onPress={() => setCiudad(x.nombre)} style={[styles.chip, ciudad === x.nombre && styles.chipOn]}>
+            <Text style={[styles.chipTxt, ciudad === x.nombre && styles.chipTxtOn]}>{nombreCiudad(x.nombre)}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.seccionTitulo}>💵 Tarifas por vehículo · {nombreCiudad(ciudad)}</Text>
+        {personas.length === 0 ? <Text style={{ color: "#888" }}>Esta ciudad no tiene carro ni moto habilitados.</Text> : null}
+        {personas.map(v => (
+          <View key={v} style={{ borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingTop: 10, marginTop: 6 }}>
+            <Text style={{ fontWeight: "800", fontSize: 15, marginBottom: 6 }}>{vehIcono(v)} {vehLabel(v)}{tarifaDe(v) && tarifaDe(v).general ? <Text style={{ fontSize: 11.5, color: "#B85C00", fontWeight: "600" }}>  (usa la general de la ciudad)</Text> : null}</Text>
+            {edit[v] ? (
+              <>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {fila3("BASE $", edit[v].base, (t) => setEdit(e => ({ ...e, [v]: { ...e[v], base: t } })))}
+                  {fila3("POR KM $", edit[v].valor_km, (t) => setEdit(e => ({ ...e, [v]: { ...e[v], valor_km: t } })))}
+                  {fila3("MÍNIMA $", edit[v].minima, (t) => setEdit(e => ({ ...e, [v]: { ...e[v], minima: t } })))}
+                </View>
+                <TouchableOpacity onPress={() => guardarVeh(v)} style={{ alignSelf: "flex-end", backgroundColor: "#187830", borderRadius: 10, paddingVertical: 8, paddingHorizontal: 16, marginTop: 8 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800" }}>Guardar {vehLabel(v).toLowerCase()}</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+        ))}
+      </View>
+
+      {rec ? (
+        <View style={[styles.card, { marginBottom: 12 }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={styles.seccionTitulo}>⏰ Recargo por horario</Text>
+            <TouchableOpacity onPress={() => setRec(r => ({ ...r, activo: !r.activo }))} style={[styles.chip, rec.activo && styles.chipOn]}>
+              <Text style={[styles.chipTxt, rec.activo && styles.chipTxtOn]}>{rec.activo ? "Encendido" : "Apagado"}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 8 }}>Se suma a la tarifa por km y a la mínima. El pasajero no ve etiqueta, solo el precio.</Text>
+          <Text style={{ fontSize: 12, fontWeight: "800", color: "#8A8A8A", marginBottom: 4 }}>CIUDADES CON RECARGO</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {munis.filter(x => x.activo !== "no").map(x => {
+              const on = (rec.config.ciudades || []).includes(x.nombre.toLowerCase());
+              return (
+                <TouchableOpacity key={x.nombre} style={[styles.chip, on && styles.chipOn]}
+                  onPress={() => setRec(r => { const c = JSON.parse(JSON.stringify(r.config)); const k = x.nombre.toLowerCase(); c.ciudades = on ? c.ciudades.filter(z => z !== k) : [...(c.ciudades || []), k]; return { ...r, config: c }; })}>
+                  <Text style={[styles.chipTxt, on && styles.chipTxtOn]}>{nombreCiudad(x.nombre)}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {(rec.config.franjas || []).map((f, i) => (
+            <View key={i} style={{ backgroundColor: "#F7F8F5", borderRadius: 12, padding: 10, marginBottom: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={{ fontWeight: "800" }}>{f.nombre === "madrugada" ? "🌙 Madrugada" : "🚦 Hora pico"}</Text>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {[["habiles", "Lun–Vie"], ["todos", "Todos los días"]].map(([k, lbl]) => (
+                    <TouchableOpacity key={k} onPress={() => setFranja(i, "dias", k)} style={[styles.chip, { paddingVertical: 4, paddingHorizontal: 9 }, f.dias === k && styles.chipOn]}>
+                      <Text style={[styles.chipTxt, { fontSize: 11.5 }, f.dias === k && styles.chipTxtOn]}>{lbl}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity onPress={() => setRec(r => { const c = JSON.parse(JSON.stringify(r.config)); c.franjas.splice(i, 1); return { ...r, config: c }; })}>
+                    <Text style={{ color: "#C0392B", fontSize: 18, paddingHorizontal: 4 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                {fila3("DESDE", f.desde, (t) => setFranja(i, "desde", t))}
+                {fila3("HASTA", f.hasta, (t) => setFranja(i, "hasta", t))}
+                {fila3("+$ POR KM", String(f.km), (t) => setFranja(i, "km", t))}
+                {fila3("+$ MÍNIMA", String(f.minima), (t) => setFranja(i, "minima", t))}
+              </View>
+            </View>
+          ))}
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+            <TouchableOpacity onPress={() => setRec(r => { const c = JSON.parse(JSON.stringify(r.config)); c.franjas.push({ nombre: "pico", desde: "12:00", hasta: "14:00", dias: "habiles", km: 200, minima: 1000 }); return { ...r, config: c }; })}
+              style={{ flex: 1, backgroundColor: "#F1F2EF", borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
+              <Text style={{ fontWeight: "800", color: "#555" }}>+ Hora pico</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setRec(r => { const c = JSON.parse(JSON.stringify(r.config)); c.franjas.push({ nombre: "madrugada", desde: "23:00", hasta: "05:00", dias: "todos", km: 500, minima: 2000 }); return { ...r, config: c }; })}
+              style={{ flex: 1, backgroundColor: "#F1F2EF", borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
+              <Text style={{ fontWeight: "800", color: "#555" }}>+ Madrugada</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity onPress={guardarRec} style={[styles.button, { backgroundColor: "#187830", marginTop: 12 }]}>
+            <Text style={styles.buttonText}>Guardar recargo</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.seccionTitulo}>🧮 Simulador · {nombreCiudad(ciudad)}</Text>
+        <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 8 }}>Escribe los km de una carrera y compara con la competencia. Usa los valores ya guardados.</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <TextInput value={kmSim} onChangeText={setKmSim} keyboardType="decimal-pad" style={[styles.input, { marginBottom: 0, width: 90, paddingVertical: 10 }]} />
+          <Text style={{ fontWeight: "700", color: "#555" }}>km{pct ? `  ·  con promo ${pct}% para el pasajero` : ""}</Text>
+        </View>
+        <View style={{ flexDirection: "row", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#F0F1EE" }}>
+          {["", "Normal", "Pico", "Madrugada"].map(h => <Text key={h} style={{ flex: h ? 1 : 1.1, fontSize: 11.5, fontWeight: "800", color: "#8A8A8A", textAlign: h ? "right" : "left" }}>{h.toUpperCase()}</Text>)}
+        </View>
+        {personas.map(v => {
+          const t = tarifaDe(v);
+          const vals = [precioDe(t, km, null), precioDe(t, km, recDe("pico")), precioDe(t, km, recDe("madrugada"))];
+          return (
+            <View key={v} style={{ flexDirection: "row", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#F7F8F5" }}>
+              <Text style={{ flex: 1.1, fontWeight: "700" }}>{vehIcono(v)} {vehLabel(v)}</Text>
+              {vals.map((x, i) => (
+                <View key={i} style={{ flex: 1, alignItems: "flex-end" }}>
+                  <Text style={{ fontWeight: "800" }}>{x == null ? "—" : `$${x.toLocaleString()}`}</Text>
+                  {pct && x != null ? <Text style={{ fontSize: 11, color: "#E8470A", fontWeight: "700" }}>${conPromo(x).toLocaleString()}</Text> : null}
+                </View>
+              ))}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function AdminCarrerasScreen({ navigation, route }) {
   const [conductores, setConductores] = useState([]);
   const [carreras, setCarreras] = useState([]);
@@ -7991,6 +8172,7 @@ function AdminCarrerasScreen({ navigation, route }) {
         )}
         {pestana === "ciudades" && (
           <>
+            <AdminTarifas />
             {/* --- formulario: abrir ciudad nueva --- */}
             <View style={[styles.card, { marginBottom: 14, borderWidth: 1, borderColor: "#187830" }]}>
               <Text style={{ fontWeight: "800", color: "#187830", fontSize: 15 }}>➕ Abrir ciudad nueva</Text>

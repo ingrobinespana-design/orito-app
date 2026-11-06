@@ -1287,6 +1287,61 @@ def listar_tarifas(db: Session = Depends(get_db)):
              "base": t.base, "valor_km": t.valor_km, "minima": t.minima}
             for t in db.query(Tarifa).order_by(Tarifa.municipio, Tarifa.vehiculo).all()]
 
+@app.put("/admin/tarifas")
+def guardar_tarifa_vehiculo(municipio: str, vehiculo: str, base: int = 0, valor_km: int = 0, minima: int = 0,
+                            db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Tarifa de un vehiculo en una ciudad (crea o actualiza). valor_km=0 la borra y ese
+    vehiculo usa la tarifa general de la ciudad."""
+    if vehiculo not in VEHICULOS_VALIDOS:
+        raise HTTPException(status_code=400, detail="Vehiculo invalido")
+    if min(base, valor_km, minima) < 0:
+        raise HTTPException(status_code=400, detail="Los valores no pueden ser negativos")
+    t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
+    if not valor_km:
+        if t:
+            db.delete(t)
+            db.commit()
+        return {"ok": True, "borrada": True}
+    if not t:
+        t = Tarifa(municipio=municipio, vehiculo=vehiculo)
+        db.add(t)
+    t.base, t.valor_km, t.minima = base, valor_km, minima
+    db.commit()
+    return {"ok": True, "municipio": municipio, "vehiculo": vehiculo, "base": base, "valor_km": valor_km, "minima": minima}
+
+@app.get("/admin/recargo")
+def ver_recargo_admin(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    return {"activo": leer_config("recargo_activo", db, "si") == "si", "config": recargo_config(db) or RECARGO_DEFECTO,
+            "ahora": recargo_actual("Cali", db), "hora_colombia": ahora_colombia().strftime("%H:%M")}
+
+@app.put("/admin/recargo")
+async def guardar_recargo_admin(request: Request, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Guarda el recargo por horario desde el admin: {activo: bool, config: {ciudades, franjas, festivos}}."""
+    d = await request.json()
+    def poner(k, v):
+        fila = db.query(Config).filter(Config.clave == k).first()
+        if fila:
+            fila.valor = v
+        else:
+            db.add(Config(clave=k, valor=v))
+    if "activo" in d:
+        poner("recargo_activo", "si" if d["activo"] else "no")
+    if "config" in d:
+        cfg = d["config"]
+        try:
+            for f in cfg["franjas"]:
+                _min_del_dia(f["desde"]); _min_del_dia(f["hasta"])
+                f["km"] = int(f["km"]); f["minima"] = int(f["minima"])
+                if f.get("dias") not in ("habiles", "todos"):
+                    f["dias"] = "todos"
+            cfg["ciudades"] = [str(c).strip().lower() for c in cfg.get("ciudades", [])]
+            cfg.setdefault("festivos", RECARGO_DEFECTO["festivos"])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Revisa las horas (HH:MM) y los valores")
+        poner("recargo_horario", _json_rec.dumps(cfg))
+    db.commit()
+    return ver_recargo_admin(db, admin)
+
 @app.put("/tarifas/{tarifa_id}")
 def actualizar_tarifa(tarifa_id: int, base: int = None, valor_km: int = None,
                       minima: int = None, db: Session = Depends(get_db),
