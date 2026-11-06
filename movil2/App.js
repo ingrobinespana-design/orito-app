@@ -1935,6 +1935,19 @@ function RestauranteScreen({ navigation, route }) {
 // ===== ACARREOS: catalogos y fotos =====
 const TIPOS_CARGA = [["trasteo", "🏠 Trasteo / mudanza"], ["mercancia", "🏪 Mercancía de negocio"],
   ["materiales", "🧱 Materiales de construcción"], ["objeto", "📦 Objeto grande / electrodoméstico"], ["otro", "➕ Otro"]];
+// camiones: tamaño (tonelaje) y tipo de carroceria, para no mandar lo que no es
+const CAPACIDADES_CARGA = [["turbo", "Turbo", "hasta 4,5 t"], ["sencillo", "Sencillo", "hasta 9 t"],
+  ["doble_troque", "Doble troque", "hasta 17 t"], ["tractomula", "Tractomula", "más de 30 t"]];
+const CARROCERIAS_DE = {
+  camion: [["estacas", "Estacas"], ["furgon", "Furgón cerrado"], ["plancha", "Plancha"], ["volco", "Volco"], ["refrigerado", "Refrigerado"], ["cama_baja", "Cama baja"], ["ninera", "Niñera (lleva carros)"]],
+  camion_pequeno: [["estacas", "Estacas"], ["furgon", "Furgón cerrado"], ["volco", "Volco"]],
+  furgon: [["furgon", "Seco"], ["refrigerado", "Refrigerado"]],
+  planchon: [["plancha", "Plancha"], ["cama_baja", "Cama baja"]],
+  camioneta: [["platon", "Platón abierto"], ["van", "Van / furgoneta cerrada"]],
+};
+const CAPACIDAD_PARA = ["camion", "camion_pequeno", "furgon", "planchon"];
+const CARROCERIA_TXT = Object.fromEntries(Object.values(CARROCERIAS_DE).flat().reverse());   // el primero (camion) gana
+
 const TAMANOS_CARGA = [["pequena", "Pequeña", "cajas, un mueble"], ["mediana", "Mediana", "nevera, lavadora, varios muebles"],
   ["grande", "Grande", "trasteo de 1–2 cuartos"], ["muy_grande", "Muy grande", "casa completa o mucha mercancía"]];
 const etiquetaDe = (lista, k) => (lista.find((x) => x[0] === k) || [])[1];
@@ -2031,12 +2044,15 @@ const sl = StyleSheet.create({
 
 function DetalleAcarreo({ c, compacto }) {
   const [ampliada, setAmpliada] = useState(null);
-  if (!esCarga(c.vehiculo_pedido)) return null;
+  if (!esCarga(c.vehiculo_pedido || c.vehiculo)) return null;
+  const capa = CAPACIDADES_CARGA.find((x) => x[0] === c.capacidad_carga);
+  const lista = CARROCERIAS_DE[c.vehiculo_pedido || c.vehiculo] || [];
+  const carro = c.carroceria ? ((lista.find((x) => x[0] === c.carroceria) || [])[1] || CARROCERIA_TXT[c.carroceria]) : null;
   const sinEmoji = (t) => (t || "").replace(/^\S+\s/, "");          // "🏠 Trasteo" -> "Trasteo"
   const tam = TAMANOS_CARGA.find((x) => x[0] === c.tamano_carga);
   const piso = (n, asc) => n == null ? null
     : `${n <= 1 ? "Primer piso" : `Piso ${n}`}${n > 1 && asc === "si" ? " · con ascensor" : n > 1 && asc === "no" ? " · sin ascensor" : ""}`;
-  const fotos = c.fotos_carga || [];
+  const fotos = Array.isArray(c.fotos_carga) ? c.fotos_carga : (c.fotos_carga ? String(c.fotos_carga).split(",").filter(Boolean) : []);
   const visor = (
     <Modal visible={!!ampliada} transparent animationType="fade" onRequestClose={() => setAmpliada(null)}>
       <TouchableOpacity activeOpacity={1} onPress={() => setAmpliada(null)} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", padding: 12 }}>
@@ -2050,6 +2066,8 @@ function DetalleAcarreo({ c, compacto }) {
   if (compacto) {
     const pills = [
       c.tipo_carga && sinEmoji(etiquetaDe(TIPOS_CARGA, c.tipo_carga)),
+      capa && `${capa[1]} (${capa[2]})`,
+      carro,
       tam && tam[1],
       c.ayudantes > 0 && `${c.ayudantes} ayudante${c.ayudantes > 1 ? "s" : ""}`,
       (c.piso_origen > 1 || c.piso_destino > 1) && `Piso ${c.piso_origen || 1} → ${c.piso_destino || 1}`,
@@ -2075,6 +2093,8 @@ function DetalleAcarreo({ c, compacto }) {
   // ficha completa: icono en circulo + etiqueta + valor
   const filas = [
     c.tipo_carga && ["📦", "Qué se mueve", sinEmoji(etiquetaDe(TIPOS_CARGA, c.tipo_carga))],
+    (capa || carro) && ["🚛", "Vehículo", [vehLabel(c.vehiculo_pedido || c.vehiculo), capa && `${capa[1]} (${capa[2]})`, carro].filter(Boolean).join(" · ")],
+    c.notas && ["📝", "Descripción", c.notas],
     tam && ["📐", "Tamaño", `${tam[1]} · ${ejemploTamano(c.tipo_carga, tam[0])}`],
     c.ayudantes != null && ["🙋", "Ayuda para cargar", c.ayudantes > 0 ? `${c.ayudantes} ayudante${c.ayudantes > 1 ? "s" : ""}` : "No necesita"],
     c.piso_origen != null && ["📤", "Recoger en", piso(c.piso_origen, c.ascensor_origen)],
@@ -2695,6 +2715,22 @@ function ElegirServicioScreen({ navigation, route }) {
               </View>
               <Text style={{ fontSize: 15, fontWeight: "800", color, marginTop: 10 }}>{tit}</Text>
               <Text style={{ fontSize: 11.5, color: "#8A8A8A", marginTop: 2, textAlign: "center" }}>{sub}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* accesos directos: viajes y acarreos A OTRA CIUDAD */}
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+          {[["🛣️", "Viaje a otra ciudad", "Por cupos", "carrera", "#14672A"], ["🚛", "Acarreo a otra ciudad", "Trasteos y carga", "acarreo", "#B54A00"]].map(([ic, t, d, modo, color]) => (
+            <TouchableOpacity key={t} activeOpacity={0.85}
+              onPress={() => navigation.navigate("PedirCarrera", { usuario, modo, otraCiudad: Date.now() })}
+              style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#fff", borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12,
+                borderWidth: 1, borderColor: "#E1E5DD", shadowColor: "#0C2C1B", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 }}>
+              <Text style={{ fontSize: 24 }}>{ic}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "800", color }} numberOfLines={2}>{t}</Text>
+                <Text style={{ fontSize: 11, color: "#8A8A8A", marginTop: 1 }}>{d}</Text>
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -4074,12 +4110,14 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
             const ofs = ofertas[e.id] || [];
             return (
               <View key={e.id} style={[styles.card, { marginBottom: 10 }]}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
-                  <Text style={{ fontSize: 11, color: "#888" }}>{estadoExpreso(e.estado)}</Text>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15, flex: 1 }}>{nombreCiudad(e.origen_municipio)} → {nombreCiudad(e.destino_municipio)}</Text>
+                  <View style={{ backgroundColor: "#F1F2EF", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, flexShrink: 0 }}>
+                    <Text style={{ fontSize: 11, color: "#555", fontWeight: "700" }}>{estadoExpreso(e.estado)}</Text>
+                  </View>
                 </View>
                 <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · ${e.precio_por_cupo.toLocaleString()}{porCupo(e)}</Text>
-                {esExpCarga(e) ? <DetalleAcarreo c={e} compacto /> : null}
+                {esExpCarga(e) ? <DetalleAcarreo c={e} /> : null}
                 <Text style={{ fontSize: 12.5, fontWeight: "700", marginTop: 2, color: e.salida ? "#B85C00" : "#187830" }}>
                   {e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}
                 </Text>
@@ -4259,8 +4297,43 @@ function PedirCarreraScreen({ navigation, route }) {
   const [ascD, setAscD] = useState(null);
   const [recibeNombre, setRecibeNombre] = useState("");
   const [recibeTel, setRecibeTel] = useState("");
+  const [capacidad, setCapacidad] = useState(null);     // camion: turbo / sencillo / doble troque / tractomula
+  const [carroceria, setCarroceria] = useState(null);   // estacas / furgon / plancha ...
+  useEffect(() => { setCarroceria(null); if (!CAPACIDAD_PARA.includes(vehiculo)) setCapacidad(null); }, [vehiculo]);
   // bloques del ACARREO (vehiculo de carga + detalles de la carga): los usa el acarreo
   // en la ciudad y tambien el acarreo A OTRA CIUDAD (copia fiel, mismos datos)
+  const extraCamionJSX = () => (
+    <>
+      {CAPACIDAD_PARA.includes(vehiculo) && (
+        <>
+          <Text style={[styles.etiqueta, { marginTop: 14 }]}>TAMAÑO DEL CAMIÓN</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {CAPACIDADES_CARGA.map(([k, t, d]) => (
+              <TouchableOpacity key={k} onPress={() => setCapacidad(capacidad === k ? null : k)}
+                style={{ borderRadius: 12, borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 12, minWidth: "46%", flexGrow: 1,
+                  borderColor: capacidad === k ? "#187830" : "#E5E0D5", backgroundColor: capacidad === k ? "#EAF6EC" : "#fff" }}>
+                <Text style={{ fontWeight: "800", fontSize: 14, color: capacidad === k ? "#187830" : "#333" }}>{t}</Text>
+                <Text style={{ fontSize: 12, color: "#777" }}>{d}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
+      {CARROCERIAS_DE[vehiculo] && (
+        <>
+          <Text style={[styles.etiqueta, { marginTop: 14 }]}>TIPO DE CARROCERÍA</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {CARROCERIAS_DE[vehiculo].map(([k, t]) => (
+              <TouchableOpacity key={k} onPress={() => setCarroceria(carroceria === k ? null : k)} style={[styles.chip, carroceria === k && styles.chipOn]}>
+                <Text style={[styles.chipTxt, carroceria === k && styles.chipTxtOn]}>{t}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[styles.ayuda, { marginTop: 6 }]}>Así te llega el vehículo que de verdad sirve para tu carga</Text>
+        </>
+      )}
+    </>
+  );
   const vehCargaJSX = () => (<>
                 <Text style={[styles.etiqueta, { marginTop: modoServicio === "acarreo" ? 0 : 14 }]}>{modoServicio === "acarreo" ? "🚚 ¿QUÉ VEHÍCULO NECESITAS?" : "🚚 TRASTEO O ACARREO"}</Text>
                 <Text style={styles.ayuda}>{modoServicio === "acarreo" ? "Elige según el tamaño de lo que vas a mover" : "Para mudanzas, mercancia o carga"}</Text>
@@ -4275,6 +4348,7 @@ function PedirCarreraScreen({ navigation, route }) {
                     </TouchableOpacity>
                   ))}
                 </View>
+    {extraCamionJSX()}
   </>);
   const detalleCargaJSX = () => (<>
             <Text style={styles.etiqueta}>¿QUÉ VAS A MOVER?</Text>
@@ -4365,6 +4439,8 @@ function PedirCarreraScreen({ navigation, route }) {
   // datos de la carga para publicar (mismo formato que el acarreo en la ciudad)
   const datosCargaActual = () => {
     const d = { vehiculo, tipo_carga: tipoCarga, tamano_carga: tamanoCarga, ayudantes, notas: form.notas };
+    if (capacidad) d.capacidad_carga = capacidad;
+    if (carroceria) d.carroceria = carroceria;
     if (fotosCarga.length) d.fotos_carga = fotosCarga.join(",");
     if (pisoO.trim()) d.piso_origen = parseInt(pisoO, 10) || 0;
     if (pisoD.trim()) d.piso_destino = parseInt(pisoD, 10) || 0;
@@ -4376,7 +4452,7 @@ function PedirCarreraScreen({ navigation, route }) {
   };
   const limpiarCarga = () => {
     setTipoCarga(null); setTamanoCarga(null); setFotosCarga([]); setAyudantes(0);
-    setPisoO(""); setPisoD(""); setAscO(null); setAscD(null); setRecibeNombre(""); setRecibeTel("");
+    setPisoO(""); setPisoD(""); setAscO(null); setAscD(null); setRecibeNombre(""); setRecibeTel(""); setCapacidad(null); setCarroceria(null);
     setForm((f) => ({ ...f, notas: "" }));
   };
 
@@ -4394,7 +4470,7 @@ function PedirCarreraScreen({ navigation, route }) {
   };
   const limpiarAcarreo = () => {
     setTipoCarga(null); setTamanoCarga(null); setFotosCarga([]); setAyudantes(0);
-    setPisoO(""); setPisoD(""); setAscO(null); setAscD(null); setRecibeNombre(""); setRecibeTel("");
+    setPisoO(""); setPisoD(""); setAscO(null); setAscD(null); setRecibeNombre(""); setRecibeTel(""); setCapacidad(null); setCarroceria(null);
   };
   const [muni, setMuni] = useState(null);           // municipio ACTIVO de esta carrera
   const [municipios, setMunicipios] = useState([]); // todos, para elegir manual
@@ -4404,8 +4480,9 @@ function PedirCarreraScreen({ navigation, route }) {
   const [estimado, setEstimado] = useState(null);   // {distancia_km, tarifa_sugerida}
   const [mapaAbierto, setMapaAbierto] = useState(null); // "origen" | "destino" | null
   const [oferta, setOferta] = useState("");          // lo que el cliente ofrece pagar
-  const [modo, setModo] = useState((route.params && route.params.vista === "expreso") ? "expreso" : "local");   // "local" | "expreso" (otra ciudad)
+  const [modo, setModo] = useState((route.params && (route.params.vista === "expreso" || route.params.otraCiudad)) ? "expreso" : "local");   // "local" | "expreso" (otra ciudad)
   useEffect(() => { if (route.params && route.params.vista === "expreso") setModo("expreso"); }, [route.params && route.params.vistaT]);
+  useEffect(() => { if (route.params && route.params.otraCiudad) setModo("expreso"); }, [route.params && route.params.otraCiudad]);
   const scrollForm = useRef(null);                   // para subir el campo de oferta sobre el teclado
   // sube CUALQUIER campo por encima del teclado al enfocarlo (no solo la oferta):
   // usa el metodo nativo del ScrollView, que mide el input y lo deja visible.
@@ -4783,6 +4860,8 @@ function PedirCarreraScreen({ navigation, route }) {
       if (ascD) datos.ascensor_destino = ascD;
       if (recibeNombre.trim()) datos.recibe_nombre = recibeNombre.trim();
       if (recibeTel.trim()) datos.recibe_telefono = recibeTel.trim();
+      if (capacidad) datos.capacidad_carga = capacidad;
+      if (carroceria) datos.carroceria = carroceria;
     }
     fetchReintento(`${API}/carreras?${qs(datos)}`, { method: "POST", headers: { "X-User-Token": llaveUsuario || "" } })
       .then(async (r) => {
@@ -6241,7 +6320,7 @@ function ConductorScreen({ navigation, route }) {
           <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
         </View>
         <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
-        {esExpCarga(e) ? <DetalleAcarreo c={e} compacto /> : null}
+        {esExpCarga(e) ? <DetalleAcarreo c={e} /> : null}
         <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
           <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
         </View>

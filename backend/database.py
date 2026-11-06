@@ -321,6 +321,8 @@ class Carrera(Base):
     ascensor_destino = Column(String, nullable=True)
     recibe_nombre = Column(String, nullable=True)    # quien recibe en el destino
     recibe_telefono = Column(String, nullable=True)
+    capacidad_carga = Column(String, nullable=True)  # camion: turbo / sencillo / doble_troque / tractomula
+    carroceria = Column(String, nullable=True)       # estacas / furgon / plancha / volco / refrigerado / ...
     # prueba de entrega (la toma el transportador al terminar)
     entrega_foto = Column(String, nullable=True)
     entrega_recibio = Column(String, nullable=True)
@@ -548,6 +550,7 @@ def crear_tablas():
                     "ayudantes INTEGER", "piso_origen INTEGER", "piso_destino INTEGER",
                     "ascensor_origen VARCHAR", "ascensor_destino VARCHAR",
                     "recibe_nombre VARCHAR", "recibe_telefono VARCHAR",
+                    "capacidad_carga VARCHAR", "carroceria VARCHAR",
                     "entrega_foto VARCHAR", "entrega_recibio VARCHAR", "entregada_en TIMESTAMP"):
         try:
             with engine.begin() as conn:

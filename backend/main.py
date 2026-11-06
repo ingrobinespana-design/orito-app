@@ -1065,6 +1065,8 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
             partes.append(barrio)
         etiqueta = ", ".join(partes[:2]).strip()
         ciudad = ciudad_tukan or a.get("city") or a.get("town") or a.get("municipality") or a.get("village") or a.get("county")
+        if ciudad:
+            ciudad = re.sub(r"^(per[ií]metro urbano|zona urbana( de)?|cabecera( municipal)?( de)?)\s+", "", ciudad, flags=re.I).strip()
         if etiqueta:
             return {"nombre": etiqueta, "fuente": "direccion", "ciudad": ciudad, "departamento": a.get("state")}
         if ciudad:
@@ -2106,6 +2108,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "ayudantes": c.ayudantes, "piso_origen": c.piso_origen, "piso_destino": c.piso_destino,
         "ascensor_origen": c.ascensor_origen, "ascensor_destino": c.ascensor_destino,
         "recibe_nombre": c.recibe_nombre, "recibe_telefono": c.recibe_telefono,
+        "capacidad_carga": c.capacidad_carga, "carroceria": c.carroceria,
         "entrega_foto": c.entrega_foto, "entrega_recibio": c.entrega_recibio,
         "entregada_en": c.entregada_en,
     }
@@ -3180,9 +3183,11 @@ def eliminar_lugar(lugar_id: int, db: Session = Depends(get_db)):
 
 TIPOS_CARGA = ("trasteo", "mercancia", "materiales", "objeto", "otro")
 TAMANOS_CARGA = ("pequena", "mediana", "grande", "muy_grande")
+CAPACIDADES_CARGA = ("turbo", "sencillo", "doble_troque", "tractomula")
+CARROCERIAS = ("estacas", "furgon", "plancha", "volco", "refrigerado", "cama_baja", "ninera", "platon", "van")
 
 def _datos_acarreo(c: Carrera, tipo, tamano, fotos, ayudantes, piso_o, piso_d, asc_o, asc_d,
-                   recibe_nombre, recibe_tel):
+                   recibe_nombre, recibe_tel, capacidad=None, carroceria=None):
     """Valida y guarda los detalles del acarreo. Lo raro se ignora (no tumba el pedido)."""
     c.tipo_carga = tipo if tipo in TIPOS_CARGA else None
     c.tamano_carga = tamano if tamano in TAMANOS_CARGA else None
@@ -3196,6 +3201,8 @@ def _datos_acarreo(c: Carrera, tipo, tamano, fotos, ayudantes, piso_o, piso_d, a
     c.ascensor_destino = asc_d if asc_d in ("si", "no") else None
     c.recibe_nombre = (recibe_nombre or "").strip()[:80] or None
     c.recibe_telefono = _digitos(recibe_tel)[:15] or None
+    c.capacidad_carga = capacidad if capacidad in CAPACIDADES_CARGA else None
+    c.carroceria = carroceria if carroceria in CARROCERIAS else None
 
 # ======================= EVENTOS DE CADA CIUDAD =======================
 # Se muestran en el inicio del pasajero ("Eventos en Cali") con "Ir en Tukan".
@@ -3398,6 +3405,7 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
                   ayudantes: int = None, piso_origen: int = None, piso_destino: int = None,
                   ascensor_origen: str = None, ascensor_destino: str = None,
                   recibe_nombre: str = None, recibe_telefono: str = None,
+                  capacidad_carga: str = None, carroceria: str = None,
                   db: Session = Depends(get_db),
                   actual: Usuario = Depends(usuario_actual)):
     exigir_dueño(actual, cliente_id)   # solo pides carreras para ti mismo
@@ -3504,7 +3512,8 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     )
     if vehiculo_pedido in VEHICULOS_CARGA:
         _datos_acarreo(carrera, tipo_carga, tamano_carga, fotos_carga, ayudantes, piso_origen,
-                       piso_destino, ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono)
+                       piso_destino, ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono,
+                       capacidad_carga, carroceria)
     db.add(carrera)
     # ya no se graban lugares: origen y destino se fijan siempre por GPS/mapa,
     # asi que no hay lista pregrabada que alimentar (decision de precision)
@@ -3993,6 +4002,7 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
                   ayudantes: int = None, piso_origen: int = None, piso_destino: int = None,
                   ascensor_origen: str = None, ascensor_destino: str = None,
                   recibe_nombre: str = None, recibe_telefono: str = None,
+                  capacidad_carga: str = None, carroceria: str = None,
                   destino_detalle: str = None, destino_lat: float = None, destino_lon: float = None,
                   salida: str = None, notas: str = None,
                   db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
@@ -4021,7 +4031,8 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         import json as _j
         tmp = SimpleNamespace()
         _datos_acarreo(tmp, tipo_carga, tamano_carga, fotos_carga, ayudantes, piso_origen, piso_destino,
-                       ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono)
+                       ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono,
+                       capacidad_carga, carroceria)
         datos_carga = _j.dumps({k: v for k, v in vars(tmp).items() if v is not None}, ensure_ascii=False)
     else:
         vehiculo = None
