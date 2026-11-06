@@ -6051,6 +6051,10 @@ function ConductorScreen({ navigation, route }) {
   // expresos (viajes a otra ciudad) que salen de la ciudad del conductor. Se
   // declaran ANTES de tieneExpresoEnCamino (abajo) para no caer en TDZ.
   const [expresosDisp, setExpresosDisp] = useState([]);
+  // viajes que ESTE conductor descarto (no le sirven): se ocultan de su lista
+  const [expOcultos, setExpOcultos] = useState([]);
+  useEffect(() => { AsyncStorage.getItem("tukan_exp_descartados").then(g => { if (g) setExpOcultos(JSON.parse(g)); }).catch(() => {}); }, []);
+  const expDisp = expresosDisp.filter(e => !expOcultos.includes(e.id));
   const [misExpresos, setMisExpresos] = useState([]);
   const [ofExpreso, setOfExpreso] = useState(null);   // expreso al que le va a contraofertar
   const [montoExp, setMontoExp] = useState("");
@@ -6189,11 +6193,7 @@ function ConductorScreen({ navigation, route }) {
         <Text style={{ fontSize: 12, color: "#999", marginTop: 4 }}>👤 {e.cliente_nombre}</Text>
         {e.exclusivo ? (
           <View style={{ backgroundColor: "#FFF6DB", borderRadius: 8, padding: 9, marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={{ flex: 1, fontSize: 12.5, color: "#8A5A00", fontWeight: "700" }}>⭐ Solo para ti por ahora. Si no te sirve, libéralo para los demás.</Text>
-            <TouchableOpacity onPress={() => confirmar("Liberar viaje", "Se les enviará a los demás conductores de esa ciudad. ¿Seguro?", () => liberarExpreso(e, true), "Sí, liberar")}
-              style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#E2C77A", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
-              <Text style={{ color: "#8A5A00", fontWeight: "800", fontSize: 12 }}>No me sirve</Text>
-            </TouchableOpacity>
+            <Text style={{ flex: 1, fontSize: 12.5, color: "#8A5A00", fontWeight: "700" }}>⭐ Solo para ti por ahora. Si no te sirve, toca "No me sirve" y les llega a los demás.</Text>
           </View>
         ) : null}
         <TouchableOpacity onPress={() => setVerExp(e)} style={{ marginTop: 8, backgroundColor: "#EAF1FB", borderRadius: 8, paddingVertical: 10, alignItems: "center" }}>
@@ -6219,6 +6219,13 @@ function ConductorScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
         )}
+        {/* no me sirve: sale de MI lista (y si era mio en exclusiva, les llega ya a los demas) */}
+        <TouchableOpacity style={{ alignItems: "center", paddingVertical: 10, marginTop: 4 }}
+          onPress={() => confirmar(e.exclusivo ? "No me sirve" : "Descartar viaje",
+            e.exclusivo ? "Sale de tu lista y les llega de inmediato a los demás conductores. ¿Seguro?" : "Sale de tu lista (los demás conductores lo siguen viendo). ¿Seguro?",
+            () => descartarExpreso(e), "Sí, descartar")}>
+          <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>✕ {e.exclusivo ? "No me sirve — liberar" : "Descartar"}</Text>
+        </TouchableOpacity>
       </View>
   );
 
@@ -6237,6 +6244,14 @@ function ConductorScreen({ navigation, route }) {
       .then(async (r) => { if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); } cargarExpresos(); })
       .catch(() => avisar("Error", "No hay conexión."))
       .finally(() => setConfirmando(false));
+  };
+  const descartarExpreso = (e) => {
+    setExpOcultos((o) => {
+      const n = [...new Set([...o, e.id])].slice(-300);
+      AsyncStorage.setItem("tukan_exp_descartados", JSON.stringify(n)).catch(() => {});
+      return n;
+    });
+    userFetch(`${API}/expresos/${e.id}/descartar`, { method: "PUT" }).then(() => cargarExpresos()).catch(() => {});
   };
   const liberarExpreso = (e, conAviso) => {
     userFetch(`${API}/expresos/${e.id}/descartar`, { method: "PUT" })
@@ -7023,7 +7038,7 @@ function ConductorScreen({ navigation, route }) {
         {tab === "otraciudad" && (
           <>
             <View style={{ flexDirection: "row", backgroundColor: "#fff", borderRadius: 12, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: "#E9EBE5" }}>
-              {[["disp", "🆕 Disponibles", expresosDisp.length], ["mios", "🚗 Mis viajes", misExpresos.length]].map(([k, lbl, n]) => {
+              {[["disp", "🆕 Disponibles", expDisp.length], ["mios", "🚗 Mis viajes", misExpresos.length]].map(([k, lbl, n]) => {
                 const on = subExp === k;
                 return (
                   <TouchableOpacity key={k} activeOpacity={0.85} onPress={() => setSubExp(k)}
@@ -7109,12 +7124,12 @@ function ConductorScreen({ navigation, route }) {
               </>
             )}
 
-            {subExp === "disp" && (expresosDisp.length === 0 ? (
+            {subExp === "disp" && (expDisp.length === 0 ? (
               <View style={{ alignItems: "center", padding: 24 }}>
                 <Text style={{ fontSize: 34 }}>🚌</Text>
                 <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>No hay viajes a otra ciudad disponibles ahora.{"\n"}Cuando alguien publique uno, aparece aquí.</Text>
               </View>
-            ) : expresosDisp.map(tarjetaExpreso))}
+            ) : expDisp.map(tarjetaExpreso))}
           </>
         )}
 
@@ -7156,9 +7171,9 @@ function ConductorScreen({ navigation, route }) {
             onPress={() => k === "salir" ? (detenerRastreoFondo(), navigation.replace("Login")) : (animar(), setTab(k), k === "otraciudad" && setExpNuevo(false))}>
             <View>
               <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
-              {k === "otraciudad" && expresosDisp.length > 0 && (
+              {k === "otraciudad" && expDisp.length > 0 && (
                 <View style={{ position: "absolute", top: -4, right: -12, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: "#F06000", alignItems: "center", justifyContent: "center", paddingHorizontal: 4, borderWidth: 2, borderColor: "#fff" }}>
-                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{expresosDisp.length}</Text>
+                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{expDisp.length}</Text>
                 </View>
               )}
             </View>
