@@ -151,6 +151,20 @@ function quitarAviso(id) {
   try { if (notifee) notifee.cancelNotification(id); } catch (e) {}
   try { if (TukanOverlay && TukanOverlay.quitarAvisos) TukanOverlay.quitarAvisos(); } catch (e) {}
 }
+// una carrera ya se respondio (contraoferta o aceptada): fuera sus avisos con el precio
+// viejo y no se vuelve a sonar por ella nunca mas (ni en primer plano ni en el fondo)
+const carrerasRespondidas = new Set();
+async function olvidarAvisosDe(carreraId) {
+  carrerasRespondidas.add(carreraId);
+  quitarAviso(`solicitud-${carreraId}`);
+  try {
+    const lista = await Notifications.getPresentedNotificationsAsync();
+    for (const n of lista || []) {
+      const d = n && n.request && n.request.content && n.request.content.data;
+      if (d && Number(d.carrera_id) === Number(carreraId)) Notifications.dismissNotificationAsync(n.request.identifier).catch(() => {});
+    }
+  } catch (e) {}
+}
 // APK con receptor nativo de push (el aviso tipo llamada lo hace Android solo)
 // Tono propio "Selva": solo si el APK lo trae (los APK viejos siguen con el tono anterior;
 // el sonido de un canal de Android no se cambia, por eso los canales son nuevos)
@@ -243,10 +257,14 @@ try {
         if (idsVistosFondo === null) {
           try { const g = await AsyncStorage.getItem("tukan_rastreo_vistos"); if (g) idsVistosFondo = JSON.parse(g); } catch (e) {}
         }
-        AsyncStorage.setItem("tukan_rastreo_vistos", JSON.stringify(ids)).catch(() => {});
-        if (idsVistosFondo === null) { idsVistosFondo = ids; return; }   // primera vez: solo memoriza
-        const nueva = alertables.find((c) => idsVistosFondo.indexOf(c.id) === -1);
-        idsVistosFondo = ids;
+        if (idsVistosFondo === null) {   // primera vez: solo memoriza
+          idsVistosFondo = ids;
+          AsyncStorage.setItem("tukan_rastreo_vistos", JSON.stringify(ids)).catch(() => {});
+          return;
+        }
+        const nueva = alertables.find((c) => idsVistosFondo.indexOf(c.id) === -1 && !carrerasRespondidas.has(c.id) && c.mi_oferta == null);
+        idsVistosFondo = [...new Set([...idsVistosFondo, ...ids])].slice(-300);
+        AsyncStorage.setItem("tukan_rastreo_vistos", JSON.stringify(idsVistosFondo)).catch(() => {});
         if (nueva) { diagFondo("rastreo_nueva", { id: nueva.id, frente: alFrente() }); sonarCarreraFondo(nueva); }
       })
       .catch(() => {});
@@ -3689,6 +3707,13 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
       else { setDestinoDet(d.nombre || ""); setDestino(d.ciudad || d.nombre || ""); }
     }).catch(() => {});
   };
+  // ⇅ invertir recogida y destino (p. ej. para el viaje de regreso)
+  const intercambiarExp = () => {
+    const a = pin, b = pinDest;
+    setPin(b); setPinDest(a);
+    if (b) nombrarExp(b, "origen"); else setOrigenTxt("");
+    if (a) nombrarExp(a, "destino"); else { setDestino(""); setDestinoDet(""); }
+  };
   // la recogida arranca sola donde esta la persona (GPS)
   useEffect(() => {
     if (pin) return;
@@ -3778,15 +3803,13 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   return (
     <>
       <View style={styles.card}>
-        <Text style={styles.etiqueta}>TU VIAJE A OTRA CIUDAD</Text>
-        <Text style={[styles.ayuda, { marginTop: -4, marginBottom: 10 }]}>Puerta a puerta. Pones cupos y precio por cupo; un conductor lo toma o te propone precio.</Text>
         <View style={{ flexDirection: "row", backgroundColor: "#F7F8F5", borderRadius: 14, borderWidth: 1, borderColor: "#E9EBE5", paddingLeft: 14, paddingRight: 12 }}>
           <View style={{ width: 16, alignItems: "center", paddingVertical: 20 }}>
             <View style={{ width: 13, height: 13, borderRadius: 7, backgroundColor: "#187830", borderWidth: 3, borderColor: "#C7E6CF" }} />
             <View style={{ width: 2, flex: 1, backgroundColor: "#DADDD5", marginVertical: 4 }} />
             <View style={{ width: 13, height: 13, borderRadius: 3, backgroundColor: "#F06000", borderWidth: 3, borderColor: "#FAD6B8" }} />
           </View>
-          <View style={{ flex: 1, marginLeft: 10 }}>
+          <View style={{ flex: 1, marginLeft: 10, marginRight: (pin || pinDest) ? 44 : 0 }}>
             <TouchableOpacity onPress={() => setMapaOpen(true)} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#E9EBE5" }}>
               <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>RECOGIDA</Text>
               <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: pin ? "#1C2B22" : "#B9B3A6" }}>
@@ -3801,6 +3824,14 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
               {pinDest && destino ? <Text style={{ fontSize: 12.5, color: "#F06000", fontWeight: "700", marginTop: 2 }}>🏙️ {nombreCiudad(destino)}</Text> : null}
             </TouchableOpacity>
           </View>
+          {(pin || pinDest) ? (
+            <TouchableOpacity onPress={intercambiarExp} activeOpacity={0.8}
+              style={{ position: "absolute", right: 12, top: "50%", marginTop: -19, width: 38, height: 38, borderRadius: 19,
+                backgroundColor: "#fff", borderWidth: 1.5, borderColor: "#DADDD5", alignItems: "center", justifyContent: "center",
+                shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}>
+              <Text style={{ fontSize: 19, color: "#187830", fontWeight: "800" }}>⇅</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
         <TextInput value={notas} onChangeText={setNotas} placeholder="Indicaciones para el conductor (opcional)" style={[styles.input, { marginTop: 12, marginBottom: 0 }]} />
       </View>
@@ -5711,7 +5742,7 @@ function ConductorScreen({ navigation, route }) {
           idsAlertados.current = new Set(alertablesAhora);
         } else {
           const porAlertar = puedeTomar
-            ? d.filter(c => c.alertar !== false && !idsAlertados.current.has(c.id))
+            ? d.filter(c => c.alertar !== false && !idsAlertados.current.has(c.id) && !carrerasRespondidas.has(c.id) && c.mi_oferta == null)
             : [];
           if (porAlertar.length) {
             // muestra primero la MAS cercana al cliente
@@ -5719,7 +5750,8 @@ function ConductorScreen({ navigation, route }) {
             pingSolicitud(porAlertar[0]);
             mostrarEntrante(porAlertar[0]);
           }
-          idsAlertados.current = new Set(alertablesAhora);
+          // se ACUMULA: una carrera que ya sono no vuelve a sonar (p. ej. tras contraofertar)
+          idsAlertados.current = new Set([...idsAlertados.current, ...alertablesAhora].slice(-300));
         }
         animar(); setDisponibles(d);
         // abrio Tukan desde el aviso a pantalla completa: se le muestra esa solicitud de una
@@ -5986,6 +6018,7 @@ function ConductorScreen({ navigation, route }) {
         if (r.status === 409) { avisar("Muy tarde", "Esa carrera ya no esta disponible."); cargar(); return; }
         if (r.status === 402) { avisar("Suscripcion vencida", d.detail); return; }
         if (d.detail) { avisar("No se pudo", d.detail); return; }
+        olvidarAvisosDe(id);
         if (!silencioso) avisar("Oferta enviada", "El cliente vera tu precio y decide.");
         cargar();
       })
