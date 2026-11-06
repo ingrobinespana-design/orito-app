@@ -3089,7 +3089,8 @@ function mapaSeguimientoHTML() {
   };
   var svgActual=SVG.carro;
   var recLat=null,recLon=null,destLat=null,destLon=null,dLat=null,dLon=null,metaRuta=null;
-  var carro=null,pin=null,mDest=null,rutaPts=null,carIdx=0,ultimaRuta=null;
+  var carro=null,pin=null,mDest=null,rutaPts=null,carIdx=0,carT=0,ultimaRuta=null,ultimoPedido=0;
+  var FUERA_M=35;   // a mas de 35 m de la ruta = se salio: se recalcula
   var seguir=true,primera=true,animId=null,navegacion=false,ZOOM=16;
   var ready=false,cola=[];
   function enListo(fn){ if(ready){ try{fn();}catch(e){} } else cola.push(fn); }
@@ -3129,11 +3130,13 @@ function mapaSeguimientoHTML() {
 
   function pedirRuta(la,lo){
     if(dLat==null) return;
+    ultimoPedido=Date.now();
     fetch(rutaURL(lo,la,dLon,dLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
       var r=d.routes[0]; var pts=r.geometry.coordinates;
-      map.getSource('ruta').setData(line(pts));
-      rutaPts=pts; carIdx=carro?nearestIdx(carro.getLngLat().lng,carro.getLngLat().lat):0;
+      rutaPts=pts; carIdx=0; carT=0;
+      if(carro){ var cc=carro.getLngLat(); var pp=proy(cc.lng,cc.lat,0,pts.length); if(pp){ carIdx=pp.i; carT=pp.t; carro.setLngLat(pp.pt); recortarRuta(pp.pt[0],pp.pt[1],pp.i); } else map.getSource('ruta').setData(line(pts)); }
+      else map.getSource('ruta').setData(line(pts));
       ultimaRuta=[la,lo];
       if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(JSON.stringify({km:r.distance/1000,min:Math.round(r.duration/60)})); }
     }).catch(function(){ if(map.getSource('ruta')) map.getSource('ruta').setData(line(dLat!=null?[[lo,la],[dLon,dLat]]:[])); });
@@ -3162,25 +3165,57 @@ function mapaSeguimientoHTML() {
     }).catch(function(){ if(map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
   }
 
-  function recortarRuta(lng,lat){
-    if(!rutaPts||rutaPts.length<2||!map.getSource('ruta')) return;
-    var k=nearestIdx(lng,lat);
-    map.getSource('ruta').setData(line([[lng,lat]].concat(rutaPts.slice(k+1))));
+  // punto mas cercano SOBRE la ruta (proyeccion en cada tramo, en metros), entre los tramos ini..fin
+  function proy(lng,lat,ini,fin){
+    if(!rutaPts||rutaPts.length<2) return null;
+    var best=null, cl=Math.cos(lat*Math.PI/180);
+    for(var i=Math.max(0,ini);i<Math.min(rutaPts.length-1,fin);i++){
+      var a=rutaPts[i],b=rutaPts[i+1];
+      var ax=(a[0]-lng)*cl*111320, ay=(a[1]-lat)*110540, bx=(b[0]-lng)*cl*111320, by=(b[1]-lat)*110540;
+      var vx=bx-ax, vy=by-ay, L=vx*vx+vy*vy;
+      var t=L>0?Math.max(0,Math.min(1,-(ax*vx+ay*vy)/L)):0;
+      var px=ax+vx*t, py=ay+vy*t, d=Math.sqrt(px*px+py*py);
+      if(!best||d<best.d) best={i:i,t:t,d:d,pt:[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]};
+    }
+    return best;
   }
-  function nearestIdx(lng,lat){ if(!rutaPts) return 0; var best=0,bd=Infinity; for(var i=0;i<rutaPts.length;i++){ var dx=rutaPts[i][0]-lng,dy=rutaPts[i][1]-lat,d=dx*dx+dy*dy; if(d<bd){bd=d;best=i;} } return best; }
+  // primero busca CERCA de donde iba (asi no salta a otro tramo cuando la ruta da la vuelta)
+  function proyectar(lng,lat){
+    var p=proy(lng,lat,carIdx-2,carIdx+80);
+    if(!p||p.d>FUERA_M){ var g=proy(lng,lat,0,rutaPts?rutaPts.length:0); if(g&&(!p||g.d<p.d-10)) p=g; }
+    return p;
+  }
+  // la linea arranca en el carro: lo ya recorrido desaparece
+  function recortarRuta(lng,lat,seg){
+    if(!rutaPts||rutaPts.length<2||!map.getSource('ruta')) return;
+    map.getSource('ruta').setData(line([[lng,lat]].concat(rutaPts.slice(seg+1))));
+  }
+  function nearestIdx(lng,lat){ var p=proy(lng,lat,0,rutaPts?rutaPts.length:0); return p?p.i:0; }
+  // devuelve false si el GPS quedo FUERA de la ruta (hay que recalcular)
   function moverEnRuta(la,lo){
     var c=carro.getLngLat(); var a=[c.lng,c.lat];
-    if(!rutaPts||rutaPts.length<2){ animarSecuencia([a,[lo,la]]); return; }
-    var idx=nearestIdx(lo,la); var seq=[a]; if(idx>=carIdx){ for(var i=carIdx+1;i<=idx;i++) seq.push(rutaPts[i]); } seq.push([lo,la]); carIdx=idx; animarSecuencia(seq);
+    if(!rutaPts||rutaPts.length<2){ animarSecuencia([a,[lo,la]],null); return false; }
+    var p=proyectar(lo,la);
+    if(!p||p.d>FUERA_M){ animarSecuencia([a,[lo,la]],null); return false; }
+    // GPS que "retrocede" un poco (semaforo, rebote): el carro no se devuelve
+    if(p.i<carIdx||(p.i===carIdx&&p.t<carT)){ if(carIdx-p.i<3) return true; }
+    var seq=[a], segs=[carIdx];
+    if(p.i>carIdx){ for(var k=carIdx+1;k<=p.i;k++){ seq.push(rutaPts[k]); segs.push(k); } }
+    seq.push(p.pt); segs.push(p.i);
+    carIdx=p.i; carT=p.t;
+    animarSecuencia(seq,segs);
+    return true;
   }
-  function animarSecuencia(seq){
+  function animarSecuencia(seq,segs){
     if(animId) cancelAnimationFrame(animId);
-    var pts=[seq[0]]; for(var k=1;k<seq.length;k++){ var p=seq[k],q=pts[pts.length-1]; if(p[0]!==q[0]||p[1]!==q[1]) pts.push(p); }
-    if(pts.length<2){ if(carro) carro.setLngLat(pts[0]); return; }
+    var pts=[seq[0]], sg=[segs?segs[0]:null];
+    for(var k=1;k<seq.length;k++){ var p=seq[k],q=pts[pts.length-1]; if(p[0]!==q[0]||p[1]!==q[1]){ pts.push(p); sg.push(segs?segs[k]:null); } }
+    if(pts.length<2){ if(carro) carro.setLngLat(pts[0]); if(segs) recortarRuta(pts[0][0],pts[0][1],sg[0]); return; }
     var i=0,t0=performance.now(),segDur=1300/(pts.length-1);
     function paso(now){ var t=Math.min(1,(now-t0)/segDur); var a=pts[i],b=pts[i+1];
       var pl=a[0]+(b[0]-a[0])*t, pa=a[1]+(b[1]-a[1])*t;
-      carro.setLngLat([pl,pa]); carro.setRotation(rumbo(a,b)); recortarRuta(pl,pa);
+      carro.setLngLat([pl,pa]); carro.setRotation(rumbo(a,b));
+      if(segs) recortarRuta(pl,pa,sg[i]);
       if(seguir){ map.setCenter(carro.getLngLat()); }
       if(t>=1){ i++; if(i<pts.length-1){ t0=now; animId=requestAnimationFrame(paso); } } else { animId=requestAnimationFrame(paso); }
     }
@@ -3192,8 +3227,11 @@ function mapaSeguimientoHTML() {
   function _conductor(la,lo){
     if(!carro){ var el=document.createElement('div'); el.className='veh'; el.innerHTML=svgActual; carro=new mapboxgl.Marker({element:el,rotationAlignment:'map'}).setLngLat([lo,la]).addTo(map); carIdx=0;
       if(primera){ if(navegacion){ seguir=true; botones(); map.easeTo({center:[lo,la],zoom:17}); } else if(dLat!=null){ seguir=false; botones(); var b=new mapboxgl.LngLatBounds([lo,la],[lo,la]); b.extend([dLon,dLat]); map.fitBounds(b,{padding:60,duration:400}); } else { map.easeTo({center:[lo,la],zoom:ZOOM}); } primera=false; }
-    } else { moverEnRuta(la,lo); }
-    var mover=!ultimaRuta||Math.sqrt(Math.pow(la-ultimaRuta[0],2)+Math.pow(lo-ultimaRuta[1],2))>0.0008; if(mover) pedirRuta(la,lo);
+      pedirRuta(la,lo);
+      return;
+    }
+    var enRuta=moverEnRuta(la,lo);
+    if((!rutaPts||!enRuta) && Date.now()-ultimoPedido>6000) pedirRuta(la,lo);
   }
   function _rutaA(cual){ metaRuta=cual; aplicarMeta(); ultimaRuta=null; dibujarContexto(); if(carro&&dLat!=null){ var c=carro.getLngLat(); pedirRuta(c.lat,c.lng); } }
   function recogida(la,lo){ ultimos.rec=[la,lo]; enListo(function(){_recogida(la,lo);}); }
