@@ -4185,9 +4185,9 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
         </View>
       </Modal>
 
-      <MapaSelector visible={mapaOpen} titulo="Marca dónde te recogen"
+      <MapaSelector visible={mapaOpen} titulo="¿Desde dónde sales?" alcancePais
         centro={pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
-        municipio={miMuni}
+        municipio={null}
         onConfirmar={(c) => { setPin({ lat: c.lat, lon: c.lon }); setMapaOpen(false); nombrarExp(c, "origen"); }}
         onCerrar={() => setMapaOpen(false)} />
 
