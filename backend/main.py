@@ -1415,7 +1415,8 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
 
 # ---------- BONOS DE AGRADECIMIENTO ----------
 BONO_CARRERA = 2000     # Cali: $2.000 menos en su proxima carrera (Tukan se lo repone al conductor)
-BONO_NEQUI = 2000       # resto: $2.000 por Nequi
+BONO_NEQUI = 2000       # resto de pasajeros: $2.000 por Nequi
+BONO_SUSCRIPCION = 2000 # conductores: $2.000 menos en su primer mes de suscripcion (cuando arranquen los cobros)
 BONO_CIUDAD = "Cali"
 
 def bono_carrera_de(cliente, municipio, vehiculo, db):
@@ -1433,7 +1434,7 @@ def bono_dict(u):
     if not u or not u.bono_tipo or u.bono_estado in (None, "pagado", "usado"):
         return {"tipo": None}
     return {"tipo": u.bono_tipo, "estado": u.bono_estado, "nequi": u.bono_nequi,
-            "valor": BONO_CARRERA if u.bono_tipo == "carrera5000" else BONO_NEQUI}
+            "valor": BONO_CARRERA if u.bono_tipo == "carrera5000" else BONO_SUSCRIPCION if u.bono_tipo == "suscripcion2000" else BONO_NEQUI}
 
 @app.get("/usuarios/{usuario_id}/bono")
 def ver_bono(usuario_id: int, db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
@@ -1478,7 +1479,9 @@ def ver_bonos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin
     cuenta = lambda t, e=None: sum(1 for u in gente if u.bono_tipo == t and (e is None or u.bono_estado == e))
     return {
         "sin_bono": {"cali_pasajeros": sum(1 for u in sin_bono if u.rol == "cliente" and u.municipio == BONO_CIUDAD),
-                     "resto": sum(1 for u in sin_bono if not (u.rol == "cliente" and u.municipio == BONO_CIUDAD))},
+                     "resto": sum(1 for u in sin_bono if u.rol == "cliente" and u.municipio != BONO_CIUDAD),
+                     "conductores": sum(1 for u in sin_bono if u.rol == "conductor")},
+        "suscripcion": {"pendientes": cuenta("suscripcion2000", "disponible"), "aplicados": cuenta("suscripcion2000", "usado")},
         "carrera": {"disponibles": cuenta("carrera5000", "disponible"), "usados": cuenta("carrera5000", "usado")},
         "nequi": {"sin_reclamar": cuenta("nequi2000", "disponible"), "por_pagar": len(por_pagar), "pagados": cuenta("nequi2000", "pagado")},
         "por_pagar": por_pagar, "reponer_conductores": reponer,
@@ -1488,13 +1491,17 @@ def ver_bonos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin
 def activar_bonos(tareas: BackgroundTasks, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     """Da el bono a todos los registrados que aun no lo tienen y les avisa:
     pasajeros de Cali -> $5.000 en su proxima carrera; los demas -> $2.000 por Nequi."""
-    mensajes, n_car, n_neq = [], 0, 0
+    mensajes, n_car, n_neq, n_sus = [], 0, 0, 0
     for u in _gente_bono(db):
         if u.bono_tipo:
             continue
         if u.rol == "cliente" and u.municipio == BONO_CIUDAD:
             u.bono_tipo, n_car = "carrera5000", n_car + 1
             t, m = "🎁 ¡Gracias por estar en Tukán!", "Te regalamos $2.000 en tu próxima carrera en Cali. Ya quedan descontados al pedir."
+        elif u.rol == "conductor":
+            # conductores: $2.000 menos en su PRIMER mes de suscripcion (cuando arranquen los cobros)
+            u.bono_tipo, n_sus = "suscripcion2000", n_sus + 1
+            t, m = "🎁 ¡Gracias por rodar con Tukán!", "Tienes $2.000 de descuento en tu primer mes de suscripción, cuando empiecen los cobros."
         else:
             u.bono_tipo, n_neq = "nequi2000", n_neq + 1
             t, m = "🎁 ¡Gracias por usar Tukán!", "Tienes $2.000 de regalo. Abre la app y reclámalos con tu Nequi."
@@ -1506,7 +1513,7 @@ def activar_bonos(tareas: BackgroundTasks, db: Session = Depends(get_db), admin:
         for i in range(0, len(mensajes), 90):
             limpiar_tokens_muertos(push.enviar(mensajes[i:i + 90]))
     tareas.add_task(_enviar)
-    return {"carrera": n_car, "nequi": n_neq, "avisados": len(mensajes)}
+    return {"carrera": n_car, "nequi": n_neq, "suscripcion": n_sus, "avisados": len(mensajes)}
 
 @app.put("/admin/bonos/{usuario_id}/pagado")
 def bono_pagado(usuario_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
@@ -2435,11 +2442,16 @@ def registrar_pago(conductor_id: int, meses: int = 1, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Conductor no encontrado")
     desde = conductor.suscripcion_hasta if (conductor.suscripcion_hasta and conductor.suscripcion_hasta > datetime.now()) else datetime.now()
     conductor.suscripcion_hasta = desde + timedelta(days=30 * meses)
+    # bono de agradecimiento: el PRIMER pago lleva $2.000 de descuento (una sola vez)
+    descuento = 0
+    if conductor.bono_tipo == "suscripcion2000" and conductor.bono_estado == "disponible":
+        descuento = BONO_SUSCRIPCION
+        conductor.bono_estado, conductor.bono_en = "usado", datetime.now()
     db.commit()
     db.refresh(conductor)
     return {"id": conductor.id, "nombre": conductor.nombre,
             "suscripcion_hasta": conductor.suscripcion_hasta,
-            "dias_restantes": dias_restantes(conductor)}
+            "dias_restantes": dias_restantes(conductor), "descuento_bono": descuento}
 
 @app.delete("/conductores/{conductor_id}/suscripcion")
 def cancelar_suscripcion(conductor_id: int, db: Session = Depends(get_db),

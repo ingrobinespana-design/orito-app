@@ -7907,6 +7907,8 @@ function TarjetaBono({ usuario, onIrCarrera }) {
   );
   if (b.tipo === "carrera5000")
     return caja("#EAF6EC", "#BFE3C7", "🎁", `Tienes $${(b.valor || 2000).toLocaleString()} de regalo`, "Gracias por estar en Tukán: se descuentan solos en tu próxima carrera en Cali.", onIrCarrera);
+  if (b.tipo === "suscripcion2000")
+    return caja("#EAF6EC", "#BFE3C7", "🎁", `Tienes $${(b.valor || 2000).toLocaleString()} de descuento`, "Gracias por rodar con Tukán: se descuentan de tu primer mes de suscripción, cuando empiecen los cobros.", null);
   if (b.estado === "reclamado")
     return caja("#FFF8E6", "#F2DCA5", "⏳", "Tu bono de $2.000 va en camino", `Lo enviaremos a tu Nequi terminado en ${String(b.nequi || "").slice(-4)}. Te avisamos al enviarlo.`, null);
   return (
@@ -7939,11 +7941,11 @@ function AdminBonos() {
   const cargar = () => adminFetch(`${API}/admin/bonos`).then(r => r.json()).then(x => x && x.carrera && setD(x)).catch(() => {});
   useEffect(() => { cargar(); }, []);
   if (!d) return <ActivityIndicator color="#187830" />;
-  const nuevos = d.sin_bono.cali_pasajeros + d.sin_bono.resto;
+  const nuevos = d.sin_bono.cali_pasajeros + d.sin_bono.resto + (d.sin_bono.conductores || 0);
   const activar = () => confirmar("Dar bonos",
-    `Pasajeros de Cali (${d.sin_bono.cali_pasajeros}): $2.000 en su próxima carrera.\nLos demás (${d.sin_bono.resto}): $2.000 por Nequi, si lo reclaman.\n\nA todos les llega el aviso.`,
+    `Pasajeros de Cali (${d.sin_bono.cali_pasajeros}): $2.000 en su próxima carrera.\nPasajeros de otras ciudades (${d.sin_bono.resto}): $2.000 por Nequi, si lo reclaman.\nConductores (${d.sin_bono.conductores || 0}): $2.000 menos en su primer mes de suscripción.\n\nA todos les llega el aviso.`,
     () => adminFetch(`${API}/admin/bonos/activar`, { method: "POST" }).then(r => r.json())
-      .then(x => { avisar("✅ Bonos activados", `${x.carrera} de carrera y ${x.nequi} por Nequi. Avisados: ${x.avisados}.`); cargar(); })
+      .then(x => { avisar("✅ Bonos activados", `${x.carrera} de carrera, ${x.nequi} por Nequi y ${x.suscripcion || 0} de suscripción. Avisados: ${x.avisados}.`); cargar(); })
       .catch(() => avisar("Error", "No hay conexión.")), "Sí, dar bonos");
   const pagado = (u) => confirmar("Marcar pagado", `¿Ya le enviaste $${u.valor.toLocaleString()} al Nequi ${u.nequi} de ${u.nombre}?`,
     () => adminFetch(`${API}/admin/bonos/${u.id}/pagado`, { method: "PUT" }).then(cargar).catch(() => {}), "Sí, pagado");
@@ -7959,12 +7961,13 @@ function AdminBonos() {
     <View style={{ gap: 12 }}>
       <View style={styles.card}>
         <Text style={styles.seccionTitulo}>🎁 Bonos de agradecimiento</Text>
-        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $2.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%); lo asume el conductor como bienvenida a los primeros clientes. Los demás: $2.000 por Nequi cuando lo reclamen.</Text>
+        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $2.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%); lo asume el conductor como bienvenida a los primeros clientes. Pasajeros de otras ciudades: $2.000 por Nequi cuando lo reclamen. Conductores: $2.000 menos en su primer mes de suscripción (se aplica solo al registrar su primer pago).</Text>
         <View style={{ flexDirection: "row", marginBottom: 12 }}>
           {num(d.carrera.disponibles, "Bonos de carrera sin usar")}
           {num(d.carrera.usados, "Usados")}
           {num(d.nequi.sin_reclamar, "Nequi sin reclamar")}
           {num(d.nequi.pagados, "Nequi pagados")}
+          {d.suscripcion ? num(d.suscripcion.pendientes, "Conductores con descuento") : null}
         </View>
         {nuevos > 0 ? (
           <TouchableOpacity onPress={activar} style={[styles.button, { backgroundColor: "#F06000" }]}>
@@ -8632,7 +8635,11 @@ function AdminCarrerasScreen({ navigation, route }) {
     elegir(`Pago de ${c.nombre}`, "Cuantos meses le registro?",
       [1, 3, 6].map(m => ({
         texto: `${m} ${m === 1 ? "mes" : "meses"}`,
-        alElegir: () => adminFetch(`${API}/conductores/${c.id}/suscripcion?meses=${m}`, { method: "PUT" }).then(cargar),
+        alElegir: () => adminFetch(`${API}/conductores/${c.id}/suscripcion?meses=${m}`, { method: "PUT" })
+          .then(r => r.json()).then(d => {
+            if (d && d.descuento_bono) avisar("🎁 Bono aplicado", `${c.nombre} tenía su bono de agradecimiento: cóbrale $${d.descuento_bono.toLocaleString()} menos en este primer pago.`);
+            cargar();
+          }).catch(cargar),
       })));
   };
 
