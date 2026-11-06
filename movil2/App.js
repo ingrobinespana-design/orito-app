@@ -5580,10 +5580,12 @@ function PedirCarreraScreen({ navigation, route }) {
               </View>
             ) : (
               <View style={{ backgroundColor: "#EAF6EC", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-                <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>💵 TARIFA SUGERIDA (mínimo)</Text>
+                <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>{esCarga(vehiculo) ? "📦 PRECIO GUÍA DEL ACARREO" : "💵 TARIFA SUGERIDA (mínimo)"}</Text>
                 <Text style={{ fontSize: 26, fontWeight: "800", color: "#187830", marginTop: 2 }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
                 <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>
-                  Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido.
+                  {esCarga(vehiculo)
+                    ? "Orientativo por distancia. Según la carga, ayudantes y pisos, el transportador puede proponerte otro precio."
+                    : "Es lo mínimo recomendado; puedes ofrecer más para que te tomen más rápido."}
                 </Text>
                 {String(estimado.tarifa_sugerida) !== oferta && (
                   <TouchableOpacity onPress={() => setOferta(String(estimado.tarifa_sugerida))} style={{ marginTop: 8, backgroundColor: "#187830", borderRadius: 8, paddingVertical: 8, alignItems: "center" }}>
@@ -7613,14 +7615,17 @@ function AdminTarifas() {
   useEffect(cargarT, []);
   const m = munis.find(x => x.nombre === ciudad);
   const personas = m ? (m.vehiculos || []).filter(v => !esCarga(v)) : [];
+  const deCarga = m ? (m.vehiculos || []).filter(v => esCarga(v)) : [];
   const tarifaDe = (v) => {
     const tv = m && m.tarifas_vehiculo && m.tarifas_vehiculo[v];
-    return tv ? tv : (m && m.valor_km ? { base: m.tarifa_base || 0, valor_km: m.valor_km, minima: m.tarifa_minima || 0, general: true } : null);
+    if (tv) return tv;
+    if (esCarga(v)) return null;   // los acarreos no usan la general de la ciudad
+    return m && m.valor_km ? { base: m.tarifa_base || 0, valor_km: m.valor_km, minima: m.tarifa_minima || 0, general: true } : null;
   };
   useEffect(() => {
     if (!m) return;
     const e = {};
-    personas.forEach(v => { const t = tarifaDe(v) || {}; e[v] = { base: String(t.base || 0), valor_km: String(t.valor_km || ""), minima: String(t.minima || "") }; });
+    [...personas, ...deCarga].forEach(v => { const t = tarifaDe(v) || {}; e[v] = { base: String(t.base || 0), valor_km: String(t.valor_km || ""), minima: String(t.minima || "") }; });
     setEdit(e);
   }, [ciudad, munis]);
   const num = (x) => parseInt(String(x || "").replace(/\D/g, ""), 10) || 0;
@@ -7683,6 +7688,38 @@ function AdminTarifas() {
           </View>
         ))}
       </View>
+
+      {deCarga.length > 0 && (
+        <View style={[styles.card, { marginBottom: 12 }]}>
+          <Text style={styles.seccionTitulo}>🚚 Precio guía de acarreos · {nombreCiudad(ciudad)}</Text>
+          <Text style={{ fontSize: 12, color: "#888", marginTop: -4, marginBottom: 4 }}>Orienta al cliente; el transportador puede proponer otro precio. Sin recargo por horario. Por km en 0 = sin precio guía (el cliente ofrece libre).</Text>
+          {deCarga.map(v => {
+            const t = tarifaDe(v);
+            const ej = t && t.valor_km ? Math.max(t.minima || 0, (t.base || 0) + (t.valor_km || 0) * (km || 0)) : null;
+            return (
+              <View key={v} style={{ borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingTop: 10, marginTop: 6 }}>
+                <Text style={{ fontWeight: "800", fontSize: 15, marginBottom: 6 }}>
+                  {vehIcono(v)} {vehLabel(v)}
+                  {t ? <Text style={{ fontSize: 11.5, color: "#187830", fontWeight: "600" }}>  · {km || 0} km ≈ ${(Math.round(ej / 100) * 100).toLocaleString()}</Text>
+                     : <Text style={{ fontSize: 11.5, color: "#B85C00", fontWeight: "600" }}>  (sin precio guía)</Text>}
+                </Text>
+                {edit[v] ? (
+                  <>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {fila3("BASE $", edit[v].base, (x) => setEdit(e => ({ ...e, [v]: { ...e[v], base: x } })))}
+                      {fila3("POR KM $", edit[v].valor_km, (x) => setEdit(e => ({ ...e, [v]: { ...e[v], valor_km: x } })))}
+                      {fila3("MÍNIMA $", edit[v].minima, (x) => setEdit(e => ({ ...e, [v]: { ...e[v], minima: x } })))}
+                    </View>
+                    <TouchableOpacity onPress={() => guardarVeh(v)} style={{ alignSelf: "flex-end", backgroundColor: "#187830", borderRadius: 10, paddingVertical: 8, paddingHorizontal: 16, marginTop: 8 }}>
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>Guardar {vehLabel(v).toLowerCase()}</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {rec ? (
         <View style={[styles.card, { marginBottom: 12 }]}>

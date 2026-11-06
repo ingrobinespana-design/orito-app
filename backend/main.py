@@ -1247,9 +1247,13 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     del cliente; el precio de verdad lo negocian las partes."""
     if km is None:
         return None
-    # los ACARREOS no llevan sugerido: el precio lo pone el cliente y el
-    # transportador contraoferta (depende del peso, la ayuda, los pisos, etc.)
+    # ACARREOS: precio GUIA solo si el admin le puso tarifa a ese vehiculo de carga
+    # en esa ciudad (sin recargo por horario ni tarifa general de la ciudad). Sin
+    # tarifa -> sin sugerido: el cliente ofrece y el transportador contraoferta.
     if vehiculo in VEHICULOS_CARGA:
+        t = db.query(Tarifa).filter(Tarifa.municipio == municipio, Tarifa.vehiculo == vehiculo).first()
+        if t and t.valor_km:
+            return _calcular_con_recargo(km, t.base, t.valor_km, t.minima, None)
         return None
     # hora pico / madrugada: suma $/km y a la minima (sin etiqueta al pasajero)
     rec = recargo_actual(municipio, db)
