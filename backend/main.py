@@ -197,7 +197,8 @@ def diagnostico_push(clave: str, tel: str, probar: str = "no", db: Session = Dep
         raise HTTPException(status_code=404, detail="No existe")
     info = {"id": u.id, "nombre": u.nombre, "rol": u.rol, "disponible": u.disponible,
             "tiene_token": bool(u.push_token), "token_inicio": (u.push_token or "")[:28],
-            "push_modo": u.push_modo, "push_canal": u.push_canal or "carreras3 (tono viejo)", "ubic_fecha": u.ubic_fecha, "municipio": u.municipio}
+            "push_modo": u.push_modo, "push_canal": u.push_canal or "carreras3 (tono viejo)", "ubic_fecha": u.ubic_fecha, "municipio": u.municipio,
+            "verificado": u.verificado, "tipo_vehiculo": u.tipo_vehiculo, "ultimo_acceso": u.ultimo_acceso}
     if probar == "si" and u.push_token:
         msgs = push_conductor(u, "🔔 Prueba de solicitud", "Aviso de prueba desde el servidor",
                               {"tipo": "carrera_nueva", "carrera_id": 0})
@@ -4250,6 +4251,95 @@ def puede_ver_expreso(c, e, db):
         return d is not None and d == _depto_de_municipio(e.origen_municipio, db)
     return e.origen_municipio == c.municipio and not _expreso_en_exclusiva(e)
 
+EXCLUSIVA_EXCLUIR_DEFECTO = ["Orito"]   # ahi los viajes van directo a los conductores de la zona
+
+def _cfg_exclusiva_expresos(db):
+    import json as _j
+    try:
+        excluir = _j.loads(leer_config("expreso_exclusivo_excluir", db, "") or "null")
+    except Exception:
+        excluir = None
+    if not isinstance(excluir, list):
+        excluir = list(EXCLUSIVA_EXCLUIR_DEFECTO)
+    try:
+        minutos = max(1, int(leer_config("expreso_exclusivo_min", db, "15") or 15))
+    except Exception:
+        minutos = 15
+    return {"activo": leer_config("expreso_exclusivo_activo", db, "si") == "si", "minutos": minutos, "excluir": excluir}
+
+def exclusiva_aplica_en(ciudad, db):
+    """¿Los viajes que salen de esta ciudad pasan primero por el dueño?"""
+    cfg = _cfg_exclusiva_expresos(db)
+    return cfg["activo"] and ciudad not in cfg["excluir"]
+
+@app.get("/admin/expresos/config")
+def ver_cfg_expresos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    d = _dueno_exclusivo(db)
+    ciudades = [m.nombre for m in db.query(Municipio).filter(Municipio.activo == "si").order_by(Municipio.nombre).all()]
+    return {**_cfg_exclusiva_expresos(db), "dueno": d.nombre if d else None, "ciudades": ciudades}
+
+@app.put("/admin/expresos/config")
+def guardar_cfg_expresos(activo: str = None, minutos: int = None, excluir: str = None,
+                         db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """excluir = ciudades separadas por coma donde NO hay exclusiva (van directo a la zona)."""
+    import json as _j
+    def poner(k, v):
+        f = db.query(Config).filter(Config.clave == k).first()
+        if f:
+            f.valor = v
+        else:
+            db.add(Config(clave=k, valor=v))
+    if activo in ("si", "no"):
+        poner("expreso_exclusivo_activo", activo)
+    if minutos is not None:
+        if minutos < 1 or minutos > 240:
+            raise HTTPException(status_code=400, detail="Los minutos van de 1 a 240")
+        poner("expreso_exclusivo_min", str(minutos))
+    if excluir is not None:
+        poner("expreso_exclusivo_excluir", _j.dumps([c.strip() for c in excluir.split(",") if c.strip()], ensure_ascii=False))
+    db.commit()
+    return ver_cfg_expresos(db, admin)
+
+@app.get("/admin/expresos")
+def admin_expresos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Viajes y acarreos a otra ciudad activos (esperando, asignados, en camino)."""
+    res = []
+    for e in db.query(Expreso).filter(Expreso.estado.in_(["buscando", "aceptado", "en_camino"])).order_by(Expreso.fecha.desc()).all():
+        c = db.query(Usuario).filter(Usuario.id == e.conductor_id).first() if e.conductor_id else None
+        d = expreso_dict(e, c)
+        d["en_exclusiva"] = _expreso_en_exclusiva(e)
+        res.append(d)
+    return res
+
+@app.put("/admin/expresos/{expreso_id}/liberar")
+def admin_liberar_expreso(expreso_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                          admin: Usuario = Depends(solo_admin)):
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    if e.exclusivo_hasta:
+        tareas.add_task(liberar_expreso, e.id)
+    return {"ok": True}
+
+@app.put("/admin/expresos/{expreso_id}/cancelar")
+def admin_cancelar_expreso(expreso_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                           admin: Usuario = Depends(solo_admin)):
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    conductor_antes = e.conductor_id
+    e.estado = "cancelado"
+    e.exclusivo_hasta = None
+    db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
+        {"estado": "descartada"}, synchronize_session=False)
+    db.commit()
+    tareas.add_task(avisar_expreso_a, e.cliente_id, "❌ Tu viaje a otra ciudad fue cancelado",
+                    f"Soporte Tukán canceló tu viaje a {e.destino_municipio}. Si lo necesitas, publícalo de nuevo.", e.id)
+    if conductor_antes:
+        tareas.add_task(avisar_expreso_a, conductor_antes, "❌ Viaje cancelado",
+                        f"Soporte Tukán canceló el viaje a {e.destino_municipio}.", e.id)
+    return {"ok": True}
+
 @nunca_falla
 def liberar_expreso(expreso_id: int):
     """Se acabo la exclusiva (el dueño lo descarto o no respondio): a todos."""
@@ -4330,6 +4420,7 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
     dueno = _dueno_exclusivo(db)
     minutos = 0
     if (dueno and dueno.id != cliente.id and vehiculo_sirve_expreso(dueno, e)
+            and exclusiva_aplica_en(origen_mun, db)
             and (dueno.verificado or "no") == "si" and dueno.activo != "no"
             and dueno.disponible == "si" and dueno.push_token
             and (origen_mun == dueno.municipio
