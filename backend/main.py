@@ -1413,6 +1413,122 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
         return _calcular_con_recargo(km, m.tarifa_base or 0, m.valor_km, m.tarifa_minima or 0, rec)
     return None
 
+# ---------- BONOS DE AGRADECIMIENTO ----------
+BONO_CARRERA = 5000     # Cali: $5.000 menos en su proxima carrera (Tukan se lo repone al conductor)
+BONO_NEQUI = 2000       # resto: $2.000 por Nequi
+BONO_CIUDAD = "Cali"
+
+def bono_carrera_de(cliente, municipio, vehiculo, db):
+    """$ de bono para ESTA carrera (0 si no aplica). Solo pasajeros de Cali, carreras
+    (no acarreos), y uno a la vez (si ya hay una carrera activa con bono, no)."""
+    if not cliente or cliente.bono_tipo != "carrera5000" or cliente.bono_estado != "disponible":
+        return 0
+    if municipio != BONO_CIUDAD or vehiculo in VEHICULOS_CARGA:
+        return 0
+    activa = db.query(Carrera).filter(Carrera.cliente_id == cliente.id, Carrera.bono.isnot(None),
+                                      Carrera.estado.in_(["buscando", "aceptada", "en_sitio", "en_camino"])).first()
+    return 0 if activa else BONO_CARRERA
+
+def bono_dict(u):
+    if not u or not u.bono_tipo or u.bono_estado in (None, "pagado", "usado"):
+        return {"tipo": None}
+    return {"tipo": u.bono_tipo, "estado": u.bono_estado, "nequi": u.bono_nequi,
+            "valor": BONO_CARRERA if u.bono_tipo == "carrera5000" else BONO_NEQUI}
+
+@app.get("/usuarios/{usuario_id}/bono")
+def ver_bono(usuario_id: int, db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
+    exigir_dueño(actual, usuario_id)
+    return bono_dict(actual if actual.id == usuario_id else db.query(Usuario).get(usuario_id))
+
+@app.put("/usuarios/{usuario_id}/bono/reclamar")
+def reclamar_bono(usuario_id: int, nequi: str, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                  actual: Usuario = Depends(usuario_actual)):
+    """Bono por Nequi: el usuario deja su Nequi y queda 'reclamado' para que el admin pague."""
+    exigir_dueño(actual, usuario_id)
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u or u.bono_tipo != "nequi2000" or u.bono_estado != "disponible":
+        raise HTTPException(status_code=400, detail="No tienes un bono por reclamar")
+    n = _digitos(nequi)[-10:]
+    if len(n) != 10 or not n.startswith("3"):
+        raise HTTPException(status_code=400, detail="Escribe un número de Nequi válido (10 dígitos, empieza por 3)")
+    if db.query(Usuario).filter(Usuario.bono_nequi == n, Usuario.id != u.id).first():
+        raise HTTPException(status_code=400, detail="Ese Nequi ya se usó para otro bono")
+    u.bono_nequi, u.bono_estado, u.bono_en = n, "reclamado", datetime.now()
+    db.commit()
+    return bono_dict(u)
+
+def _gente_bono(db):
+    return [u for u in db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), Usuario.activo != "no",
+                                                 ~Usuario.telefono.like("ELIMINADO-%")).all()
+            if _digitos(u.telefono)[-10:] not in CUENTAS_PRUEBA_PLAY]
+
+@app.get("/admin/bonos")
+def ver_bonos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    gente = _gente_bono(db)
+    sin_bono = [u for u in gente if not u.bono_tipo]
+    por_pagar = [{"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "municipio": u.municipio, "nequi": u.bono_nequi,
+                  "valor": BONO_NEQUI} for u in gente if u.bono_estado == "reclamado"]
+    reponer = []
+    for c in db.query(Carrera).filter(Carrera.bono.isnot(None), Carrera.estado == "finalizada",
+                                      (Carrera.bono_pagado.is_(None)) | (Carrera.bono_pagado != "si")).all():
+        cond = db.query(Usuario).filter(Usuario.id == c.conductor_id).first()
+        reponer.append({"carrera_id": c.id, "valor": c.bono, "conductor": cond.nombre if cond else None,
+                        "telefono": cond.telefono if cond else None, "pasajero": c.cliente_nombre,
+                        "fecha": c.fecha})
+    cuenta = lambda t, e=None: sum(1 for u in gente if u.bono_tipo == t and (e is None or u.bono_estado == e))
+    return {
+        "sin_bono": {"cali_pasajeros": sum(1 for u in sin_bono if u.rol == "cliente" and u.municipio == BONO_CIUDAD),
+                     "resto": sum(1 for u in sin_bono if not (u.rol == "cliente" and u.municipio == BONO_CIUDAD))},
+        "carrera": {"disponibles": cuenta("carrera5000", "disponible"), "usados": cuenta("carrera5000", "usado")},
+        "nequi": {"sin_reclamar": cuenta("nequi2000", "disponible"), "por_pagar": len(por_pagar), "pagados": cuenta("nequi2000", "pagado")},
+        "por_pagar": por_pagar, "reponer_conductores": reponer,
+    }
+
+@app.post("/admin/bonos/activar")
+def activar_bonos(tareas: BackgroundTasks, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Da el bono a todos los registrados que aun no lo tienen y les avisa:
+    pasajeros de Cali -> $5.000 en su proxima carrera; los demas -> $2.000 por Nequi."""
+    mensajes, n_car, n_neq = [], 0, 0
+    for u in _gente_bono(db):
+        if u.bono_tipo:
+            continue
+        if u.rol == "cliente" and u.municipio == BONO_CIUDAD:
+            u.bono_tipo, n_car = "carrera5000", n_car + 1
+            t, m = "🎁 ¡Gracias por estar en Tukán!", "Te regalamos $5.000 en tu próxima carrera en Cali. Ya quedan descontados al pedir."
+        else:
+            u.bono_tipo, n_neq = "nequi2000", n_neq + 1
+            t, m = "🎁 ¡Gracias por usar Tukán!", "Tienes $2.000 de regalo. Abre la app y reclámalos con tu Nequi."
+        u.bono_estado, u.bono_en = "disponible", datetime.now()
+        if u.push_token:
+            mensajes.append(push.mensaje(u.push_token, t, m, {"tipo": "bono"}))
+    db.commit()
+    def _enviar():
+        for i in range(0, len(mensajes), 90):
+            limpiar_tokens_muertos(push.enviar(mensajes[i:i + 90]))
+    tareas.add_task(_enviar)
+    return {"carrera": n_car, "nequi": n_neq, "avisados": len(mensajes)}
+
+@app.put("/admin/bonos/{usuario_id}/pagado")
+def bono_pagado(usuario_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not u or u.bono_estado != "reclamado":
+        raise HTTPException(status_code=400, detail="Ese bono no está por pagar")
+    u.bono_estado, u.bono_en = "pagado", datetime.now()
+    db.commit()
+    if u.push_token:
+        tareas.add_task(lambda tok=u.push_token: limpiar_tokens_muertos(push.enviar([push.mensaje(
+            tok, "✅ Te enviamos tu bono", f"Revisa tu Nequi: te llegaron ${BONO_NEQUI:,} de Tukán. ¡Gracias!".replace(",", "."), {"tipo": "bono"})])))
+    return {"ok": True}
+
+@app.put("/admin/bonos/carrera/{carrera_id}/repuesto")
+def bono_repuesto(carrera_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    c = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if not c or not c.bono:
+        raise HTTPException(status_code=404, detail="Carrera sin bono")
+    c.bono_pagado = "si"
+    db.commit()
+    return {"ok": True}
+
 @app.get("/tarifa")
 def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon: float,
                    destino_lat: float, destino_lon: float, usuario_id: int = None,
@@ -1426,6 +1542,11 @@ def estimar_tarifa(municipio: str, vehiculo: str, origen_lat: float, origen_lon:
     sug = tarifa_sugerida(municipio, vehiculo, km, db)
     cliente = db.query(Usuario).filter(Usuario.id == usuario_id).first() if usuario_id else None
     prom = promo_para(municipio, cliente, db)
+    bono = bono_carrera_de(cliente, municipio, vehiculo, db) if sug is not None else 0
+    if bono:
+        # bono de regalo: sobre la tarifa COMPLETA (no se suma al 20%)
+        return {"distancia_km": km, "tarifa_sugerida": max(1000, sug - bono), "tarifa_normal": sug,
+                "promo": {**prom, "aplica": False}, "bono": bono, "es_sugerencia": True}
     # el descuento SOLO aplica a carreras de pasajeros (las de carga no llevan sugerido)
     aplica = bool(prom["activa"]) and sug is not None and vehiculo not in VEHICULOS_CARGA
     sug_promo = _con_descuento(sug, prom["pct"]) if aplica else None
@@ -2243,6 +2364,7 @@ def carrera_dict(c: Carrera, conductor: Usuario = None):
         "ascensor_origen": c.ascensor_origen, "ascensor_destino": c.ascensor_destino,
         "recibe_nombre": c.recibe_nombre, "recibe_telefono": c.recibe_telefono,
         "capacidad_carga": c.capacidad_carga, "carroceria": c.carroceria,
+        "bono": c.bono,
         "entrega_foto": c.entrega_foto, "entrega_recibio": c.entrega_recibio,
         "entregada_en": c.entregada_en,
     }
@@ -3630,7 +3752,10 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
     # promo de lanzamiento (solo carreras de pasajeros): el minimo sugerido que se
     # guarda ya lleva el descuento, asi el cliente y el conductor ven lo mismo.
     _prom = promo_para(municipio, cliente, db)
-    if _prom["activa"] and sugerida is not None and vehiculo_pedido not in VEHICULOS_CARGA:
+    _bono = bono_carrera_de(cliente, municipio, vehiculo_pedido, db) if sugerida is not None else 0
+    if _bono:
+        sugerida = max(1000, sugerida - _bono)          # bono sobre la tarifa completa (sin el 20%)
+    elif _prom["activa"] and sugerida is not None and vehiculo_pedido not in VEHICULOS_CARGA:
         sugerida = _con_descuento(sugerida, _prom["pct"])
 
     carrera = Carrera(
@@ -3644,6 +3769,8 @@ def pedir_carrera(cliente_id: int, origen: str, destino: str, tareas: Background
         zona=zona_de_la_carrera(origen, destino, municipio, db),
         recogida=recogida_dt,
     )
+    if _bono:
+        carrera.bono = _bono
     if vehiculo_pedido in VEHICULOS_CARGA:
         _datos_acarreo(carrera, tipo_carga, tamano_carga, fotos_carga, ayudantes, piso_origen,
                        piso_destino, ascensor_origen, ascensor_destino, recibe_nombre, recibe_telefono,
@@ -4530,6 +4657,10 @@ def actualizar_estado_carrera(carrera_id: int, estado: str, tareas: BackgroundTa
     carrera.estado = estado
     if tarifa is not None:
         carrera.tarifa = tarifa
+    if estado == "finalizada" and carrera.bono:
+        cli = db.query(Usuario).filter(Usuario.id == carrera.cliente_id).first()
+        if cli and cli.bono_tipo == "carrera5000" and cli.bono_estado == "disponible":
+            cli.bono_estado, cli.bono_en = "usado", datetime.now()
     db.commit()
     db.refresh(carrera)
     conductor = db.query(Usuario).filter(Usuario.id == carrera.conductor_id).first() if carrera.conductor_id else None

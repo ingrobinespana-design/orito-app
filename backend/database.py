@@ -31,6 +31,10 @@ class Usuario(Base):
     creado = Column(DateTime, nullable=True, default=datetime.now)   # cuando se registro (desde 2026-11-05)
     verif_auto = Column(String, nullable=True)   # pendiente_revision | revisado | rechazado
     ultimo_acceso = Column(DateTime, nullable=True)   # ultima vez que la app hablo con el servidor (con sesion)
+    bono_tipo = Column(String, nullable=True)     # "carrera5000" (Cali: $5.000 en su proxima carrera) | "nequi2000" (gracias, por Nequi)
+    bono_estado = Column(String, nullable=True)   # disponible | reclamado | usado | pagado
+    bono_nequi = Column(String, nullable=True)    # Nequi donde quiere recibir el bono
+    bono_en = Column(DateTime, nullable=True)     # cuando cambio de estado
     password = Column(String)
     rol = Column(String, default="cliente")
     # llave de sesion que se entrega al entrar. El panel de administracion la
@@ -322,6 +326,8 @@ class Carrera(Base):
     ascensor_destino = Column(String, nullable=True)
     recibe_nombre = Column(String, nullable=True)    # quien recibe en el destino
     recibe_telefono = Column(String, nullable=True)
+    bono = Column(Integer, nullable=True)            # bono Tukan descontado al pasajero (Tukan se lo repone al conductor)
+    bono_pagado = Column(String, nullable=True)      # "si" cuando ya se le pago al conductor
     capacidad_carga = Column(String, nullable=True)  # camion: turbo / sencillo / doble_troque / tractomula
     carroceria = Column(String, nullable=True)       # estacas / furgon / plancha / volco / refrigerado / ...
     # prueba de entrega (la toma el transportador al terminar)
@@ -519,7 +525,8 @@ def crear_tablas():
                     "verificado VARCHAR DEFAULT 'no'",
                     "codigo_referido VARCHAR", "referido_por VARCHAR",
                     "promo_bienvenida_hasta TIMESTAMP", "promo_bienvenida_pct INTEGER",
-                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR", "foto_perfil VARCHAR", "push_canal VARCHAR", "creado TIMESTAMP", "verif_auto VARCHAR", "ultimo_acceso TIMESTAMP"):
+                    "fundador VARCHAR DEFAULT 'no'", "push_modo VARCHAR", "foto_perfil VARCHAR", "push_canal VARCHAR", "creado TIMESTAMP", "verif_auto VARCHAR", "ultimo_acceso TIMESTAMP",
+                    "bono_tipo VARCHAR", "bono_estado VARCHAR", "bono_nequi VARCHAR", "bono_en TIMESTAMP"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {columna}"))
@@ -551,7 +558,7 @@ def crear_tablas():
                     "ayudantes INTEGER", "piso_origen INTEGER", "piso_destino INTEGER",
                     "ascensor_origen VARCHAR", "ascensor_destino VARCHAR",
                     "recibe_nombre VARCHAR", "recibe_telefono VARCHAR",
-                    "capacidad_carga VARCHAR", "carroceria VARCHAR",
+                    "capacidad_carga VARCHAR", "carroceria VARCHAR", "bono INTEGER", "bono_pagado VARCHAR",
                     "entrega_foto VARCHAR", "entrega_recibio VARCHAR", "entregada_en TIMESTAMP"):
         try:
             with engine.begin() as conn:

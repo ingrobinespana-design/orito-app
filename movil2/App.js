@@ -2719,6 +2719,8 @@ function ElegirServicioScreen({ navigation, route }) {
           ))}
         </View>
 
+        <TarjetaBono usuario={usuario} onIrCarrera={() => ir("carrera")} />
+
         {/* accesos directos: viajes y acarreos A OTRA CIUDAD */}
         <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
           {[["🛣️", "Viaje a otra ciudad", "Por cupos", "carrera", "#14672A"], ["🚛", "Acarreo a otra ciudad", "Trasteos y carga", "acarreo", "#B54A00"]].map(([ic, t, d, modo, color]) => (
@@ -5797,6 +5799,11 @@ function PedirCarreraScreen({ navigation, route }) {
               <View style={{ backgroundColor: "#EAF6EC", borderRadius: 12, padding: 12, marginBottom: 12 }}>
                 <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", letterSpacing: 0.3 }}>{esCarga(vehiculo) ? "📦 PRECIO GUÍA DEL ACARREO" : "💵 TARIFA SUGERIDA (mínimo)"}</Text>
                 <Text style={{ fontSize: 26, fontWeight: "800", color: "#187830", marginTop: 2 }}>${estimado.tarifa_sugerida.toLocaleString()}</Text>
+                {estimado.bono ? (
+                  <Text style={{ fontSize: 13, color: "#187830", fontWeight: "800", marginTop: 2 }}>
+                    🎁 Incluye tu bono de ${estimado.bono.toLocaleString()} · precio normal <Text style={{ textDecorationLine: "line-through", color: "#999" }}>${(estimado.tarifa_normal || 0).toLocaleString()}</Text>
+                  </Text>
+                ) : null}
                 <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 2 }}>
                   {esCarga(vehiculo)
                     ? "Orientativo por distancia. Según la carga, ayudantes y pisos, el transportador puede proponerte otro precio."
@@ -6583,9 +6590,12 @@ function ConductorScreen({ navigation, route }) {
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
-          <Text style={sl.precio}>
-            <Text style={sl.moneda}>$ </Text>{of ? of.toLocaleString() : "A convenir"}
-          </Text>
+          <View>
+            <Text style={sl.precio}>
+              <Text style={sl.moneda}>$ </Text>{of ? of.toLocaleString() : "A convenir"}
+            </Text>
+            {c.bono ? <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "800" }}>🎁 + ${c.bono.toLocaleString()} que te paga Tukán</Text> : null}
+          </View>
           <View style={sl.vehBadge}><Text style={{ fontSize: 22 }}>{vehIcono(c.vehiculo_pedido)}</Text></View>
         </View>
 
@@ -6913,6 +6923,7 @@ function ConductorScreen({ navigation, route }) {
         {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
         {tab === "solicitudes" && (
           <>
+            {mias.length === 0 ? <View style={{ marginTop: -14, marginBottom: 8 }}><TarjetaBono usuario={usuario} /></View> : null}
             {TukanOverlay && !sobreOk && (
               <TouchableOpacity
                 style={{ backgroundColor: "#EAF1FB", borderWidth: 1, borderColor: "#A9C4EA", borderRadius: 10, paddingVertical: 7, paddingHorizontal: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}
@@ -7325,7 +7336,7 @@ function ConductorScreen({ navigation, route }) {
             <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Carrera terminada</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
               {cobrando && cobrando.tarifa != null
-                ? `Precio acordado: $${cobrando.tarifa.toLocaleString()}. Confirma, o ajustalo solo si cambio.`
+                ? `Precio acordado: $${cobrando.tarifa.toLocaleString()}. Confirma, o ajustalo solo si cambio.${cobrando.bono ? ` Además, Tukán te paga $${cobrando.bono.toLocaleString()} del bono del pasajero.` : ""}`
                 : "Cuanto cobraste?"}
             </Text>
             <TextInput
@@ -7572,6 +7583,7 @@ function ConductorScreen({ navigation, route }) {
                     <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>🔔 NUEVA SOLICITUD</Text>
                     {c.tarifa_ofrecida ? <Text style={{ fontSize: 24, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text> : null}
                   </View>
+                  {c.bono ? <Text style={{ fontSize: 13, color: "#187830", fontWeight: "800", textAlign: "right" }}>🎁 + ${c.bono.toLocaleString()} que te paga Tukán</Text> : null}
                   <Text style={{ fontSize: 15, fontWeight: "700", color: "#444", marginTop: 8 }}>
                     {vehIcono(c.vehiculo_pedido)} {vehLabel(c.vehiculo_pedido)}{esCarga(c.vehiculo_pedido) ? " · trasteo" : ""}{c.zona === "rural" ? " · 🌄 vereda" : ""}
                   </Text>
@@ -7864,6 +7876,136 @@ function precioDe(t, km, rec) {
 }
 // aviso a todos (notificacion): mensajes listos + uno propio, a quien y cuantos lo reciben
 // diagnostico rapido: que le falta a cada usuario + aviso a cada uno con lo suyo
+// bono de agradecimiento: $5.000 en su proxima carrera (Cali) o $2.000 por Nequi (resto)
+function TarjetaBono({ usuario, onIrCarrera }) {
+  const [b, setB] = useState(null);
+  const [abierto, setAbierto] = useState(false);
+  const [nequi, setNequi] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const cargar = () => userFetch(`${API}/usuarios/${usuario.id}/bono`).then(r => r.json()).then(d => d && setB(d)).catch(() => {});
+  useEffect(() => { cargar(); }, []);
+  if (!b || !b.tipo) return null;
+  const reclamar = () => {
+    const n = nequi.replace(/\D/g, "");
+    if (n.length !== 10 || n[0] !== "3") return avisar("Revisa el número", "Escribe tu Nequi: 10 dígitos que empiezan por 3.");
+    setEnviando(true);
+    userFetch(`${API}/usuarios/${usuario.id}/bono/reclamar?nequi=${n}`, { method: "PUT" })
+      .then(async r => { const d = await r.json().catch(() => null); if (!r.ok) { avisar("No se pudo", (d && d.detail) || "Error"); return; }
+        setB(d); setAbierto(false); avisar("✅ ¡Listo!", "Te enviaremos tus $2.000 a ese Nequi. Te avisamos cuando lleguen."); })
+      .catch(() => avisar("Error", "No hay conexión.")).finally(() => setEnviando(false));
+  };
+  const caja = (fondo, borde, ic, t, d, fn) => (
+    <TouchableOpacity activeOpacity={fn ? 0.85 : 1} onPress={fn || undefined}
+      style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: fondo, borderWidth: 1, borderColor: borde, borderRadius: 16, padding: 14, marginTop: 14 }}>
+      <Text style={{ fontSize: 30 }}>{ic}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 15, fontWeight: "800", color: "#1C2B22" }}>{t}</Text>
+        <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{d}</Text>
+      </View>
+      {fn ? <Text style={{ fontSize: 22, color: "#187830", fontWeight: "800" }}>›</Text> : null}
+    </TouchableOpacity>
+  );
+  if (b.tipo === "carrera5000")
+    return caja("#EAF6EC", "#BFE3C7", "🎁", "Tienes $5.000 de regalo", "Gracias por estar en Tukán: se descuentan solos en tu próxima carrera en Cali.", onIrCarrera);
+  if (b.estado === "reclamado")
+    return caja("#FFF8E6", "#F2DCA5", "⏳", "Tu bono de $2.000 va en camino", `Lo enviaremos a tu Nequi terminado en ${String(b.nequi || "").slice(-4)}. Te avisamos al enviarlo.`, null);
+  return (
+    <>
+      {caja("#FFF1E6", "#F5C9A5", "🎁", "Reclama tus $2.000 de regalo", "Gracias por usar Tukán. Toca aquí y déjanos tu Nequi.", () => setAbierto(true))}
+      <Modal visible={abierto} transparent animationType="fade" onRequestClose={() => setAbierto(false)}>
+        <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <View style={styles.ventanaModal}>
+            <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>🎁 Tu bono de $2.000</Text>
+            <Text style={{ fontSize: 13, color: "#777", marginTop: 4, marginBottom: 12 }}>Escribe el número de Nequi donde quieres recibirlo. Es uno por persona.</Text>
+            <TextInput value={nequi} onChangeText={t => setNequi(t.replace(/\D/g, "").slice(0, 10))} keyboardType="number-pad" placeholder="Tu Nequi (ej: 3001234567)" style={styles.input} autoFocus />
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+              <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setAbierto(false)}>
+                <Text style={{ color: "#888", fontWeight: "600" }}>Ahora no</Text>
+              </TouchableOpacity>
+              <TouchableOpacity disabled={enviando} style={[styles.button, { flex: 1.3, backgroundColor: "#187830", opacity: enviando ? 0.6 : 1 }]} onPress={reclamar}>
+                <Text style={styles.buttonText}>{enviando ? "Enviando…" : "Reclamar"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </>
+  );
+}
+
+// admin: dar bonos, pagar los de Nequi y reponer a los conductores los de carrera
+function AdminBonos() {
+  const [d, setD] = useState(null);
+  const cargar = () => adminFetch(`${API}/admin/bonos`).then(r => r.json()).then(x => x && x.carrera && setD(x)).catch(() => {});
+  useEffect(() => { cargar(); }, []);
+  if (!d) return <ActivityIndicator color="#187830" />;
+  const nuevos = d.sin_bono.cali_pasajeros + d.sin_bono.resto;
+  const activar = () => confirmar("Dar bonos",
+    `Pasajeros de Cali (${d.sin_bono.cali_pasajeros}): $5.000 en su próxima carrera.\nLos demás (${d.sin_bono.resto}): $2.000 por Nequi, si lo reclaman.\n\nA todos les llega el aviso.`,
+    () => adminFetch(`${API}/admin/bonos/activar`, { method: "POST" }).then(r => r.json())
+      .then(x => { avisar("✅ Bonos activados", `${x.carrera} de carrera y ${x.nequi} por Nequi. Avisados: ${x.avisados}.`); cargar(); })
+      .catch(() => avisar("Error", "No hay conexión.")), "Sí, dar bonos");
+  const pagado = (u) => confirmar("Marcar pagado", `¿Ya le enviaste $${u.valor.toLocaleString()} al Nequi ${u.nequi} de ${u.nombre}?`,
+    () => adminFetch(`${API}/admin/bonos/${u.id}/pagado`, { method: "PUT" }).then(cargar).catch(() => {}), "Sí, pagado");
+  const repuesto = (c) => confirmar("Repuesto al conductor", `¿Ya le pagaste $${c.valor.toLocaleString()} a ${c.conductor}?`,
+    () => adminFetch(`${API}/admin/bonos/carrera/${c.carrera_id}/repuesto`, { method: "PUT" }).then(cargar).catch(() => {}), "Sí");
+  const num = (n, t) => (
+    <View style={{ alignItems: "center", flex: 1 }}>
+      <Text style={{ fontSize: 22, fontWeight: "800", color: "#F06000" }}>{n}</Text>
+      <Text style={{ fontSize: 11, color: "#888", textAlign: "center" }}>{t}</Text>
+    </View>
+  );
+  return (
+    <View style={{ gap: 12 }}>
+      <View style={styles.card}>
+        <Text style={styles.seccionTitulo}>🎁 Bonos de agradecimiento</Text>
+        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $5.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%). Tú le repones los $5.000 al conductor. Los demás: $2.000 por Nequi cuando lo reclamen.</Text>
+        <View style={{ flexDirection: "row", marginBottom: 12 }}>
+          {num(d.carrera.disponibles, "Bonos de carrera sin usar")}
+          {num(d.carrera.usados, "Usados")}
+          {num(d.nequi.sin_reclamar, "Nequi sin reclamar")}
+          {num(d.nequi.pagados, "Nequi pagados")}
+        </View>
+        {nuevos > 0 ? (
+          <TouchableOpacity onPress={activar} style={[styles.button, { backgroundColor: "#F06000" }]}>
+            <Text style={styles.buttonText}>🎁 Dar bono a {nuevos} registrado{nuevos === 1 ? "" : "s"} y avisarles</Text>
+          </TouchableOpacity>
+        ) : <Text style={{ color: "#187830", fontWeight: "700" }}>✅ Todos los registrados ya tienen su bono.</Text>}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.seccionTitulo}>💸 Por pagar por Nequi ({d.por_pagar.length})</Text>
+        {d.por_pagar.length === 0 ? <Text style={{ color: "#888" }}>Nadie ha reclamado todavía.</Text> : d.por_pagar.map(u => (
+          <View key={u.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingVertical: 9 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "800" }}>{u.nombre} · {nombreCiudad(u.municipio || "")}</Text>
+              <Text style={{ color: "#555", fontSize: 13 }}>Nequi {u.nequi} · ${u.valor.toLocaleString()}</Text>
+            </View>
+            <TouchableOpacity onPress={() => pagado(u)} style={{ backgroundColor: "#187830", borderRadius: 8, paddingVertical: 7, paddingHorizontal: 10 }}>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>Pagado</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.seccionTitulo}>🚗 Reponer a conductores ({d.reponer_conductores.length})</Text>
+        {d.reponer_conductores.length === 0 ? <Text style={{ color: "#888" }}>Ninguna carrera con bono terminada todavía.</Text> : d.reponer_conductores.map(c => (
+          <View key={c.carrera_id} style={{ flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingVertical: 9 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "800" }}>{c.conductor} · ${c.valor.toLocaleString()}</Text>
+              <Text style={{ color: "#555", fontSize: 13 }}>Carrera #{c.carrera_id} de {c.pasajero} · {c.telefono}</Text>
+            </View>
+            <TouchableOpacity onPress={() => repuesto(c)} style={{ backgroundColor: "#187830", borderRadius: 8, paddingVertical: 7, paddingHorizontal: 10 }}>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>Pagado</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function AdminDiagnostico() {
   const [a, setA] = useState("todos");
   const [d, setD] = useState(null);
@@ -8584,10 +8726,10 @@ function AdminCarrerasScreen({ navigation, route }) {
       <Text style={{ color: "#C4C8BE", fontSize: 20, marginLeft: 2 }}>›</Text>
     </TouchableOpacity>
   );
-  const SECCIONES_MAS = [["aviso", "📣", "Enviar aviso a todos"], ["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
+  const SECCIONES_MAS = [["aviso", "📣", "Enviar aviso a todos"], ["bonos", "🎁", "Bonos de agradecimiento"], ["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
   const TITULOS = { inicio: "Inicio", conductores: "Conductores", usuarios: "Pasajeros", carreras: "Carreras", mas: "Más",
-    aviso: "Enviar aviso", numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
-  const enMas = ["mas", "aviso", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
+    aviso: "Enviar aviso", bonos: "Bonos", numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
+  const enMas = ["mas", "aviso", "bonos", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
   const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
   const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
 
@@ -8914,6 +9056,7 @@ function AdminCarrerasScreen({ navigation, route }) {
         })()}
 
         {pestana === "eventos" && <AdminEventos />}
+        {pestana === "bonos" && <AdminBonos />}
         {pestana === "aviso" && <><AdminDiagnostico /><View style={{ height: 12 }} /><AdminAviso /></>}
         {pestana === "eliminadas" && (
           <>
