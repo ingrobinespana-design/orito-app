@@ -471,6 +471,13 @@ def usuario_actual(x_user_token: str = Header(None), db: Session = Depends(get_d
     usuario = db.query(Usuario).filter(Usuario.token == x_user_token).first()
     if not usuario:
         raise HTTPException(status_code=401, detail="Sesion vencida. Vuelve a entrar.")
+    # ultima vez que uso la app (para el diagnostico del admin); max 1 escritura cada 10 min
+    try:
+        if not usuario.ultimo_acceso or (datetime.now() - usuario.ultimo_acceso).total_seconds() > 600:
+            usuario.ultimo_acceso = datetime.now()
+            db.commit()
+    except Exception:
+        db.rollback()
     return usuario
 
 def exigir_dueño(actual: Usuario, id_dueño: int):
@@ -926,6 +933,86 @@ def enviar_difusion(titulo: str, mensaje: str, tareas: BackgroundTasks, a: str =
         db.add(Config(clave="difusion_ultima", valor=val))
     db.commit()
     return {"enviados": len(tokens)}
+
+# ---------- DIAGNOSTICO RAPIDO: que le falta a cada usuario ----------
+DIAG_AVISOS = {   # codigo -> (titulo, mensaje) que se le manda por notificacion
+    "registro_incompleto": ("👋 Completa tu registro en Tukán", "A tu cuenta le falta tu nombre o tu celular. Abre la app y complétalo en un minuto."),
+    "sin_docs": ("📄 Te faltan documentos", "Súbelos en ⚙️ Configuración de Tukán y quedas habilitado automáticamente para recibir carreras."),
+    "sin_gps": ("📍 Activa tu ubicación en Tukán", "Para que te lleguen carreras cercanas, permite la ubicación «Todo el tiempo» para Tukán y conéctate."),
+    "desconectado": ("🟢 Conéctate en Tukán", "Hay pasajeros pidiendo. Abre Tukán y toca «Conectarme» para empezar a recibir carreras."),
+    "inactivo": ("👋 ¡Te extrañamos en Tukán!", "Abre la app y pide tu carrera: ves la tarifa antes y le pagas directo al conductor."),
+}
+DIAG_ORDEN = ["registro_incompleto", "sin_docs", "sin_gps", "desconectado", "inactivo"]
+
+def _diagnostico_de(u: Usuario):
+    ahora = datetime.now()
+    p = []
+    if not u.push_token:
+        p.append(("sin_notif", "No tiene notificaciones activas (no le llegan avisos: escríbele por WhatsApp)"))
+    if _registro_incompleto(u):
+        p.append(("registro_incompleto", "Registro incompleto (nombre o celular)"))
+    if u.rol == "conductor":
+        faltan = [t for t in DOCS_CONDUCTOR if not getattr(u, f"foto_{t}", None)]
+        if faltan or not (u.placa and u.vehiculo):
+            nombres = {"conductor": "su foto", "vehiculo": "foto del vehículo", "cedula": "cédula", "licencia": "licencia",
+                       "tarjeta": "tarjeta de propiedad", "soat": "SOAT"}
+            txt = ", ".join(nombres[t] for t in faltan) + ("" if (u.placa and u.vehiculo) else (", " if faltan else "") + "placa/vehículo")
+            p.append(("sin_docs", f"Le falta: {txt}"))
+        elif (u.verificado or "no") != "si":
+            p.append(("sin_verificar", "Documentos completos: falta que lo habilites"))
+        if (u.verificado or "no") == "si":
+            if not u.ubic_fecha or (ahora - u.ubic_fecha).days >= 3:
+                p.append(("sin_gps", "No comparte su ubicación hace días (GPS apagado o sin permiso)"))
+            if u.disponible != "si":
+                p.append(("desconectado", "Está desconectado"))
+    if u.ultimo_acceso and (ahora - u.ultimo_acceso).days >= 7:
+        p.append(("inactivo", f"No abre la app hace {(ahora - u.ultimo_acceso).days} días"))
+    return p
+
+def _gente_diagnostico(a: str, db):
+    q = db.query(Usuario).filter(Usuario.activo != "no", ~Usuario.telefono.like("ELIMINADO-%"))
+    if a == "clientes":
+        q = q.filter(Usuario.rol == "cliente")
+    elif a == "conductores":
+        q = q.filter(Usuario.rol == "conductor")
+    else:
+        q = q.filter(Usuario.rol.in_(["cliente", "conductor"]))
+    return [u for u in q.all() if _digitos(u.telefono)[-10:] not in CUENTAS_PRUEBA_PLAY]
+
+@app.get("/admin/diagnostico")
+def diagnostico_usuarios(a: str = "todos", db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    filas, resumen = [], {}
+    for u in _gente_diagnostico(a, db):
+        p = _diagnostico_de(u)
+        for cod, _ in p:
+            resumen[cod] = resumen.get(cod, 0) + 1
+        if p:
+            filas.append({"id": u.id, "nombre": u.nombre, "telefono": u.telefono, "rol": u.rol, "municipio": u.municipio,
+                          "problemas": [{"codigo": c, "texto": t} for c, t in p], "puede_avisar": bool(u.push_token),
+                          "ultimo_acceso": u.ultimo_acceso})
+    filas.sort(key=lambda f: (not f["puede_avisar"], f["rol"], -len(f["problemas"])))
+    avisables = sum(1 for f in filas if f["puede_avisar"] and any(x["codigo"] in DIAG_AVISOS for x in f["problemas"]))
+    return {"resumen": resumen, "usuarios": filas, "avisables": avisables}
+
+@app.post("/admin/diagnostico/avisar")
+def avisar_diagnostico(tareas: BackgroundTasks, a: str = "todos", db: Session = Depends(get_db),
+                       admin: Usuario = Depends(solo_admin)):
+    """A cada uno le llega UN aviso con lo mas importante que le falta."""
+    mensajes = []
+    for u in _gente_diagnostico(a, db):
+        if not u.push_token:
+            continue
+        codigos = [c for c, _ in _diagnostico_de(u)]
+        cod = next((c for c in DIAG_ORDEN if c in codigos), None)
+        if not cod or (cod == "inactivo" and u.rol == "conductor"):
+            continue
+        t, m = DIAG_AVISOS[cod]
+        mensajes.append(push.mensaje(u.push_token, t, m, {"tipo": "diagnostico", "codigo": cod}))
+    def _enviar():
+        for i in range(0, len(mensajes), 90):
+            limpiar_tokens_muertos(push.enviar(mensajes[i:i + 90]))
+    tareas.add_task(_enviar)
+    return {"avisados": len(mensajes)}
 
 @app.post("/admin/incompletos/avisar")
 def avisar_incompletos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):

@@ -7863,6 +7863,68 @@ function precioDe(t, km, rec) {
   return Math.max(redondearMil((t.base || 0) + km * vk), mn);
 }
 // aviso a todos (notificacion): mensajes listos + uno propio, a quien y cuantos lo reciben
+// diagnostico rapido: que le falta a cada usuario + aviso a cada uno con lo suyo
+function AdminDiagnostico() {
+  const [a, setA] = useState("todos");
+  const [d, setD] = useState(null);
+  const [ver, setVer] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const cargar = () => adminFetch(`${API}/admin/diagnostico?a=${a}`).then(r => r.json()).then(x => x && x.usuarios && setD(x)).catch(() => {});
+  useEffect(() => { setD(null); cargar(); }, [a]);
+  const ETQ = { sin_notif: "🔕 Sin notificaciones", registro_incompleto: "📝 Registro incompleto", sin_docs: "📄 Faltan documentos",
+    sin_verificar: "✅ Por habilitar", sin_gps: "📍 Sin GPS", desconectado: "⚪ Desconectados", inactivo: "💤 No abren la app" };
+  const avisarTodos = () => confirmar("Avisar a cada uno", `A ${d.avisables} persona${d.avisables === 1 ? "" : "s"} le llegará UN aviso con lo más importante que le falta (activar GPS, subir documentos, conectarse...).`, () => {
+    setEnviando(true);
+    adminFetch(`${API}/admin/diagnostico/avisar?a=${a}`, { method: "POST" }).then(r => r.json())
+      .then(x => avisar("✅ Avisos enviados", `Se enviaron ${x.avisados} avisos.`)).catch(() => avisar("Error", "No hay conexión."))
+      .finally(() => setEnviando(false));
+  }, "Sí, avisar");
+  return (
+    <View style={styles.card}>
+      <Text style={styles.seccionTitulo}>🩺 Diagnóstico rápido</Text>
+      <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Qué le falta a cada uno para usar bien Tukán. Con un toque le avisas a cada uno lo suyo.</Text>
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+        {[["todos", "Todos"], ["clientes", "Pasajeros"], ["conductores", "Conductores"]].map(([k, t]) => (
+          <TouchableOpacity key={k} onPress={() => setA(k)} style={[styles.chip, a === k && styles.chipOn]}>
+            <Text style={[styles.chipTxt, a === k && styles.chipTxtOn]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      {!d ? <ActivityIndicator color="#187830" /> : (
+        <>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {Object.entries(d.resumen).length === 0 ? <Text style={{ color: "#187830", fontWeight: "700" }}>✅ Todo en orden</Text> :
+              Object.entries(d.resumen).map(([k, n]) => (
+                <View key={k} style={{ backgroundColor: "#F1F2EF", borderRadius: 10, paddingVertical: 5, paddingHorizontal: 9 }}>
+                  <Text style={{ fontSize: 12.5, fontWeight: "700", color: "#333" }}>{ETQ[k] || k}: {n}</Text>
+                </View>
+              ))}
+          </View>
+          {d.avisables > 0 ? (
+            <TouchableOpacity disabled={enviando} onPress={avisarTodos} style={[styles.button, { backgroundColor: "#187830", opacity: enviando ? 0.6 : 1 }]}>
+              <Text style={styles.buttonText}>{enviando ? "Enviando…" : `📣 Avisar a cada uno lo que le falta (${d.avisables})`}</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity onPress={() => setVer(v => !v)} style={{ paddingVertical: 10, alignItems: "center" }}>
+            <Text style={{ color: "#1A56B8", fontWeight: "700" }}>{ver ? "Ocultar lista" : `Ver la lista (${d.usuarios.length})`}</Text>
+          </TouchableOpacity>
+          {ver && d.usuarios.map(u => (
+            <View key={u.id} style={{ borderTopWidth: 1, borderTopColor: "#F0F1EE", paddingVertical: 9 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={{ flex: 1, fontWeight: "800", color: "#1C2B22" }} numberOfLines={1}>{u.rol === "conductor" ? "🚗" : "🧍"} {u.nombre || "Sin nombre"} · {nombreCiudad(u.municipio || "")}</Text>
+                <TouchableOpacity onPress={() => whatsapp(u.telefono)} style={{ backgroundColor: "#25D366", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 9 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>WhatsApp</Text>
+                </TouchableOpacity>
+              </View>
+              {u.problemas.map(p => <Text key={p.codigo} style={{ fontSize: 12.5, color: p.codigo === "sin_notif" ? "#B85C00" : "#555", marginTop: 2 }}>• {p.texto}</Text>)}
+            </View>
+          ))}
+        </>
+      )}
+    </View>
+  );
+}
+
 function AdminAviso() {
   const PLANTILLAS = [
     ["👋 ¡Gracias por estar en Tukán!", "Abre la app y pide una carrera de prueba. Tu opinión nos ayuda a mejorar 🙌"],
@@ -8852,7 +8914,7 @@ function AdminCarrerasScreen({ navigation, route }) {
         })()}
 
         {pestana === "eventos" && <AdminEventos />}
-        {pestana === "aviso" && <AdminAviso />}
+        {pestana === "aviso" && <><AdminDiagnostico /><View style={{ height: 12 }} /><AdminAviso /></>}
         {pestana === "eliminadas" && (
           <>
             <Text style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Cuentas que se eliminaron: sus datos personales se borraron y sus viajes quedan anónimos solo para las estadísticas. Su número quedó libre para registrarse de nuevo.</Text>
