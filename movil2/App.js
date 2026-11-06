@@ -4258,12 +4258,12 @@ function PedirCarreraScreen({ navigation, route }) {
 
   // GPS de un toque: marca el origen con la ubicacion actual sin abrir el mapa
   const [buscandoGps, setBuscandoGps] = useState(false);
-  const usarUbicacionActual = async () => {
+  const usarUbicacionActual = async (silencioso) => {
     try {
       setBuscandoGps(true);
       const permiso = await Location.requestForegroundPermissionsAsync();
       if (permiso.status !== "granted") {
-        avisar("Permiso de ubicacion", "Para usar tu ubicacion activa el permiso, o marca el punto en el mapa.");
+        if (!silencioso) avisar("Permiso de ubicacion", "Para usar tu ubicacion activa el permiso, o marca el punto en el mapa.");
         return;
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -4272,9 +4272,11 @@ function PedirCarreraScreen({ navigation, route }) {
       if (!form.origen.trim()) setForm(f => ({ ...f, origen: "📍 Mi ubicacion actual" }));
       nombrarPunto(coords, "origen");
     } catch (e) {
-      avisar("GPS", "No pudimos tomar tu ubicacion. Marca el punto en el mapa.");
+      if (!silencioso) avisar("GPS", "No pudimos tomar tu ubicacion. Marca el punto en el mapa.");
     } finally { setBuscandoGps(false); }
   };
+  // la recogida arranca sola en donde estas (como Uber); tocandola se cambia en el mapa
+  useEffect(() => { if (Platform.OS !== "web" && !origenCoords) usarUbicacionActual(true); }, []);
 
   const cargarActiva = () => {
     fetch(`${API}/carreras/cliente/${usuario.id}`)
@@ -5084,18 +5086,9 @@ function PedirCarreraScreen({ navigation, route }) {
             </View>
           )}
 
-          {/* acciones rápidas de recogida: GPS o mapa */}
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-            <TouchableOpacity onPress={usarUbicacionActual} disabled={buscandoGps} activeOpacity={0.85}
-              style={{ flex: 1.25, backgroundColor: "#187830", borderRadius: 12, paddingVertical: 13, alignItems: "center", justifyContent: "center",
-                shadowColor: "#187830", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.22, shadowRadius: 9, elevation: 3 }}>
-              {buscandoGps ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13.5 }}>📍 Mi ubicación</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setMapaAbierto("origen")} activeOpacity={0.85}
-              style={{ flex: 1, backgroundColor: "#F1F8F1", borderWidth: 1.5, borderColor: "#BFE0C8", borderRadius: 12, paddingVertical: 13, alignItems: "center", justifyContent: "center" }}>
-              <Text style={{ color: "#187830", fontWeight: "700", fontSize: 13.5 }}>🗺️ En el mapa</Text>
-            </TouchableOpacity>
-          </View>
+          {buscandoGps && !origenCoords ? (
+            <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginTop: 10 }}>📍 Ubicándote para la recogida…</Text>
+          ) : null}
 
           {/* la ciudad la define el GPS; solo si no la detecto se pide elegirla */}
           {muni ? null : (
