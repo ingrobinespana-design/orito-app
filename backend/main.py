@@ -3908,7 +3908,11 @@ def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
 
 @app.get("/expresos/cliente/{cliente_id}")
 def expresos_del_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    expresos = db.query(Expreso).filter(Expreso.cliente_id == cliente_id).order_by(Expreso.fecha.desc()).limit(20).all()
+    # los ACTIVOS siempre (aunque sean muchos) + el historial reciente (finalizados/cancelados)
+    base = db.query(Expreso).filter(Expreso.cliente_id == cliente_id)
+    activos = base.filter(Expreso.estado.in_(["buscando", "aceptado", "en_camino"])).order_by(Expreso.fecha.desc()).all()
+    historial = base.filter(~Expreso.estado.in_(["buscando", "aceptado", "en_camino"])).order_by(Expreso.fecha.desc()).limit(60).all()
+    expresos = activos + historial
     res = []
     for e in expresos:
         conductor = db.query(Usuario).filter(Usuario.id == e.conductor_id).first() if e.conductor_id else None

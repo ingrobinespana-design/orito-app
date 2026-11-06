@@ -3737,7 +3737,11 @@ function Estrellas({ valor, size = 13, color = "#B8860B" }) {
 // CLIENTE · viajes a OTRA ciudad (expresos por cupos). Se muestra dentro de Pedir
 // carrera cuando el cliente toca "A otra ciudad". Publica un viaje (destino, cupos,
 // $/cupo, punto de recogida, opcional agendado) y ve las contraofertas para elegir.
-function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
+function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) {
+  // dos pestañas: PEDIR (solo el formulario) y MIS VIAJES (activos / finalizados / cancelados)
+  const [vista, setVista] = useState(irMios ? "mios" : "pedir");
+  const [filtro, setFiltro] = useState("activos");
+  useEffect(() => { if (irMios) { setVista("mios"); setFiltro("activos"); } }, [irMios]);
   const [destino, setDestino] = useState("");
   const [pin, setPin] = useState(null);
   const [origenTxt, setOrigenTxt] = useState("");
@@ -3838,7 +3842,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
       if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
       setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHSel(null); setMSel(null);
       avisar("✅ Viaje publicado", "Los conductores de tu ciudad lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
-      cargarMios();
+      cargarMios(); setVista("mios"); setFiltro("activos");
     }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
   };
 
@@ -3874,8 +3878,47 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
 
   const totalCalc = (parseInt(cupos, 10) || 0) * (parseInt((precio || "0").replace(/\D/g, ""), 10) || 0);
 
+  const ACTIVOS = ["buscando", "aceptado", "en_camino"];
+  const activos = mios.filter(e => ACTIVOS.includes(e.estado));
+  const grupos = {
+    activos,
+    finalizados: mios.filter(e => e.estado === "finalizado"),
+    cancelados: mios.filter(e => e.estado === "cancelado"),
+  };
+  const lista = grupos[filtro] || [];
+  const pestana = (k, lbl, n) => {
+    const on = vista === k;
+    return (
+      <TouchableOpacity key={k} activeOpacity={0.85} onPress={() => setVista(k)}
+        style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6,
+          backgroundColor: on ? "#187830" : "transparent" }}>
+        <Text style={{ fontSize: 13.5, fontWeight: "800", color: on ? "#fff" : "#5A6B5F" }}>{lbl}</Text>
+        {n > 0 ? (
+          <View style={{ minWidth: 20, height: 20, borderRadius: 10, backgroundColor: on ? "#fff" : "#F06000", alignItems: "center", justifyContent: "center", paddingHorizontal: 5 }}>
+            <Text style={{ fontSize: 11, fontWeight: "800", color: on ? "#187830" : "#fff" }}>{n}</Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
   return (
     <>
+      <View style={{ flexDirection: "row", backgroundColor: "#fff", borderRadius: 12, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: "#E9EBE5" }}>
+        {pestana("pedir", "✍️ Pedir viaje", 0)}
+        {pestana("mios", "🧾 Mis viajes", activos.length)}
+      </View>
+
+      {vista === "pedir" && activos.length > 0 && (
+        <TouchableOpacity activeOpacity={0.8} onPress={() => { setVista("mios"); setFiltro("activos"); }}
+          style={{ backgroundColor: "#EAF6EC", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 12, flexDirection: "row", alignItems: "center" }}>
+          <Text style={{ flex: 1, color: "#187830", fontWeight: "700", fontSize: 13 }}>
+            🚌 Tienes {activos.length} viaje{activos.length > 1 ? "s" : ""} activo{activos.length > 1 ? "s" : ""}
+          </Text>
+          <Text style={{ color: "#187830", fontWeight: "800", fontSize: 13 }}>Ver ›</Text>
+        </TouchableOpacity>
+      )}
+
+      {vista === "pedir" && (<>
       <View style={styles.card}>
         <View style={{ flexDirection: "row", backgroundColor: "#F7F8F5", borderRadius: 14, borderWidth: 1, borderColor: "#E9EBE5", paddingLeft: 14, paddingRight: 12 }}>
           <View style={{ width: 16, alignItems: "center", paddingVertical: 20 }}>
@@ -3962,11 +4005,31 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
       <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 4 }]} onPress={publicar} disabled={cargando}>
         {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Publicar viaje</Text>}
       </TouchableOpacity>
+      </>)}
 
-      {mios.length > 0 && (
-        <View style={{ marginTop: 18 }}>
-          <Text style={styles.seccionTitulo}>Tus viajes a otra ciudad</Text>
-          {mios.map(e => {
+      {vista === "mios" && (
+        <View>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+            {[["activos", "Activos"], ["finalizados", "Finalizados"], ["cancelados", "Cancelados"]].map(([k, lbl]) => (
+              <TouchableOpacity key={k} onPress={() => setFiltro(k)} style={[styles.chip, filtro === k && styles.chipOn]}>
+                <Text style={[styles.chipTxt, filtro === k && styles.chipTxtOn]}>{lbl} ({grupos[k].length})</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {lista.length === 0 ? (
+            <View style={{ alignItems: "center", padding: 28 }}>
+              <Text style={{ fontSize: 34 }}>{filtro === "activos" ? "🚌" : filtro === "finalizados" ? "🏁" : "🗂️"}</Text>
+              <Text style={{ color: "#888", marginTop: 8, textAlign: "center" }}>
+                {filtro === "activos" ? "No tienes viajes activos." : filtro === "finalizados" ? "Aún no tienes viajes finalizados." : "No tienes viajes cancelados."}
+              </Text>
+              {filtro === "activos" ? (
+                <TouchableOpacity onPress={() => setVista("pedir")} style={{ marginTop: 12, backgroundColor: "#F06000", borderRadius: 10, paddingVertical: 10, paddingHorizontal: 18 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800" }}>Pedir un viaje</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+          {lista.map(e => {
             const ofs = ofertas[e.id] || [];
             return (
               <View key={e.id} style={[styles.card, { marginBottom: 10 }]}>
@@ -5209,7 +5272,7 @@ function PedirCarreraScreen({ navigation, route }) {
         </View>
 
         {modo === "expreso" ? (
-          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} />
+          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} irMios={route.params && route.params.vistaT} />
         ) : (<>
         {/* ===== TU VIAJE: recogida + destino en una sola tarjeta con riel ===== */}
         <View style={styles.card}>
