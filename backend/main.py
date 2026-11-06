@@ -2393,12 +2393,10 @@ def avisar_oferta_aceptada(conductor_id: int, carrera_id: int):
         carrera = db.query(Carrera).filter(Carrera.id == carrera_id).first()
         if not conductor or not conductor.push_token or not carrera:
             return
-        mensajes = [push.mensaje(
-            conductor.push_token,
-            "Te aceptaron la carrera",
-            f"Recoge en {carrera.origen}",
-            {"tipo": "oferta_aceptada", "carrera_id": carrera_id},
-        )]
+        # a pantalla completa, como una solicitud
+        mensajes = push_conductor(conductor, "✅ El pasajero aceptó tu precio",
+                                  f"Recoge en {carrera.origen}",
+                                  {"tipo": "oferta_aceptada", "carrera_id": carrera_id})
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
@@ -3729,6 +3727,7 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
         "conductor_lon": conductor.ubic_lon if conductor else None,
         "conductor_ubic_fecha": conductor.ubic_fecha if conductor else None,
         "tarifa_cupo": e.tarifa_cupo, "fecha": e.fecha,
+        "conductor_confirmo": e.conductor_confirmo,
     }
 
 def oferta_expreso_dict(o: OfertaExpreso, conductor: Usuario = None):
@@ -3820,12 +3819,13 @@ def avisar_expreso_asignado(expreso_id: int, a_conductor: bool):
         if not destino or not destino.push_token:
             return
         if a_conductor:
-            titulo, cuerpo = "Te aceptaron el viaje", f"Recoge en {e.origen} · {e.origen_municipio} → {e.destino_municipio}"
+            titulo, cuerpo = "✅ El pasajero aceptó tu precio", f"{e.origen_municipio} → {e.destino_municipio} · recoge en {e.origen}"
+            mensajes = push_conductor(destino, titulo, cuerpo, {"tipo": "expreso_asignado", "expreso_id": e.id})
         else:
             titulo = "Ya tienes transportador"
             cuerpo = f"{conductor.nombre if conductor else ''} hará tu viaje a {e.destino_municipio}"
-        mensajes = [push.mensaje(destino.push_token, titulo, cuerpo,
-                                 {"tipo": "expreso_asignado", "expreso_id": e.id})]
+            mensajes = [push.mensaje(destino.push_token, titulo, cuerpo,
+                                     {"tipo": "expreso_asignado", "expreso_id": e.id})]
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
@@ -3952,7 +3952,8 @@ def aceptar_expreso(expreso_id: int, conductor_id: int, tareas: BackgroundTasks,
     if e and e.origen_municipio != conductor.municipio:
         raise HTTPException(status_code=403, detail="Ese viaje sale de otra ciudad")
     tomado = db.query(Expreso).filter(Expreso.id == expreso_id, Expreso.estado == "buscando").update(
-        {"conductor_id": conductor_id, "estado": "aceptado", "tarifa_cupo": e.precio_por_cupo if e else None},
+        {"conductor_id": conductor_id, "estado": "aceptado", "tarifa_cupo": e.precio_por_cupo if e else None,
+         "conductor_confirmo": datetime.now()},
         synchronize_session=False)
     db.commit()
     if tomado == 0:
@@ -4012,7 +4013,8 @@ def aceptar_oferta_expreso(expreso_id: int, oferta_id: int, tareas: BackgroundTa
     if not oferta:
         raise HTTPException(status_code=404, detail="Oferta no encontrada")
     tomado = db.query(Expreso).filter(Expreso.id == expreso_id, Expreso.estado == "buscando").update(
-        {"conductor_id": oferta.conductor_id, "estado": "aceptado", "tarifa_cupo": oferta.monto},
+        {"conductor_id": oferta.conductor_id, "estado": "aceptado", "tarifa_cupo": oferta.monto,
+         "conductor_confirmo": None},
         synchronize_session=False)
     db.commit()
     if tomado == 0:
@@ -4046,6 +4048,7 @@ def actualizar_estado_expreso(expreso_id: int, estado: str, tareas: BackgroundTa
         cliente_id = e.cliente_id
         e.conductor_id = None
         e.tarifa_cupo = None
+        e.conductor_confirmo = None
         e.estado = "buscando"
         db.commit()
         tareas.add_task(avisar_expreso_a, cliente_id, "🚌 Tu conductor no podrá hacer el viaje",
@@ -4064,6 +4067,22 @@ def actualizar_estado_expreso(expreso_id: int, estado: str, tareas: BackgroundTa
         tareas.add_task(avisar_expreso_a, conductor_antes, "❌ El pasajero canceló el viaje",
                         f"Viaje a {e.destino_municipio} cancelado.", e.id)
     return expreso_dict(e)
+
+@app.put("/expresos/{expreso_id}/recibido")
+def expreso_recibido(expreso_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                     actual: Usuario = Depends(usuario_actual)):
+    """El conductor confirma que vio que el pasajero le acepto el viaje."""
+    e = db.query(Expreso).filter(Expreso.id == expreso_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    if actual.id != e.conductor_id:
+        raise HTTPException(status_code=403, detail="No es tu viaje")
+    if not e.conductor_confirmo:
+        e.conductor_confirmo = datetime.now()
+        db.commit()
+        tareas.add_task(avisar_expreso_a, e.cliente_id, "✅ Tu conductor confirmó el viaje",
+                        f"{actual.nombre} confirmó tu viaje a {e.destino_municipio}.", e.id)
+    return expreso_dict(e, actual)
 
 @app.put("/expresos/{expreso_id}/reprogramar")
 def reprogramar_expreso(expreso_id: int, tareas: BackgroundTasks, salida: str = None, db: Session = Depends(get_db),
@@ -4088,6 +4107,7 @@ def reprogramar_expreso(expreso_id: int, tareas: BackgroundTasks, salida: str = 
     e.salida = nueva
     e.estado = "buscando"      # vuelve a quedar disponible con la nueva fecha
     e.conductor_id = None      # reprograma de cero: si alguien lo habia tomado, se libera
+    e.conductor_confirmo = None
     if conductor_antes:
         tareas.add_task(avisar_expreso_a, conductor_antes, "📅 El pasajero cambió la fecha del viaje",
                         f"El viaje a {e.destino_municipio} volvió a publicarse con la nueva fecha.", e.id)

@@ -350,7 +350,8 @@ async function manejarPushFondo(d) {
   if (d.tipo === "expreso_nuevo" && !puedeSonar()) return;   // el servicio de fondo ya sono por este
   const titulo = d.titulo || "Tukán", cuerpo = d.cuerpo || "";
   const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : d.tipo === "expreso_nuevo" ? `expreso-${d.expreso_id}`
-    : d.tipo === "contraoferta" ? `oferta-${d.carrera_id}` : d.tipo === "expreso_contraoferta" ? `expoferta-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
+    : d.tipo === "contraoferta" ? `oferta-${d.carrera_id}` : d.tipo === "expreso_contraoferta" ? `expoferta-${d.expreso_id}`
+    : d.tipo === "oferta_aceptada" ? `aceptada-${d.carrera_id}` : d.tipo === "expreso_asignado" ? `asignado-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
   traerTukanAlFrente();
   const ok = await avisoPantallaCompleta(id, titulo, cuerpo);
   diagFondo("aviso", { tipo: d.tipo, ok });
@@ -3970,6 +3971,11 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                   </View>
                 )}
                 {e.estado === "aceptado" && (
+                  <Text style={{ fontSize: 12.5, fontWeight: "700", marginTop: 6, color: e.conductor_confirmo ? "#187830" : "#B85C00" }}>
+                    {e.conductor_confirmo ? "✅ Tu conductor confirmó el viaje" : "⏳ Esperando que el conductor confirme…"}
+                  </Text>
+                )}
+                {e.estado === "aceptado" && (
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                     <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#CFE0D3", paddingVertical: 9 }]}
                       onPress={() => confirmar("Cambiar fecha", "Al cambiar la fecha el viaje se publica de nuevo y el conductor actual queda libre (le avisamos). ¿Continuar?", () => reprogramar(e), "Sí, cambiar")}>
@@ -6080,6 +6086,22 @@ function ConductorScreen({ navigation, route }) {
       </View>
   );
 
+  const porConfirmar = misExpresos.find(x => x.estado === "aceptado" && !x.conductor_confirmo) || null;
+  const confirmadoVibro = useRef(null);
+  useEffect(() => {
+    if (porConfirmar && confirmadoVibro.current !== porConfirmar.id) {
+      confirmadoVibro.current = porConfirmar.id;
+      try { Vibration.vibrate([0, 500, 200, 500, 200, 500]); } catch (x) {}
+    }
+  }, [porConfirmar && porConfirmar.id]);
+  const [confirmando, setConfirmando] = useState(false);
+  const darRecibido = (x) => {
+    setConfirmando(true);
+    userFetch(`${API}/expresos/${x.id}/recibido`, { method: "PUT" })
+      .then(async (r) => { if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); } cargarExpresos(); })
+      .catch(() => avisar("Error", "No hay conexión."))
+      .finally(() => setConfirmando(false));
+  };
   const expVistos = useRef(null);   // ids de viajes a otra ciudad ya vistos (para avisar los nuevos)
   const [expNuevo, setExpNuevo] = useState(false);
   const cargarExpresos = () => {
@@ -7173,6 +7195,31 @@ function ConductorScreen({ navigation, route }) {
           </Modal>
         );
       })()}
+
+      {/* el pasajero ACEPTO la propuesta de un viaje a otra ciudad: el conductor confirma "Recibido" */}
+      <Modal visible={!!porConfirmar && !entrante} transparent animationType="fade" onRequestClose={() => {}}>
+        <View style={styles.fondoModal}>
+          <View style={styles.ventanaModal}>
+            {porConfirmar && (
+              <>
+                <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#187830" }}>✅ EL PASAJERO ACEPTÓ TU PRECIO</Text>
+                <Text style={{ fontSize: 18, fontWeight: "800", color: "#1C2B22", marginTop: 8 }}>{porConfirmar.origen_municipio} → {porConfirmar.destino_municipio}</Text>
+                <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830", marginTop: 6 }}>${(porConfirmar.tarifa_cupo || 0).toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>/cupo · total ${((porConfirmar.tarifa_cupo || 0) * porConfirmar.cupos).toLocaleString()}</Text></Text>
+                <View style={{ backgroundColor: porConfirmar.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 8 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: porConfirmar.salida ? "#B85C00" : "#187830" }}>{porConfirmar.salida ? `🗓️ Sale: ${fmtRecogida(porConfirmar.salida)}` : "🟢 Lo antes posible"}</Text>
+                </View>
+                <Text style={{ fontSize: 14, color: "#333", marginTop: 8 }} numberOfLines={2}>🟢 Recoge: {limpiaDir(porConfirmar.origen)}</Text>
+                {porConfirmar.destino_detalle ? <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }} numberOfLines={2}>🏁 Deja: {limpiaDir(porConfirmar.destino_detalle)}</Text> : null}
+                <Text style={{ fontSize: 13, color: "#666", marginTop: 6 }}>👤 {porConfirmar.cliente_nombre} · {porConfirmar.cupos} cupo(s)</Text>
+                <TouchableOpacity disabled={confirmando} style={[styles.button, { backgroundColor: "#187830", marginTop: 16, padding: 14, opacity: confirmando ? 0.6 : 1 }]} onPress={() => darRecibido(porConfirmar)}>
+                  <Text style={styles.buttonText}>{confirmando ? "Confirmando…" : "👍 Recibido"}</Text>
+                </TouchableOpacity>
+                <Text style={{ fontSize: 11.5, color: "#999", textAlign: "center", marginTop: 8 }}>Le avisamos al pasajero que confirmaste. El viaje queda en "Otra ciudad".</Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* RECUADRO tipo Uber: salta cuando entra una solicitud, con barra de 10s */}
       <Modal visible={!!entrante} transparent animationType="fade" onRequestClose={cerrarEntrante}>
