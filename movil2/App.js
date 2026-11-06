@@ -3757,20 +3757,23 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
       .then(d => (Array.isArray(d) ? [e, d] : null)).catch(() => null)))
       .then(res => {
         const nuevas = {};
-        let nueva = null;
+        let nueva = null, cuantas = 0;
         const primera = ofVistas.current === null;
         if (primera) ofVistas.current = new Set();
         res.filter(Boolean).forEach(([e, d]) => {
           nuevas[e.id] = d;
           d.forEach(of => {
             const k = `${of.id}-${of.monto}`;   // si el conductor cambia su precio, tambien avisa
-            if (!ofVistas.current.has(k)) { ofVistas.current.add(k); if (!primera && !nueva) nueva = { e, of }; }
+            if (!ofVistas.current.has(k)) {
+              ofVistas.current.add(k);
+              if (!primera) { cuantas++; if (!nueva || of.monto < nueva.of.monto) nueva = { e, of }; }
+            }
           });
         });
         setOfertas(o => ({ ...o, ...nuevas }));
         if (nueva) {
           try { Vibration.vibrate([0, 400, 180, 400]); } catch (x) {}
-          setOfEntrante(nueva);
+          setOfEntrante({ ...nueva, mas: cuantas - 1 });
         }
       });
   }, [mios]);
@@ -4054,6 +4057,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                   </Text>
                   <Text style={{ fontSize: 26, fontWeight: "bold", color: "#187830", marginTop: 8 }}>${of.monto.toLocaleString()}<Text style={{ fontSize: 14, color: "#888" }}>/cupo</Text></Text>
                   <Text style={{ fontSize: 13, color: "#666" }}>Total {e.cupos} cupo(s): ${(of.monto * e.cupos).toLocaleString()} · tú ofreciste ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+                  {ofEntrante.mas > 0 ? <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700", marginTop: 6 }}>+{ofEntrante.mas} propuesta{ofEntrante.mas > 1 ? "s" : ""} más en tu viaje (de la más barata a la más cara)</Text> : null}
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
                     <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setOfEntrante(null)}>
                       <Text style={{ color: "#888", fontWeight: "600" }}>Ahora no</Text>
@@ -6094,6 +6098,8 @@ function ConductorScreen({ navigation, route }) {
           }
         }
         expVistos.current = [...new Set([...(expVistos.current || []), ...ids])].slice(-200);
+        const tSal = (x) => (x.salida ? new Date(x.salida).getTime() : 0);
+        d.sort((a, b) => (tSal(a) - tSal(b)) || (new Date(a.fecha) - new Date(b.fecha)));
         // abrio Tukan desde el aviso a pantalla completa de un viaje a otra ciudad
         if (expresoDesdeFondo && AppState.currentState === "active") {
           const x = d.find((y) => y.id === expresoDesdeFondo);
