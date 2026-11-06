@@ -4132,12 +4132,12 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
                   </View>
                 )}
                 {e.estado === "buscando" && (() => {
-                  const vencido = e.salida && new Date(e.salida).getTime() < Date.now();
+                  const vencido = e.vencido || (e.salida && new Date(e.salida).getTime() < Date.now());
                   return (
                     <View style={{ marginTop: 10 }}>
                       {vencido && (
                         <Text style={{ fontSize: 12, color: "#B85C00", fontWeight: "800", marginBottom: 6 }}>
-                          ⏰ Se pasó la fecha de este viaje. ¿Qué hacemos?
+                          {e.salida ? "⏰ Se pasó la fecha de este viaje. ¿Qué hacemos?" : "⏰ Nadie tomó este viaje en 6 horas y ya no se les muestra a los conductores. Reprográmalo o cancélalo."}
                         </Text>
                       )}
                       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

@@ -3732,7 +3732,45 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
         "conductor_ubic_fecha": conductor.ubic_fecha if conductor else None,
         "tarifa_cupo": e.tarifa_cupo, "fecha": e.fecha,
         "conductor_confirmo": e.conductor_confirmo,
+        "vencido": expreso_vencido(e),
     }
+
+EXPRESO_ASAP_HORAS = 6     # "lo antes posible" sin conductor en 6 h -> se vence
+
+def expreso_vencido(e):
+    """Esperando conductor pero ya no se ofrece: 'lo antes posible' de mas de 6 h, o la
+    hora programada paso hace mas de 3 h. El pasajero lo reprograma o lo cancela."""
+    if e.estado != "buscando":
+        return False
+    ahora = datetime.now()
+    if e.salida is None:
+        return bool(e.fecha) and e.fecha < ahora - timedelta(hours=EXPRESO_ASAP_HORAS)
+    return e.salida < ahora - timedelta(hours=3)
+
+def _revisar_expresos_vencidos():
+    """Cada 10 min: a los pasajeros con viaje vencido se les avisa UNA vez."""
+    while True:
+        try:
+            db = SessionLocal()
+            avisos = []
+            try:
+                for e in db.query(Expreso).filter(Expreso.estado == "buscando", Expreso.aviso_vencido.is_(None)).all():
+                    if expreso_vencido(e):
+                        e.aviso_vencido = datetime.now()
+                        avisos.append((e.cliente_id, e.id, e.destino_municipio))
+                db.commit()
+            finally:
+                db.close()
+            for cli, eid, dest in avisos:
+                avisar_expreso_a(cli, f"⏰ Nadie tomó tu viaje a {dest}",
+                                 "Ya no se les muestra a los conductores. Reprográmalo con fecha y hora, o cancélalo, en Mis viajes.", eid)
+        except Exception:
+            pass
+        _time.sleep(600)
+
+@app.on_event("startup")
+def _arrancar_revision_vencidos():
+    threading.Thread(target=_revisar_expresos_vencidos, daemon=True).start()
 
 def oferta_expreso_dict(o: OfertaExpreso, conductor: Usuario = None):
     return {
@@ -3991,7 +4029,8 @@ def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
     limite = datetime.now() - timedelta(hours=3)
     q = (db.query(Expreso)
          .filter(Expreso.estado == "buscando")
-         .filter((Expreso.salida.is_(None)) | (Expreso.salida >= limite))
+         .filter(((Expreso.salida.is_(None)) & (Expreso.fecha >= datetime.now() - timedelta(hours=EXPRESO_ASAP_HORAS)))
+                 | (Expreso.salida >= limite))
          .order_by(Expreso.fecha.desc()))
     if conductor_id:
         conductor = db.query(Usuario).filter(Usuario.id == conductor_id).first()
@@ -4218,6 +4257,8 @@ def reprogramar_expreso(expreso_id: int, tareas: BackgroundTasks, salida: str = 
             nueva = None
     conductor_antes = e.conductor_id
     e.salida = nueva
+    e.fecha = datetime.now()       # se publica de nuevo: el plazo de 6 h arranca otra vez
+    e.aviso_vencido = None
     e.estado = "buscando"      # vuelve a quedar disponible con la nueva fecha
     e.conductor_id = None      # reprograma de cero: si alguien lo habia tomado, se libera
     e.conductor_confirmo = None
