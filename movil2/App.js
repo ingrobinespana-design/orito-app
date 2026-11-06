@@ -512,7 +512,7 @@ function fmtRecogida(iso) {
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
   const dd = new Date(d); dd.setHours(0, 0, 0, 0);
   const difd = Math.round((dd - hoy) / 86400000);
-  const dia = difd === 0 ? "hoy" : difd === 1 ? "manana" : `${DIAS_ABR[d.getDay()]} ${d.getDate()}`;
+  const dia = difd === 0 ? "hoy" : difd === 1 ? "mañana" : `${DIAS_ABR[d.getDay()]} ${d.getDate()}`;
   const h = d.getHours(), m = d.getMinutes();
   const ampm = h < 12 ? "am" : "pm"; const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${dia} ${h12}:${String(m).padStart(2, "0")} ${ampm}`;
