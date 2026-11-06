@@ -92,11 +92,13 @@ let ultimoVivo = 0;
 // "active". Solo el componente App (que se monta con pantalla) lo pone en true.
 let pantallaVisible = false;
 const alFrente = () => pantallaVisible && AppState.currentState === "active";
-let idsVistosFondo = null;   // carreras ya vistas por el servicio en segundo plano
+let idsVistosFondo = null;
+let expVistosFondo = null;   // viajes a otra ciudad ya vistos por el servicio en segundo plano   // carreras ya vistas por el servicio en segundo plano
 let activasFondo = null;     // carreras en curso del conductor (para detectar cancelaciones)
 let ultimoSonido = 0;        // anti-rebote: no sonar dos veces (fondo + pantalla)
 // solicitud que se aviso a pantalla completa: al abrir la app se muestra de una
 let solicitudDesdeFondo = null;
+let expresoDesdeFondo = null;   // viaje a otra ciudad que se abrio desde el aviso a pantalla completa
 
 // evita sonar dos veces seguidas (cuando app abierta corren el ping y el fondo)
 function puedeSonar() {
@@ -204,13 +206,16 @@ async function probarPantallaCompleta() {
 // no esta al frente, el aviso sale a pantalla completa (si el APK lo soporta).
 async function sonarCarreraFondo(c) {
   if (!puedeSonar()) return;
-  const carga = c && esCarga(c.vehiculo_pedido);
-  const titulo = carga ? "🚚 Nuevo acarreo" : "🔔 Nueva solicitud de carrera";
-  const cuerpo = c ? `${limpiaDir(c.origen)} → ${limpiaDir(c.destino)}${c.tarifa_ofrecida ? ` · ofrece $${c.tarifa_ofrecida.toLocaleString()}` : ""}` : "Toca para verla y responder.";
+  const exp = c && c._expreso;
+  const carga = c && !exp && esCarga(c.vehiculo_pedido);
+  const titulo = exp ? "🚌 Viaje a otra ciudad" : carga ? "🚚 Nuevo acarreo" : "🔔 Nueva solicitud de carrera";
+  const cuerpo = exp
+    ? `${c.origen_municipio} → ${c.destino_municipio} · ${c.cupos} cupo(s) a $${(c.precio_por_cupo || 0).toLocaleString()}/cupo`
+    : c ? `${limpiaDir(c.origen)} → ${limpiaDir(c.destino)}${c.tarifa_ofrecida ? ` · ofrece $${c.tarifa_ofrecida.toLocaleString()}` : ""}` : "Toca para verla y responder.";
   if (c && !alFrente()) {
-    solicitudDesdeFondo = c.id;
+    if (exp) expresoDesdeFondo = c.id; else solicitudDesdeFondo = c.id;
     traerTukanAlFrente();
-    if (await avisoPantallaCompleta(`solicitud-${c.id}`, titulo, cuerpo)) return;
+    if (await avisoPantallaCompleta(exp ? `expreso-${c.id}` : `solicitud-${c.id}`, titulo, cuerpo)) return;
   }
   try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
   Notifications.scheduleNotificationAsync({
@@ -268,6 +273,22 @@ try {
         if (nueva) { diagFondo("rastreo_nueva", { id: nueva.id, frente: alFrente() }); sonarCarreraFondo(nueva); }
       })
       .catch(() => {});
+    // 2b) viajes a otra ciudad nuevos (salen de su ciudad): mismo aviso fuerte
+    fetch(`${API}/expresos/disponibles?conductor_id=${conductorRastreado}`)
+      .then((r) => r.json())
+      .then(async (d) => {
+        if (!Array.isArray(d)) return;
+        const ids = d.map((e) => e.id);
+        if (expVistosFondo === null) {
+          try { const g = await AsyncStorage.getItem("tukan_rastreo_exp_vistos"); if (g) expVistosFondo = JSON.parse(g); } catch (e) {}
+        }
+        if (expVistosFondo === null) { expVistosFondo = ids; AsyncStorage.setItem("tukan_rastreo_exp_vistos", JSON.stringify(ids)).catch(() => {}); return; }
+        const nuevo = d.find((e) => expVistosFondo.indexOf(e.id) === -1 && e.mi_oferta == null);
+        expVistosFondo = [...new Set([...expVistosFondo, ...ids])].slice(-200);
+        AsyncStorage.setItem("tukan_rastreo_exp_vistos", JSON.stringify(expVistosFondo)).catch(() => {});
+        if (nuevo && !alFrente()) sonarCarreraFondo({ ...nuevo, _expreso: true });
+      })
+      .catch(() => {});
     // 3) si el pasajero le cancela una carrera en curso y la app no esta al frente,
     // aviso a pantalla completa con el motivo (al abrir, la app muestra la ventana)
     fetch(`${API}/carreras/conductor/${conductorRastreado}`)
@@ -319,11 +340,13 @@ function diagFondo(paso, extra) {
 async function manejarPushFondo(d) {
   if (!d || !d.tipo) { diagFondo("sin_tipo"); return; }
   if (d.tipo === "carrera_nueva") solicitudDesdeFondo = Number(d.carrera_id) || solicitudDesdeFondo;
+  if (d.tipo === "expreso_nuevo") expresoDesdeFondo = Number(d.expreso_id) || expresoDesdeFondo;
   if (alFrente()) { diagFondo("app_activa", { tipo: d.tipo }); return; }   // con la app al frente la maneja la pantalla
   // APK con receptor nativo: el aviso tipo llamada ya lo mostro Android (no se duplica)
-  if (avisoNativo()) { diagFondo("nativo", { tipo: d.tipo }); return; }
+  if (avisoNativo() && d.tipo !== "expreso_nuevo") { diagFondo("nativo", { tipo: d.tipo }); return; }
+  if (d.tipo === "expreso_nuevo" && !puedeSonar()) return;   // el servicio de fondo ya sono por este
   const titulo = d.titulo || "Tukán", cuerpo = d.cuerpo || "";
-  const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : `solicitud-${d.carrera_id}`;
+  const id = d.tipo === "carrera_cancelada" ? `cancelada-${d.carrera_id}` : d.tipo === "expreso_nuevo" ? `expreso-${d.expreso_id}` : `solicitud-${d.carrera_id}`;
   traerTukanAlFrente();
   const ok = await avisoPantallaCompleta(id, titulo, cuerpo);
   diagFondo("aviso", { tipo: d.tipo, ok });
@@ -5705,7 +5728,7 @@ function ConductorScreen({ navigation, route }) {
     try { Vibration.vibrate([0, 500, 220, 500]); } catch (e) {}
     // ademas el tono de notificacion (si dio permiso y no esta en silencio)
     Notifications.scheduleNotificationAsync({
-      content: { title: "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: SONIDO_EXPO },
+      content: { title: c && c._expreso ? "🚌 Viaje a otra ciudad" : "🔔 Nueva solicitud de carrera", body: "Toca para verla y responder.", sound: SONIDO_EXPO },
       trigger: Platform.OS === "android" ? { channelId: CANAL_EXPO, seconds: 1 } : null,
     }).catch(() => {});
   };
@@ -6004,11 +6027,23 @@ function ConductorScreen({ navigation, route }) {
       .then(d => {
         if (!Array.isArray(d)) return;
         const ids = d.map(x => x.id);
-        if (expVistos.current && ids.some(id => !expVistos.current.includes(id))) {
+        const nuevo = expVistos.current ? d.find(x => !expVistos.current.includes(x.id) && x.mi_oferta == null) : null;
+        if (nuevo) {
           setExpNuevo(true);
-          try { Vibration.vibrate([0, 400, 200, 400]); } catch (e) {}
+          if (dispRef.current && !tieneActivaRef.current) {
+            pingSolicitud({ ...nuevo, _expreso: true });
+            mostrarEntrante({ ...nuevo, _expreso: true });
+          } else {
+            try { Vibration.vibrate([0, 400, 200, 400]); } catch (e) {}
+          }
         }
-        expVistos.current = ids;
+        expVistos.current = [...new Set([...(expVistos.current || []), ...ids])].slice(-200);
+        // abrio Tukan desde el aviso a pantalla completa de un viaje a otra ciudad
+        if (expresoDesdeFondo && AppState.currentState === "active") {
+          const x = d.find((y) => y.id === expresoDesdeFondo);
+          expresoDesdeFondo = null;
+          if (x && !tieneActivaRef.current) { mostrarEntrante({ ...x, _expreso: true }); quitarAviso(`expreso-${x.id}`); }
+        }
         setExpresosDisp(d);
       }).catch(() => {});
     fetch(`${API}/expresos/conductor/${usuario.id}`).then(r => r.json())
@@ -7084,7 +7119,38 @@ function ConductorScreen({ navigation, route }) {
             <View style={styles.entranteBarraBg}>
               <Animated.View style={[styles.entranteBarra, { width: barraEntrante.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }]} />
             </View>
-            {entrante && (() => {
+            {entrante && entrante._expreso && (() => {
+              const e = entrante;
+              return (
+                <View style={{ padding: 18 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>🚌 VIAJE A OTRA CIUDAD</Text>
+                    <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>${(e.precio_por_cupo || 0).toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>/cupo</Text></Text>
+                  </View>
+                  <Text style={{ fontSize: 18, fontWeight: "800", color: "#1C2B22", marginTop: 8 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
+                  <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · total ${((e.precio_por_cupo || 0) * e.cupos).toLocaleString()}</Text>
+                  <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 8 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
+                  </View>
+                  <Text style={{ fontSize: 14, color: "#333", marginTop: 8 }} numberOfLines={1}>🟢 {limpiaDir(e.origen)}</Text>
+                  {e.destino_detalle ? <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }} numberOfLines={1}>🏁 {limpiaDir(e.destino_detalle)}</Text> : null}
+                  {e.notas ? <Text style={{ fontSize: 12.5, color: "#888", marginTop: 4 }} numberOfLines={2}>📝 {e.notas}</Text> : null}
+                  <Text style={{ fontSize: 12.5, color: "#999", marginTop: 8 }}>👤 {e.cliente_nombre}</Text>
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1.3, backgroundColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); aceptarExpreso(e); }}>
+                      <Text style={styles.buttonText}>Tomar ${(e.precio_por_cupo || 0).toLocaleString()}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 13 }]} onPress={() => { cerrarEntrante(); setMontoExp(String(e.precio_por_cupo || "")); setOfExpreso(e); }}>
+                      <Text style={{ color: "#187830", fontWeight: "700" }}>Proponer otro</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity style={{ padding: 10, marginTop: 4 }} onPress={cerrarEntrante}>
+                    <Text style={{ textAlign: "center", color: "#999", fontSize: 13 }}>Descartar</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
+            {entrante && !entrante._expreso && (() => {
               const c = entrante;
               const kmAlOrigen = miUbic && c.origen_lat != null ? kmEntre(miUbic, { lat: c.origen_lat, lon: c.origen_lon }) : null;
               const kmViaje = c.distancia_km != null ? c.distancia_km

@@ -3780,8 +3780,10 @@ def avisar_expreso_nuevo(expreso_id: int):
             return
         cuando = "lo antes posible" if not e.salida else e.salida.strftime("%d/%m %I:%M %p")
         cuerpo = f"{e.origen_municipio} → {e.destino_municipio} · {e.cupos} cupo(s) a ${e.precio_por_cupo:,}/cupo · {cuando}".replace(",", ".")
-        mensajes = [push.mensaje(c.push_token, "🚌 Viaje a otra ciudad", cuerpo,
-                                 {"tipo": "expreso_nuevo", "expreso_id": e.id}) for c in _conductores_expreso(e, db)]
+        # como una carrera: push normal + push de datos (despierta la app y sale a pantalla completa)
+        mensajes = [m for c in _conductores_expreso(e, db)
+                    for m in push_conductor(c, "🚌 Viaje a otra ciudad", cuerpo,
+                                            {"tipo": "expreso_nuevo", "expreso_id": e.id})]
     finally:
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
