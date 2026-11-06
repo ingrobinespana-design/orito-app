@@ -2740,7 +2740,7 @@ function mapaHTML(lat, lon) {
 </script></body></html>`;
 }
 
-function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerrar }) {
+function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerrar, alcancePais }) {
   const webRef = useRef(null);
   const inicial = centro && centro.lat ? centro : { lat: 0.5083, lon: -76.4972 };
   const [coords, setCoords] = useState(inicial);
@@ -2773,7 +2773,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
     setCargandoSug(true);
     const timer = setTimeout(() => {
       const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
-      const muni = municipio ? `&municipio=${encodeURIComponent(municipio)}` : "";
+      const muni = alcancePais ? "&alcance=pais" : (municipio ? `&municipio=${encodeURIComponent(municipio)}` : "");
       fetch(`${API}/ubicacion/autocompletar?texto=${encodeURIComponent(t)}${cerca}${muni}`)
         .then(r => r.json())
         .then(d => { if (Array.isArray(d)) { setSugerencias(d); setSinRes(d.length === 0); } })
@@ -2804,7 +2804,7 @@ function MapaSelector({ visible, titulo, centro, municipio, onConfirmar, onCerra
     // se sesga hacia donde esta mirando el mapa (coords) para que 'Calle 49' caiga
     // en la ciudad correcta: busca AMPLIO en toda Colombia, no solo en el municipio
     const cerca = coords && coords.lat != null ? `&cerca_lat=${coords.lat}&cerca_lon=${coords.lon}` : "";
-    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(municipio || "Orito")}${cerca}`)
+    fetch(`${API}/ubicacion/buscar?texto=${encodeURIComponent(t)}&municipio=${encodeURIComponent(municipio || "Orito")}${cerca}${alcancePais ? "&alcance=pais" : ""}`)
       .then(r => r.json())
       .then(d => {
         if (d && d.lat != null) {
@@ -3681,6 +3681,30 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const destMuni = (municipios || []).find(m => m.nombre === destino);
   const destCentro = destMuni && destMuni.centro_lat != null ? { lat: destMuni.centro_lat, lon: destMuni.centro_lon } : null;
 
+  // nombre legible + ciudad de un punto del mapa
+  const nombrarExp = (c, cual) => {
+    fetch(`${API}/ubicacion/direccion?lat=${c.lat}&lon=${c.lon}`).then(r => r.json()).then(d => {
+      if (!d) return;
+      if (cual === "origen") { if (d.nombre) setOrigenTxt(d.nombre); }
+      else { setDestinoDet(d.nombre || ""); setDestino(d.ciudad || d.nombre || ""); }
+    }).catch(() => {});
+  };
+  // la recogida arranca sola donde esta la persona (GPS)
+  useEffect(() => {
+    if (pin) return;
+    if (gpsRapido && gpsRapido.lat) { setPin(gpsRapido); nombrarExp(gpsRapido, "origen"); return; }
+    (async () => {
+      try {
+        if (Platform.OS === "web") return;
+        const pm = await Location.requestForegroundPermissionsAsync();
+        if (pm.status !== "granted") return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const c = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        setPin(c); nombrarExp(c, "origen");
+      } catch (e) {}
+    })();
+  }, [gpsRapido]);
+
   const cargarMios = () => {
     fetch(`${API}/expresos/cliente/${usuario.id}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setMios(d); }).catch(() => {});
@@ -3697,8 +3721,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   const publicar = () => {
     const c = parseInt(cupos, 10) || 0;
     const p = parseInt((precio || "").replace(/\D/g, ""), 10) || 0;
-    if (!destino.trim()) return avisar("Falta", "Escribe a dónde vas.");
-    if (!pin) return avisar("Falta", "Marca el punto de recogida en el mapa.");
+    if (!pin) return avisar("Falta la recogida", "Toca Recogida y marca dónde te recogen.");
+    if (!pinDest || !destino.trim()) return avisar("Falta el destino", "Toca Destino y busca a dónde vas (ciudad, dirección o sitio).");
     if (c <= 0) return avisar("Falta", "¿Cuántos cupos?");
     if (p <= 0) return avisar("Falta", "¿Cuánto pagas por cupo?");
     if (programar && (!dia || hSel == null || mSel == null)) return avisar("Falta la fecha", "Elige el día, la hora y los minutos de salida, o cambia a 'Lo antes posible'.");
@@ -3729,7 +3753,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   };
 
   const cancelar = (e) => {
-    confirmar("Cancelar viaje", "¿Seguro que quieres cancelar este viaje?",
+    confirmar("Cancelar viaje", e.conductor_id ? "Le avisaremos al conductor que cancelaste. ¿Seguro?" : "¿Seguro que quieres cancelar este viaje?",
       () => userFetch(`${API}/expresos/${e.id}/estado?estado=cancelado`, { method: "PUT" }).then(cargarMios).catch(() => {}), "Sí");
   };
   // marcar que el viaje YA se hizo (p. ej. se coordinó por fuera): queda finalizado
@@ -3754,40 +3778,31 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
   return (
     <>
       <View style={styles.card}>
-        <Text style={styles.etiqueta}>🚌 VIAJE A OTRA CIUDAD (EXPRESO)</Text>
-        <Text style={styles.ayuda}>Sales de {miMuni}. Di a dónde vas, dónde te recogen, cupos y cuánto pagas por cupo; un conductor lo toma o te propone precio.</Text>
-        <Text style={[styles.etiqueta, { marginTop: 10 }]}>¿A DÓNDE VAS? (cualquier ciudad o lugar)</Text>
-        <TextInput value={destino} onChangeText={setDestino} placeholder="Ej: Mocoa, Pitalito, Cali, La Hormiga, Neiva..." style={styles.input} />
-        {otras.length > 0 && (
-          <>
-            <Text style={{ fontSize: 11, color: "#999", marginBottom: 5 }}>O toca una ciudad frecuente:</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-              {otras.map(m => (
-                <TouchableOpacity key={m.nombre} style={[styles.chip, destino === m.nombre && styles.chipOn]} onPress={() => setDestino(m.nombre)}>
-                  <Text style={[styles.chipTxt, destino === m.nombre && styles.chipTxtOn]}>{m.nombre}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </>
-        )}
-        <TextInput value={destinoDet} onChangeText={setDestinoDet} placeholder="¿Dónde exactamente te dejan? (dirección/referencia)" style={[styles.input, { marginTop: 10 }]} />
-        <TouchableOpacity style={[styles.botonMapa, { marginTop: 4 }, pinDest && styles.botonMapaOk]} onPress={() => setMapaDestOpen(true)}>
-          <Text style={{ color: "#187830", fontWeight: "700" }}>{pinDest ? "✓ Destino marcado — cambiar" : "🗺️ Marcar el destino EXACTO en el mapa (puerta a puerta)"}</Text>
-        </TouchableOpacity>
-        <Text style={styles.ayuda}>Puerta a puerta: usa el buscador del mapa para ubicar la dirección en {destino || "la otra ciudad"} y marca el punto.</Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.etiqueta}>📍 ¿DÓNDE TE RECOGEN? (en {miMuni})</Text>
-        <TouchableOpacity style={[styles.botonMapa, pin && styles.botonMapaOk]} onPress={() => setMapaOpen(true)}>
-          <Text style={{ color: "#187830", fontWeight: "700" }}>{pin ? "✓ Punto de recogida marcado — cambiar" : "🗺️ Marcar el punto de recogida en el mapa"}</Text>
-        </TouchableOpacity>
-        {pin ? (
-          <Text style={{ fontSize: 12, color: "#187830", fontWeight: "600", marginTop: 2, marginBottom: 4 }}>✓ Punto marcado en el mapa</Text>
-        ) : (
-          <Text style={styles.ayuda}>Toca para abrir el mapa y marcar dónde te recogen.</Text>
-        )}
-        <TextInput value={origenTxt} onChangeText={setOrigenTxt} placeholder="Referencia (opcional): terminal, barrio, casa..." style={styles.input} />
+        <Text style={styles.etiqueta}>TU VIAJE A OTRA CIUDAD</Text>
+        <Text style={[styles.ayuda, { marginTop: -4, marginBottom: 10 }]}>Puerta a puerta. Pones cupos y precio por cupo; un conductor lo toma o te propone precio.</Text>
+        <View style={{ flexDirection: "row", backgroundColor: "#F7F8F5", borderRadius: 14, borderWidth: 1, borderColor: "#E9EBE5", paddingLeft: 14, paddingRight: 12 }}>
+          <View style={{ width: 16, alignItems: "center", paddingVertical: 20 }}>
+            <View style={{ width: 13, height: 13, borderRadius: 7, backgroundColor: "#187830", borderWidth: 3, borderColor: "#C7E6CF" }} />
+            <View style={{ width: 2, flex: 1, backgroundColor: "#DADDD5", marginVertical: 4 }} />
+            <View style={{ width: 13, height: 13, borderRadius: 3, backgroundColor: "#F06000", borderWidth: 3, borderColor: "#FAD6B8" }} />
+          </View>
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <TouchableOpacity onPress={() => setMapaOpen(true)} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#E9EBE5" }}>
+              <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>RECOGIDA</Text>
+              <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: pin ? "#1C2B22" : "#B9B3A6" }}>
+                {pin ? (limpiaDir(origenTxt) || "Tu ubicación actual") : "Marca dónde te recogen"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setMapaDestOpen(true)} activeOpacity={0.6} style={{ paddingVertical: 15 }}>
+              <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>DESTINO</Text>
+              <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: pinDest ? "#1C2B22" : "#B9B3A6" }}>
+                {pinDest ? (limpiaDir(destinoDet) || destino || "Destino marcado") : "¿A qué ciudad vas?"}
+              </Text>
+              {pinDest && destino ? <Text style={{ fontSize: 12.5, color: "#F06000", fontWeight: "700", marginTop: 2 }}>🏙️ {nombreCiudad(destino)}</Text> : null}
+            </TouchableOpacity>
+          </View>
+        </View>
+        <TextInput value={notas} onChangeText={setNotas} placeholder="Indicaciones para el conductor (opcional)" style={[styles.input, { marginTop: 12, marginBottom: 0 }]} />
       </View>
 
       <View style={styles.card}>
@@ -3837,7 +3852,6 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
             />
           </>
         )}
-        <TextInput value={notas} onChangeText={setNotas} placeholder="Algo más (equipaje, # de contacto...)" style={[styles.input, { marginTop: 10 }]} />
       </View>
 
       <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 4 }]} onPress={publicar} disabled={cargando}>
@@ -3863,8 +3877,41 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
                 {(e.estado === "aceptado" || e.estado === "en_camino") && (
                   <View style={{ backgroundColor: e.estado === "en_camino" ? "#E7F0FF" : "#EAF6EC", borderRadius: 8, padding: 8, marginTop: 6 }}>
                     {e.estado === "en_camino" && <Text style={{ fontSize: 12.5, color: "#1A73E8", fontWeight: "800", marginBottom: 2 }}>🚗 En camino a {e.destino_municipio}</Text>}
-                    <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700" }}>✅ {e.conductor_nombre} · ${(e.tarifa_cupo || 0).toLocaleString()}/cupo</Text>
-                    {e.conductor_telefono ? <Text style={{ fontSize: 12, color: "#187830", marginTop: 2 }}>📞 {e.conductor_telefono}{e.conductor_placa ? ` · ${e.conductor_placa}` : ""}</Text> : null}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                      {e.conductor_foto
+                        ? <Image source={{ uri: e.conductor_foto }} style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: "#ddd" }} />
+                        : <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: "#CFE8D5", alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 20 }}>👤</Text></View>}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, color: "#1C2B22", fontWeight: "800" }} numberOfLines={1}>
+                          {e.conductor_nombre}{e.conductor_calificacion ? `  ★ ${Number(e.conductor_calificacion).toFixed(1)}` : ""}
+                        </Text>
+                        <Text style={{ fontSize: 12.5, color: "#444", marginTop: 1 }} numberOfLines={1}>
+                          {[e.conductor_vehiculo, e.conductor_veh_color].filter(Boolean).join(" · ") || "Vehículo"}{e.conductor_placa ? `  ·  ${e.conductor_placa}` : ""}
+                        </Text>
+                        <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", marginTop: 1 }}>${(e.tarifa_cupo || 0).toLocaleString()}/cupo · total ${((e.tarifa_cupo || 0) * e.cupos).toLocaleString()}</Text>
+                      </View>
+                    </View>
+                    {e.conductor_telefono ? (
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 9 }]} onPress={() => llamar(e.conductor_telefono)}>
+                          <Text style={[styles.buttonText, { fontSize: 13 }]}>📞 Llamar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#25D366", padding: 9 }]} onPress={() => whatsapp(e.conductor_telefono)}>
+                          <Text style={[styles.buttonText, { fontSize: 13 }]}>💬 WhatsApp</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
+                {e.estado === "aceptado" && (
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#CFE0D3", paddingVertical: 9 }]}
+                      onPress={() => confirmar("Cambiar fecha", "Al cambiar la fecha el viaje se publica de nuevo y el conductor actual queda libre (le avisamos). ¿Continuar?", () => reprogramar(e), "Sí, cambiar")}>
+                      <Text style={{ color: "#187830", fontWeight: "700", fontSize: 13 }}>📅 Cambiar fecha</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#E6BDBD", paddingVertical: 9 }]} onPress={() => cancelar(e)}>
+                      <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>✕ Cancelar</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
                 {/* tracking en vivo: el carro moviendose, una vez inició el recorrido */}
@@ -3933,13 +3980,13 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
       <MapaSelector visible={mapaOpen} titulo="Marca dónde te recogen"
         centro={pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
         municipio={miMuni}
-        onConfirmar={(c) => { setPin({ lat: c.lat, lon: c.lon }); setMapaOpen(false); }}
+        onConfirmar={(c) => { setPin({ lat: c.lat, lon: c.lon }); setMapaOpen(false); nombrarExp(c, "origen"); }}
         onCerrar={() => setMapaOpen(false)} />
 
-      <MapaSelector visible={mapaDestOpen} titulo={`Marca el destino${destino ? ` en ${destino}` : ""}`}
+      <MapaSelector visible={mapaDestOpen} titulo="¿A dónde vas?" alcancePais
         centro={pinDest || destCentro || pin || gpsRapido || (muniActual && muniActual.centro_lat ? { lat: muniActual.centro_lat, lon: muniActual.centro_lon } : null)}
-        municipio={destino || "Colombia"}
-        onConfirmar={(c) => { setPinDest({ lat: c.lat, lon: c.lon }); setMapaDestOpen(false); }}
+        municipio={null}
+        onConfirmar={(c) => { setPinDest({ lat: c.lat, lon: c.lon }); setMapaDestOpen(false); nombrarExp(c, "destino"); }}
         onCerrar={() => setMapaDestOpen(false)} />
     </>
   );
@@ -5875,9 +5922,20 @@ function ConductorScreen({ navigation, route }) {
   const [detalle, setDetalle] = useState(null);
   const [rutaDet, setRutaDet] = useState(null);   // {km,min} hasta la recogida
 
+  const expVistos = useRef(null);   // ids de viajes a otra ciudad ya vistos (para avisar los nuevos)
+  const [expNuevo, setExpNuevo] = useState(false);
   const cargarExpresos = () => {
     fetch(`${API}/expresos/disponibles?conductor_id=${usuario.id}`).then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setExpresosDisp(d); }).catch(() => {});
+      .then(d => {
+        if (!Array.isArray(d)) return;
+        const ids = d.map(x => x.id);
+        if (expVistos.current && ids.some(id => !expVistos.current.includes(id))) {
+          setExpNuevo(true);
+          try { Vibration.vibrate([0, 400, 200, 400]); } catch (e) {}
+        }
+        expVistos.current = ids;
+        setExpresosDisp(d);
+      }).catch(() => {});
     fetch(`${API}/expresos/conductor/${usuario.id}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setMisExpresos(d); }).catch(() => {});
   };
@@ -6365,6 +6423,19 @@ function ConductorScreen({ navigation, route }) {
         {/* ===== PESTAÑA SOLICITUDES: feed en vivo ===== */}
         {tab === "solicitudes" && (
           <>
+            {expresosDisp.length > 0 && (
+              <TouchableOpacity activeOpacity={0.8} onPress={() => { animar(); setTab("otraciudad"); setExpNuevo(false); }}
+                style={{ backgroundColor: expNuevo ? "#FFF1E6" : "#F7F8F5", borderWidth: 1, borderColor: expNuevo ? "#F5B98A" : "#E1E4DC", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={{ fontSize: 20 }}>🚌</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: "#1C2B22", fontSize: 13.5 }}>
+                    {expresosDisp.length === 1 ? "1 viaje a otra ciudad disponible" : `${expresosDisp.length} viajes a otra ciudad disponibles`}
+                  </Text>
+                  <Text style={{ color: "#7A7A7A", fontSize: 12 }}>Toca para verlos y tomarlos</Text>
+                </View>
+                <Text style={{ color: "#F06000", fontWeight: "800" }}>Ver ›</Text>
+              </TouchableOpacity>
+            )}
             {TukanOverlay && !sobreOk && (
               <TouchableOpacity
                 style={{ backgroundColor: "#EAF1FB", borderWidth: 1, borderColor: "#A9C4EA", borderRadius: 10, paddingVertical: 7, paddingHorizontal: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}
@@ -6675,12 +6746,22 @@ function ConductorScreen({ navigation, route }) {
                         onPress={() => confirmar("Iniciar recorrido", `¿Ya recogiste al pasajero y arrancas hacia ${e.destino_municipio}? Se abrirá la navegación.`, () => iniciarRecorridoExpreso(e), "Sí, arrancar")}>
                         <Text style={styles.buttonText}>🚗 Ya recogí — Iniciar recorrido</Text>
                       </TouchableOpacity>
-                    ) : (
+                    ) : null}
+                    {e.estado === "aceptado" && (
+                      <TouchableOpacity style={{ alignItems: "center", paddingVertical: 10, marginTop: 4 }}
+                        onPress={() => confirmar("No puedo hacer el viaje", "El viaje se libera y se le ofrece a otros conductores. Le avisamos al pasajero. ¿Seguro?",
+                          () => userFetch(`${API}/expresos/${e.id}/estado?estado=cancelado`, { method: "PUT" })
+                            .then(async (r) => { if (!r.ok) { const d = await r.json().catch(() => null); avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); } cargarExpresos(); })
+                            .catch(() => avisar("Error", "No hay conexión.")), "Sí, liberar")}>
+                        <Text style={{ color: "#C0392B", fontWeight: "700", fontSize: 13 }}>🚫 No puedo hacer el viaje</Text>
+                      </TouchableOpacity>
+                    )}
+                    {e.estado === "en_camino" ? (
                       <TouchableOpacity style={[styles.button, { backgroundColor: "#C0392B", marginTop: 8, padding: 11 }]}
                         onPress={() => confirmar("Finalizar viaje", `¿Ya llegaste a ${e.destino_municipio}?`, () => userFetch(`${API}/expresos/${e.id}/estado?estado=finalizado`, { method: "PUT" }).then(cargarExpresos).catch(() => {}), "Sí, finalizar")}>
                         <Text style={styles.buttonText}>🏁 Finalizar viaje</Text>
                       </TouchableOpacity>
-                    )}
+                    ) : null}
                   </View>
                 ))}
               </>
@@ -6769,8 +6850,15 @@ function ConductorScreen({ navigation, route }) {
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {[["solicitudes", "📋", "Solicitudes"], ["otraciudad", "🚌", "Otra ciudad"], ["desempeno", "📊", "Desempeño"], ["cartera", "💳", "Cartera"], ["salir", "🚪", "Salir"]].map(([k, ic, lbl]) => (
           <TouchableOpacity key={k} style={styles.tabBarItem}
-            onPress={() => k === "salir" ? (detenerRastreoFondo(), navigation.replace("Login")) : (animar(), setTab(k))}>
-            <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
+            onPress={() => k === "salir" ? (detenerRastreoFondo(), navigation.replace("Login")) : (animar(), setTab(k), k === "otraciudad" && setExpNuevo(false))}>
+            <View>
+              <Text style={{ fontSize: 20, opacity: tab === k ? 1 : 0.5 }}>{ic}</Text>
+              {k === "otraciudad" && expresosDisp.length > 0 && (
+                <View style={{ position: "absolute", top: -4, right: -12, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: "#F06000", alignItems: "center", justifyContent: "center", paddingHorizontal: 4, borderWidth: 2, borderColor: "#fff" }}>
+                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{expresosDisp.length}</Text>
+                </View>
+              )}
+            </View>
             <Text style={{ fontSize: 10, marginTop: 2, color: tab === k ? "#187830" : "#999", fontWeight: tab === k ? "700" : "400" }} numberOfLines={1}>{lbl}</Text>
           </TouchableOpacity>
         ))}

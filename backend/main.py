@@ -1021,8 +1021,15 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
         km = tarifas.distancia_km(lat, lon, l.lat, l.lon)
         if km is not None and (mejor_km is None or km < mejor_km):
             mejor, mejor_km = l, km
+    # ciudad del punto: la de Tukan si esta a <=40 km de su centro (nombre consistente)
+    ciudad_tukan = None
+    for m in db.query(Municipio).filter(Municipio.centro_lat.isnot(None)).all():
+        d_km = tarifas.distancia_km(lat, lon, m.centro_lat, m.centro_lon)
+        if d_km is not None and d_km <= 40 and (ciudad_tukan is None or d_km < ciudad_tukan[1]):
+            ciudad_tukan = (m.nombre, d_km)
+    ciudad_tukan = ciudad_tukan[0] if ciudad_tukan else None
     if mejor and mejor_km is not None and mejor_km <= 0.12:
-        return {"nombre": mejor.nombre, "fuente": "lugar"}
+        return {"nombre": mejor.nombre, "fuente": "lugar", "ciudad": ciudad_tukan or mejor.municipio}
     try:
         import urllib.request as _ur, json as _json
         url = (f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}"
@@ -1050,8 +1057,11 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
         if barrio and barrio not in partes:
             partes.append(barrio)
         etiqueta = ", ".join(partes[:2]).strip()
+        ciudad = ciudad_tukan or a.get("city") or a.get("town") or a.get("municipality") or a.get("village") or a.get("county")
         if etiqueta:
-            return {"nombre": etiqueta, "fuente": "direccion"}
+            return {"nombre": etiqueta, "fuente": "direccion", "ciudad": ciudad, "departamento": a.get("state")}
+        if ciudad:
+            return {"nombre": ciudad, "fuente": "ciudad", "ciudad": ciudad, "departamento": a.get("state")}
     except Exception:
         pass
     # ultimo recurso: referenciarlo contra el sitio conocido mas cercano. En zona
@@ -1061,8 +1071,8 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
         cerca = f"Cerca de {mejor.nombre}"
         if mejor_km >= 0.3:
             cerca += f" (~{int(round(mejor_km * 1000, -1))} m)"
-        return {"nombre": cerca, "fuente": "cercano"}
-    return {"nombre": None, "fuente": None}
+        return {"nombre": cerca, "fuente": "cercano", "ciudad": ciudad_tukan}
+    return {"nombre": None, "fuente": None, "ciudad": ciudad_tukan}
 
 @app.get("/municipios")
 def obtener_municipios(todos: bool = False, db: Session = Depends(get_db)):
@@ -2813,7 +2823,7 @@ RADIO_BUSQUEDA_KM = 40   # area metropolitana (Cali-Jamundi-Yumbo-Palmira/aeropu
 
 @app.get("/ubicacion/autocompletar")
 def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: float = None,
-                            municipio: str = None, db: Session = Depends(get_db)):
+                            municipio: str = None, alcance: str = None, db: Session = Depends(get_db)):
     """Autocompletar acotado a la ZONA: Search Box (sitios con nombre, vias) +
     Geocoding v6 (nomenclatura) + OpenStreetMap con la ciudad (terminal, parques).
     Devuelve [{nombre, titulo, detalle, lat, lon}]. Falla en silencio."""
@@ -2822,9 +2832,18 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
         return []
     t = _normalizar_busqueda(original)
     es_cruce = t != original and "#" in t
+    pais = alcance == "pais"   # viaje a otra ciudad: se busca en todo el pais
+    radio_max = 1500 if pais else RADIO_BUSQUEDA_KM
+    if pais:
+        # si nombra una ciudad de Tukan ("hospital pasto"), se busca alrededor de ESA ciudad
+        tq = _sin_tildes(original)
+        for m in db.query(Municipio).filter(Municipio.centro_lat.isnot(None)).all():
+            if _sin_tildes(m.nombre) in tq:
+                cerca_lat, cerca_lon = m.centro_lat, m.centro_lon
+                break
     # red de seguridad: si el punto que manda la app esta lejos de la ciudad del
     # usuario (mapa abierto con el centro por defecto), se busca alrededor de la ciudad
-    if municipio:
+    if municipio and not pais:
         mu = db.query(Municipio).filter(Municipio.nombre == municipio).first()
         if mu and mu.centro_lat is not None:
             lejos = cerca_lat is None or cerca_lon is None or                 (tarifas.distancia_km(cerca_lat, cerca_lon, mu.centro_lat, mu.centro_lon) or 0) > 60
@@ -2841,7 +2860,7 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
             # solo la zona metropolitana: nada de otra ciudad/departamento
             if cerca_lat is not None and cerca_lon is not None:
                 km = tarifas.distancia_km(cerca_lat, cerca_lon, r["lat"], r["lon"])
-                if km is not None and km > RADIO_BUSQUEDA_KM:
+                if km is not None and km > radio_max:
                     continue
             k = (round(r["lat"], 4), round(r["lon"], 4))
             if k in vistos:
@@ -2924,7 +2943,7 @@ def autocompletar_direccion(texto: str, cerca_lat: float = None, cerca_lon: floa
 
 @app.get("/ubicacion/buscar")
 def buscar_coordenadas(texto: str, municipio: str = "Orito",
-                       cerca_lat: float = None, cerca_lon: float = None,
+                       cerca_lat: float = None, cerca_lon: float = None, alcance: str = None,
                        db: Session = Depends(get_db)):
     """Texto -> coordenadas para el buscador. Primero busca ACOTADO a la ciudad
     (con su departamento real y una caja alrededor del centro): asi la nomenclatura
@@ -2938,7 +2957,7 @@ def buscar_coordenadas(texto: str, municipio: str = "Orito",
     #    la lista nunca se contradicen. Si no trae nada, siguen los respaldos de OSM.
     if cerca_lat is not None and cerca_lon is not None:
         try:
-            cand = autocompletar_direccion(texto, cerca_lat, cerca_lon, municipio, db)
+            cand = autocompletar_direccion(texto, cerca_lat, cerca_lon, None if alcance == "pais" else municipio, alcance, db)
         except Exception:
             cand = []
         if cand:
@@ -3706,6 +3725,8 @@ def expreso_dict(e: Expreso, conductor: Usuario = None):
         "conductor_placa": conductor.placa if conductor else None,
         "conductor_vehiculo": conductor.vehiculo if conductor else None,
         "conductor_calificacion": conductor.calificacion if conductor else None,
+        "conductor_foto": conductor.foto_conductor if conductor else None,
+        "conductor_veh_color": conductor.veh_color if conductor else None,
         "conductor_lat": conductor.ubic_lat if conductor else None,
         "conductor_lon": conductor.ubic_lon if conductor else None,
         "conductor_ubic_fecha": conductor.ubic_fecha if conductor else None,
@@ -3731,9 +3752,22 @@ def _conductores_expreso(e: Expreso, db: Session):
             Usuario.disponible == "si",
             Usuario.push_token.isnot(None),
             Usuario.activo != "no",
+            Usuario.verificado == "si",
         ).all()
         if suscripcion_al_dia(c, db)
     ]
+
+@nunca_falla
+def avisar_expreso_a(usuario_id: int, titulo: str, cuerpo: str, expreso_id: int, tipo: str = "expreso_estado"):
+    """Aviso puntual a una persona sobre un viaje a otra ciudad."""
+    db = SessionLocal()
+    try:
+        u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+        token = u.push_token if u else None
+    finally:
+        db.close()
+    if token:
+        limpiar_tokens_muertos(push.enviar([push.mensaje(token, titulo, cuerpo, {"tipo": tipo, "expreso_id": expreso_id})]))
 
 @nunca_falla
 def avisar_expreso_nuevo(expreso_id: int):
@@ -4005,6 +4039,20 @@ def actualizar_estado_expreso(expreso_id: int, estado: str, tareas: BackgroundTa
     # lo maneja el cliente dueño o el conductor asignado
     if actual.id not in (e.cliente_id, e.conductor_id) and actual.rol != "admin":
         raise HTTPException(status_code=403, detail="No es tu viaje")
+    if estado == "cancelado" and e.conductor_id and actual.id == e.conductor_id:
+        if e.estado == "en_camino":
+            raise HTTPException(status_code=400, detail="El viaje ya va en camino; coordínalo con el pasajero o soporte.")
+        # el CONDUCTOR no puede hacerlo: se libera y vuelve a publicarse (el pasajero no lo pierde)
+        cliente_id = e.cliente_id
+        e.conductor_id = None
+        e.tarifa_cupo = None
+        e.estado = "buscando"
+        db.commit()
+        tareas.add_task(avisar_expreso_a, cliente_id, "🚌 Tu conductor no podrá hacer el viaje",
+                        f"Volvimos a publicar tu viaje a {e.destino_municipio} para que lo tome otro conductor.", e.id)
+        tareas.add_task(avisar_expreso_nuevo, e.id)
+        return expreso_dict(e)
+    conductor_antes = e.conductor_id
     e.estado = estado
     if estado == "cancelado":
         db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
@@ -4012,10 +4060,13 @@ def actualizar_estado_expreso(expreso_id: int, estado: str, tareas: BackgroundTa
     db.commit()
     if estado in ("en_camino", "finalizado"):
         tareas.add_task(avisar_expreso_estado, expreso_id, estado)
+    if estado == "cancelado" and conductor_antes and actual.id == e.cliente_id:
+        tareas.add_task(avisar_expreso_a, conductor_antes, "❌ El pasajero canceló el viaje",
+                        f"Viaje a {e.destino_municipio} cancelado.", e.id)
     return expreso_dict(e)
 
 @app.put("/expresos/{expreso_id}/reprogramar")
-def reprogramar_expreso(expreso_id: int, salida: str = None, db: Session = Depends(get_db),
+def reprogramar_expreso(expreso_id: int, tareas: BackgroundTasks, salida: str = None, db: Session = Depends(get_db),
                         actual: Usuario = Depends(usuario_actual)):
     """El cliente dueno cambia la FECHA de salida de su viaje (reprogramar). Lo deja
     de nuevo 'buscando' con la nueva fecha para que los conductores lo vean. Util para
@@ -4033,9 +4084,14 @@ def reprogramar_expreso(expreso_id: int, salida: str = None, db: Session = Depen
             nueva = datetime.fromisoformat(salida)
         except ValueError:
             nueva = None
+    conductor_antes = e.conductor_id
     e.salida = nueva
     e.estado = "buscando"      # vuelve a quedar disponible con la nueva fecha
     e.conductor_id = None      # reprograma de cero: si alguien lo habia tomado, se libera
+    if conductor_antes:
+        tareas.add_task(avisar_expreso_a, conductor_antes, "📅 El pasajero cambió la fecha del viaje",
+                        f"El viaje a {e.destino_municipio} volvió a publicarse con la nueva fecha.", e.id)
+    tareas.add_task(avisar_expreso_nuevo, e.id)
     db.query(OfertaExpreso).filter(OfertaExpreso.expreso_id == expreso_id, OfertaExpreso.estado == "pendiente").update(
         {"estado": "descartada"}, synchronize_session=False)
     db.commit()
