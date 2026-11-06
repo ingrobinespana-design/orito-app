@@ -7876,7 +7876,7 @@ function precioDe(t, km, rec) {
 }
 // aviso a todos (notificacion): mensajes listos + uno propio, a quien y cuantos lo reciben
 // diagnostico rapido: que le falta a cada usuario + aviso a cada uno con lo suyo
-// bono de agradecimiento: $5.000 en su proxima carrera (Cali) o $2.000 por Nequi (resto)
+// bono de agradecimiento: $2.000 en su proxima carrera (Cali) o $2.000 por Nequi (resto)
 function TarjetaBono({ usuario, onIrCarrera }) {
   const [b, setB] = useState(null);
   const [abierto, setAbierto] = useState(false);
@@ -7906,7 +7906,7 @@ function TarjetaBono({ usuario, onIrCarrera }) {
     </TouchableOpacity>
   );
   if (b.tipo === "carrera5000")
-    return caja("#EAF6EC", "#BFE3C7", "🎁", "Tienes $5.000 de regalo", "Gracias por estar en Tukán: se descuentan solos en tu próxima carrera en Cali.", onIrCarrera);
+    return caja("#EAF6EC", "#BFE3C7", "🎁", `Tienes $${(b.valor || 2000).toLocaleString()} de regalo`, "Gracias por estar en Tukán: se descuentan solos en tu próxima carrera en Cali.", onIrCarrera);
   if (b.estado === "reclamado")
     return caja("#FFF8E6", "#F2DCA5", "⏳", "Tu bono de $2.000 va en camino", `Lo enviaremos a tu Nequi terminado en ${String(b.nequi || "").slice(-4)}. Te avisamos al enviarlo.`, null);
   return (
@@ -7941,7 +7941,7 @@ function AdminBonos() {
   if (!d) return <ActivityIndicator color="#187830" />;
   const nuevos = d.sin_bono.cali_pasajeros + d.sin_bono.resto;
   const activar = () => confirmar("Dar bonos",
-    `Pasajeros de Cali (${d.sin_bono.cali_pasajeros}): $5.000 en su próxima carrera.\nLos demás (${d.sin_bono.resto}): $2.000 por Nequi, si lo reclaman.\n\nA todos les llega el aviso.`,
+    `Pasajeros de Cali (${d.sin_bono.cali_pasajeros}): $2.000 en su próxima carrera.\nLos demás (${d.sin_bono.resto}): $2.000 por Nequi, si lo reclaman.\n\nA todos les llega el aviso.`,
     () => adminFetch(`${API}/admin/bonos/activar`, { method: "POST" }).then(r => r.json())
       .then(x => { avisar("✅ Bonos activados", `${x.carrera} de carrera y ${x.nequi} por Nequi. Avisados: ${x.avisados}.`); cargar(); })
       .catch(() => avisar("Error", "No hay conexión.")), "Sí, dar bonos");
@@ -7959,7 +7959,7 @@ function AdminBonos() {
     <View style={{ gap: 12 }}>
       <View style={styles.card}>
         <Text style={styles.seccionTitulo}>🎁 Bonos de agradecimiento</Text>
-        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $5.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%). Tú le repones los $5.000 al conductor. Los demás: $2.000 por Nequi cuando lo reclamen.</Text>
+        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Cali (pasajeros): $2.000 menos en su próxima carrera, sobre la tarifa completa (sin el 20%). Tú le repones los $2.000 al conductor. Los demás: $2.000 por Nequi cuando lo reclamen.</Text>
         <View style={{ flexDirection: "row", marginBottom: 12 }}>
           {num(d.carrera.disponibles, "Bonos de carrera sin usar")}
           {num(d.carrera.usados, "Usados")}

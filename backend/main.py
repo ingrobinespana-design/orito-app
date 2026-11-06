@@ -1414,7 +1414,7 @@ def tarifa_sugerida(municipio: str, vehiculo: str, km, db: Session):
     return None
 
 # ---------- BONOS DE AGRADECIMIENTO ----------
-BONO_CARRERA = 5000     # Cali: $5.000 menos en su proxima carrera (Tukan se lo repone al conductor)
+BONO_CARRERA = 2000     # Cali: $2.000 menos en su proxima carrera (Tukan se lo repone al conductor)
 BONO_NEQUI = 2000       # resto: $2.000 por Nequi
 BONO_CIUDAD = "Cali"
 
@@ -1494,7 +1494,7 @@ def activar_bonos(tareas: BackgroundTasks, db: Session = Depends(get_db), admin:
             continue
         if u.rol == "cliente" and u.municipio == BONO_CIUDAD:
             u.bono_tipo, n_car = "carrera5000", n_car + 1
-            t, m = "🎁 ¡Gracias por estar en Tukán!", "Te regalamos $5.000 en tu próxima carrera en Cali. Ya quedan descontados al pedir."
+            t, m = "🎁 ¡Gracias por estar en Tukán!", "Te regalamos $2.000 en tu próxima carrera en Cali. Ya quedan descontados al pedir."
         else:
             u.bono_tipo, n_neq = "nequi2000", n_neq + 1
             t, m = "🎁 ¡Gracias por usar Tukán!", "Tienes $2.000 de regalo. Abre la app y reclámalos con tu Nequi."
