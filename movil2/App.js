@@ -3737,21 +3737,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido }) {
     if (b) nombrarExp(b, "origen"); else setOrigenTxt("");
     if (a) nombrarExp(a, "destino"); else { setDestino(""); setDestinoDet(""); }
   };
-  // la recogida arranca sola donde esta la persona (GPS)
-  useEffect(() => {
-    if (pin) return;
-    if (gpsRapido && gpsRapido.lat) { setPin(gpsRapido); nombrarExp(gpsRapido, "origen"); return; }
-    (async () => {
-      try {
-        if (Platform.OS === "web") return;
-        const pm = await Location.requestForegroundPermissionsAsync();
-        if (pm.status !== "granted") return;
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const c = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-        setPin(c); nombrarExp(c, "origen");
-      } catch (e) {}
-    })();
-  }, [gpsRapido]);
+  // la recogida NO se marca sola: el pasajero la marca (igual que el destino)
 
   const cargarMios = () => {
     fetch(`${API}/expresos/cliente/${usuario.id}`).then(r => r.json())
@@ -4377,7 +4363,7 @@ function PedirCarreraScreen({ navigation, route }) {
     } finally { setBuscandoGps(false); }
   };
   // la recogida arranca sola en donde estas (como Uber); tocandola se cambia en el mapa
-  useEffect(() => { if (Platform.OS !== "web" && !origenCoords) usarUbicacionActual(true); }, []);
+  // (la recogida NO se marca sola: el pasajero la marca, igual que el destino)
 
   const cargarActiva = () => {
     fetch(`${API}/carreras/cliente/${usuario.id}`)
