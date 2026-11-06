@@ -3745,6 +3745,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
   const [destino, setDestino] = useState("");
   const [pin, setPin] = useState(null);
   const [origenTxt, setOrigenTxt] = useState("");
+  const [origenCiudad, setOrigenCiudad] = useState("");   // ciudad de la recogida (de ahi sale el viaje)
   const [destinoDet, setDestinoDet] = useState("");
   const [cupos, setCupos] = useState("1");
   const [precio, setPrecio] = useState("");
@@ -3773,7 +3774,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
   const nombrarExp = (c, cual) => {
     fetch(`${API}/ubicacion/direccion?lat=${c.lat}&lon=${c.lon}`).then(r => r.json()).then(d => {
       if (!d) return;
-      if (cual === "origen") { if (d.nombre) setOrigenTxt(d.nombre); }
+      if (cual === "origen") { if (d.nombre) setOrigenTxt(d.nombre); setOrigenCiudad(d.ciudad || ""); }
       else { setDestinoDet(d.nombre || ""); setDestino(d.ciudad || d.nombre || ""); }
     }).catch(() => {});
   };
@@ -3781,7 +3782,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
   const intercambiarExp = () => {
     const a = pin, b = pinDest;
     setPin(b); setPinDest(a);
-    if (b) nombrarExp(b, "origen"); else setOrigenTxt("");
+    if (b) nombrarExp(b, "origen"); else { setOrigenTxt(""); setOrigenCiudad(""); }
     if (a) nombrarExp(a, "destino"); else { setDestino(""); setDestinoDet(""); }
   };
   // la recogida NO se marca sola: el pasajero la marca (igual que el destino)
@@ -3826,6 +3827,9 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
     const p = parseInt((precio || "").replace(/\D/g, ""), 10) || 0;
     if (!pin) return avisar("Falta la recogida", "Toca Recogida y marca dónde te recogen.");
     if (!pinDest || !destino.trim()) return avisar("Falta el destino", "Toca Destino y busca a dónde vas (ciudad, dirección o sitio).");
+    const sinT = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    if (origenCiudad && sinT(origenCiudad) === sinT(destino))
+      return avisar("Misma ciudad", `La recogida y el destino están en ${origenCiudad}. Para un viaje dentro de la ciudad usa "En la ciudad".`);
     if (c <= 0) return avisar("Falta", "¿Cuántos cupos?");
     if (p <= 0) return avisar("Falta", "¿Cuánto pagas por cupo?");
     if (programar && (!dia || hSel == null || mSel == null)) return avisar("Falta la fecha", "Elige el día, la hora y los minutos de salida, o cambia a 'Lo antes posible'.");
@@ -3833,14 +3837,14 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
     setCargando(true);
     const params = qs({
       cliente_id: usuario.id, destino_municipio: destino, origen: origenTxt || "Punto marcado",
-      cupos: c, precio_por_cupo: p, origen_lat: pin.lat, origen_lon: pin.lon,
+      cupos: c, precio_por_cupo: p, origen_lat: pin.lat, origen_lon: pin.lon, origen_municipio: origenCiudad,
       destino_detalle: destinoDet, notas, ...(salidaISO ? { salida: salidaISO } : {}),
       ...(pinDest ? { destino_lat: pinDest.lat, destino_lon: pinDest.lon } : {}),
     });
     userFetch(`${API}/expresos?${params}`, { method: "POST" }).then(async r => {
       const d = await r.json().catch(() => null);
       if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
-      setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHSel(null); setMSel(null);
+      setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setOrigenCiudad(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHSel(null); setMSel(null);
       avisar("✅ Viaje publicado", "Los conductores de tu ciudad lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
       cargarMios(); setVista("mios"); setFiltro("activos");
     }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
@@ -3930,8 +3934,9 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
             <TouchableOpacity onPress={() => setMapaOpen(true)} activeOpacity={0.6} style={{ paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "#E9EBE5" }}>
               <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>RECOGIDA</Text>
               <Text numberOfLines={1} style={{ fontSize: 15.5, fontWeight: "700", marginTop: 2, color: pin ? "#1C2B22" : "#B9B3A6" }}>
-                {pin ? (limpiaDir(origenTxt) || "Tu ubicación actual") : "Marca dónde te recogen"}
+                {pin ? (limpiaDir(origenTxt) || "Punto marcado") : "Marca dónde te recogen"}
               </Text>
+              {pin && origenCiudad ? <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", marginTop: 2 }}>🏙️ {nombreCiudad(origenCiudad)}</Text> : null}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setMapaDestOpen(true)} activeOpacity={0.6} style={{ paddingVertical: 15 }}>
               <Text style={{ fontSize: 10.5, color: "#9A948A", fontWeight: "800", letterSpacing: 0.8 }}>DESTINO</Text>

@@ -3836,10 +3836,23 @@ def avisar_expreso_asignado(expreso_id: int, a_conductor: bool):
         db.close()
     limpiar_tokens_muertos(push.enviar(mensajes))
 
+def _municipio_tukan(lat, lon, db, radio_km=40):
+    """Ciudad de Tukan (activa) mas cercana a un punto, dentro del radio. None si no hay."""
+    if lat is None or lon is None:
+        return None
+    mejor, mejor_km = None, None
+    for m in db.query(Municipio).filter(Municipio.activo == "si").all():
+        if m.centro_lat is None or m.centro_lon is None:
+            continue
+        km = tarifas.distancia_km(lat, lon, m.centro_lat, m.centro_lon)
+        if km is not None and (mejor_km is None or km < mejor_km):
+            mejor, mejor_km = m, km
+    return mejor.nombre if mejor and mejor_km <= radio_km else None
+
 @app.post("/expresos")
 def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
                   cupos: int, precio_por_cupo: int, tareas: BackgroundTasks,
-                  origen_lat: float = None, origen_lon: float = None,
+                  origen_lat: float = None, origen_lon: float = None, origen_municipio: str = None,
                   destino_detalle: str = None, destino_lat: float = None, destino_lon: float = None,
                   salida: str = None, notas: str = None,
                   db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
@@ -3849,12 +3862,16 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     if (cliente.activo or "si") == "no":
         raise HTTPException(status_code=403, detail="Tu cuenta está bloqueada. Comunícate con soporte.")
-    origen_mun = cliente.municipio or "Orito"
-    destino_municipio = (destino_municipio or "").strip()
+    # la ciudad de SALIDA es la del punto de recogida (no la de la cuenta): asi se puede
+    # programar el regreso (ej. Puerto Asis -> Cali) estando registrado en Cali
+    origen_mun = (_municipio_tukan(origen_lat, origen_lon, db)
+                  or (origen_municipio or "").strip() or cliente.municipio or "Orito")
+    destino_municipio = (_municipio_tukan(destino_lat, destino_lon, db)
+                         or (destino_municipio or "").strip())
     if not destino_municipio:
         raise HTTPException(status_code=400, detail="Elige la ciudad de destino")
-    if destino_municipio == origen_mun:
-        raise HTTPException(status_code=400, detail="El destino debe ser OTRA ciudad")
+    if _sin_tildes(destino_municipio).lower() == _sin_tildes(origen_mun).lower():
+        raise HTTPException(status_code=400, detail=f"La recogida y el destino quedaron en la misma ciudad ({origen_mun}). Para viajes dentro de la ciudad usa 'En la ciudad'.")
     if cupos <= 0 or cupos > 20:
         raise HTTPException(status_code=400, detail="Número de cupos inválido")
     if precio_por_cupo <= 0:
