@@ -880,6 +880,53 @@ def novedades(dias: int = 1, db: Session = Depends(get_db), admin: Usuario = Dep
         "visitas": visitas, "descargas": descargas,
     }
 
+# ---------- AVISO A TODOS (difusion por notificacion) ----------
+def _destinatarios_difusion(a: str, municipio: str, db):
+    q = db.query(Usuario).filter(Usuario.push_token.isnot(None), Usuario.activo != "no",
+                                 ~Usuario.telefono.like("ELIMINADO-%"))
+    if a == "clientes":
+        q = q.filter(Usuario.rol == "cliente")
+    elif a == "conductores":
+        q = q.filter(Usuario.rol == "conductor")
+    else:
+        q = q.filter(Usuario.rol.in_(["cliente", "conductor"]))
+    if municipio:
+        q = q.filter(Usuario.municipio == municipio)
+    return q.all()
+
+@app.get("/admin/difusion")
+def contar_difusion(a: str = "todos", municipio: str = None, db: Session = Depends(get_db),
+                    admin: Usuario = Depends(solo_admin)):
+    """Cuantos recibirian el aviso (con notificaciones activas) y cuantos hay en total."""
+    total = db.query(Usuario).filter(Usuario.rol.in_(["cliente", "conductor"]), Usuario.activo != "no",
+                                     ~Usuario.telefono.like("ELIMINADO-%")).count()
+    ult = leer_config("difusion_ultima", db, "")
+    return {"con_notificaciones": len(_destinatarios_difusion(a, municipio, db)), "registrados": total, "ultima": ult}
+
+@app.post("/admin/difusion")
+def enviar_difusion(titulo: str, mensaje: str, tareas: BackgroundTasks, a: str = "todos", municipio: str = None,
+                    db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
+    """Aviso del admin a todos (o solo pasajeros / solo conductores / una ciudad).
+    Llega como notificacion normal; al tocarla abre Tukan."""
+    titulo, mensaje = (titulo or "").strip()[:65], (mensaje or "").strip()[:240]
+    if not titulo or not mensaje:
+        raise HTTPException(status_code=400, detail="Escribe el título y el mensaje")
+    gente = _destinatarios_difusion(a, municipio, db)
+    tokens = list({u.push_token for u in gente})
+    mensajes = [push.mensaje(t, titulo, mensaje, {"tipo": "difusion"}) for t in tokens]
+    def _enviar():
+        for i in range(0, len(mensajes), 90):          # en tandas, como pide Expo
+            limpiar_tokens_muertos(push.enviar(mensajes[i:i + 90]))
+    tareas.add_task(_enviar)
+    val = f"{ahora_colombia().strftime('%Y-%m-%d %H:%M')} · {len(tokens)} · {titulo}"
+    fila = db.query(Config).filter(Config.clave == "difusion_ultima").first()
+    if fila:
+        fila.valor = val
+    else:
+        db.add(Config(clave="difusion_ultima", valor=val))
+    db.commit()
+    return {"enviados": len(tokens)}
+
 @app.post("/admin/incompletos/avisar")
 def avisar_incompletos(db: Session = Depends(get_db), admin: Usuario = Depends(solo_admin)):
     """Notificacion a quienes tienen el registro incompleto para que lo completen."""

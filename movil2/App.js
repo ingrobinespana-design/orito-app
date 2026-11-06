@@ -7862,6 +7862,75 @@ function precioDe(t, km, rec) {
   const vk = t.valor_km + (rec ? rec.km : 0), mn = (t.minima || 0) + (rec ? rec.minima : 0);
   return Math.max(redondearMil((t.base || 0) + km * vk), mn);
 }
+// aviso a todos (notificacion): mensajes listos + uno propio, a quien y cuantos lo reciben
+function AdminAviso() {
+  const PLANTILLAS = [
+    ["👋 ¡Gracias por estar en Tukán!", "Abre la app y pide una carrera de prueba. Tu opinión nos ayuda a mejorar 🙌"],
+    ["🚗 Tukán te está esperando", "Hoy es buen día para moverte con Tukán. Mira la tarifa antes de pedir y paga directo al conductor."],
+    ["🎁 20% de descuento en tus carreras", "Promo de Navidad en Cali hasta el 31 de diciembre. ¡Ábrela y aprovecha!"],
+    ["🚚 ¿Trasteo o acarreo?", "Pide tu acarreo en Tukán: eliges el vehículo, ves quién lo hace y pagas directo."],
+    ["📲 Hay novedades en Tukán", "Mejoramos el mapa, los avisos y los viajes a otra ciudad. Ábrela y míralo."],
+  ];
+  const [titulo, setTitulo] = useState("");
+  const [mensaje, setMensaje] = useState("");
+  const [a, setA] = useState("todos");
+  const [info, setInfo] = useState(null);
+  const [enviando, setEnviando] = useState(false);
+  const contar = () => adminFetch(`${API}/admin/difusion?a=${a}`).then(r => r.json()).then(setInfo).catch(() => {});
+  useEffect(() => { contar(); }, [a]);
+  const enviar = () => {
+    if (!titulo.trim() || !mensaje.trim()) return avisar("Falta", "Escribe el título y el mensaje (o elige uno listo).");
+    const n = info ? info.con_notificaciones : 0;
+    confirmar("Enviar aviso", `Le llegará a ${n} persona${n === 1 ? "" : "s"}:\n\n${titulo}\n${mensaje}`, () => {
+      setEnviando(true);
+      adminFetch(`${API}/admin/difusion?${qs({ titulo, mensaje, a })}`, { method: "POST" })
+        .then(async r => { const d = await r.json().catch(() => null); if (!r.ok) { avisar("No se pudo", (d && d.detail) || "Error"); return; }
+          avisar("✅ Aviso enviado", `Se envió a ${d.enviados} celular${d.enviados === 1 ? "" : "es"}.`); contar(); })
+        .catch(() => avisar("Error", "No hay conexión."))
+        .finally(() => setEnviando(false));
+    }, "Sí, enviar");
+  };
+  return (
+    <View style={{ gap: 12 }}>
+      <View style={styles.card}>
+        <Text style={styles.seccionTitulo}>📣 Enviar aviso</Text>
+        <Text style={{ fontSize: 12.5, color: "#888", marginTop: -4, marginBottom: 10 }}>Les llega como notificación a quienes ya se registraron y tienen las notificaciones activas. Úsalo con medida (1 al día como máximo) para que no lo silencien.</Text>
+        <Text style={styles.etiqueta}>¿A QUIÉN?</Text>
+        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+          {[["todos", "Todos"], ["clientes", "Pasajeros"], ["conductores", "Conductores"]].map(([k, t]) => (
+            <TouchableOpacity key={k} onPress={() => setA(k)} style={[styles.chip, a === k && styles.chipOn]}>
+              <Text style={[styles.chipTxt, a === k && styles.chipTxtOn]}>{t}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {info ? (
+          <Text style={{ fontSize: 13, color: "#187830", fontWeight: "700", marginBottom: 10 }}>
+            Le llega a {info.con_notificaciones} de {info.registrados} registrados{info.registrados > info.con_notificaciones ? " (los demás no han activado notificaciones o no han abierto la app)" : ""}.
+          </Text>
+        ) : null}
+        <Text style={styles.etiqueta}>MENSAJES LISTOS</Text>
+        <View style={{ gap: 6, marginBottom: 10 }}>
+          {PLANTILLAS.map(([t, m]) => (
+            <TouchableOpacity key={t} onPress={() => { setTitulo(t); setMensaje(m); }}
+              style={{ borderWidth: 1, borderColor: titulo === t ? "#187830" : "#E5E0D5", backgroundColor: titulo === t ? "#EAF6EC" : "#fff", borderRadius: 10, padding: 10 }}>
+              <Text style={{ fontWeight: "800", fontSize: 13.5, color: "#1C2B22" }}>{t}</Text>
+              <Text style={{ fontSize: 12.5, color: "#666", marginTop: 2 }}>{m}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.etiqueta}>TÍTULO</Text>
+        <TextInput value={titulo} onChangeText={setTitulo} maxLength={65} placeholder="Ej: ¡Hola! Prueba Tukán hoy" style={styles.input} />
+        <Text style={styles.etiqueta}>MENSAJE</Text>
+        <TextInput value={mensaje} onChangeText={setMensaje} maxLength={240} multiline placeholder="Lo que quieres decirles (corto)" style={[styles.input, { minHeight: 70, textAlignVertical: "top" }]} />
+        <TouchableOpacity disabled={enviando} onPress={enviar} style={[styles.button, { backgroundColor: "#F06000", opacity: enviando ? 0.6 : 1 }]}>
+          <Text style={styles.buttonText}>{enviando ? "Enviando…" : "📣 Enviar aviso"}</Text>
+        </TouchableOpacity>
+        {info && info.ultima ? <Text style={{ fontSize: 11.5, color: "#999", marginTop: 8 }}>Último envío: {info.ultima.split(" · ")[0]} · {info.ultima.split(" · ")[1]} celulares</Text> : null}
+      </View>
+    </View>
+  );
+}
+
 function AdminTarifas() {
   const [munis, setMunis] = useState([]);
   const [ciudad, setCiudad] = useState("Cali");
@@ -8453,10 +8522,10 @@ function AdminCarrerasScreen({ navigation, route }) {
       <Text style={{ color: "#C4C8BE", fontSize: 20, marginLeft: 2 }}>›</Text>
     </TouchableOpacity>
   );
-  const SECCIONES_MAS = [["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
+  const SECCIONES_MAS = [["aviso", "📣", "Enviar aviso a todos"], ["numeros", "📈", "Difusión y números"], ["ciudades", "🏙️", "Ciudades y tarifas"], ["eventos", "🎉", "Eventos"], ["cobro", "💳", "Cobro y soporte"], ["eliminadas", "🗑️", "Cuentas eliminadas"], ["comida", "🍔", "Domicilios de comida (en pausa)"]];
   const TITULOS = { inicio: "Inicio", conductores: "Conductores", usuarios: "Pasajeros", carreras: "Carreras", mas: "Más",
-    numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
-  const enMas = ["mas", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
+    aviso: "Enviar aviso", numeros: "Difusión y números", ciudades: "Ciudades y tarifas", eventos: "Eventos", cobro: "Cobro y soporte", eliminadas: "Cuentas eliminadas" };
+  const enMas = ["mas", "aviso", "numeros", "ciudades", "eventos", "cobro", "eliminadas"].includes(pestana);
   const enCurso = carreras.filter(c => ["buscando", "aceptada", "en_sitio", "en_camino"].includes(c.estado));
   const hoy = carreras.filter(c => (c.fecha || "").slice(0, 10) === new Date().toISOString().slice(0, 10));
 
@@ -8783,6 +8852,7 @@ function AdminCarrerasScreen({ navigation, route }) {
         })()}
 
         {pestana === "eventos" && <AdminEventos />}
+        {pestana === "aviso" && <AdminAviso />}
         {pestana === "eliminadas" && (
           <>
             <Text style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Cuentas que se eliminaron: sus datos personales se borraron y sus viajes quedan anónimos solo para las estadísticas. Su número quedó libre para registrarse de nuevo.</Text>
