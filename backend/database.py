@@ -354,6 +354,8 @@ class Expreso(Base):
     exclusivo_hasta = Column(DateTime, nullable=True)   # mientras tanto SOLO lo ve el dueño (luego, todos)
     exclusivo_dueno = Column(Integer, nullable=True)    # id del dueño que lo tuvo en exclusiva
     aviso_vencido = Column(DateTime, nullable=True)     # cuando se le aviso al pasajero que nadie lo tomo
+    tipo = Column(String, default="pasajeros")          # "pasajeros" (por cupos) | "carga" (acarreo a otra ciudad)
+    vehiculo = Column(String, nullable=True)            # carga: vehiculo de carga pedido
     estado = Column(String, default="buscando")        # buscando/aceptado/finalizado/cancelado
     fecha = Column(DateTime, default=datetime.now)
 
@@ -561,7 +563,8 @@ def crear_tablas():
         except Exception:
             pass
     for columna in ("destino_lat FLOAT", "destino_lon FLOAT", "conductor_confirmo TIMESTAMP",
-                    "exclusivo_hasta TIMESTAMP", "exclusivo_dueno INTEGER", "aviso_vencido TIMESTAMP"):
+                    "exclusivo_hasta TIMESTAMP", "exclusivo_dueno INTEGER", "aviso_vencido TIMESTAMP",
+                    "tipo VARCHAR DEFAULT 'pasajeros'", "vehiculo VARCHAR"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE expresos ADD COLUMN {columna}"))

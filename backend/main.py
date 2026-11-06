@@ -3712,6 +3712,7 @@ def aceptar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db:
 def expreso_dict(e: Expreso, conductor: Usuario = None):
     return {
         "id": e.id, "cliente_id": e.cliente_id,
+        "tipo": e.tipo or "pasajeros", "vehiculo": e.vehiculo,
         "cliente_nombre": e.cliente_nombre, "cliente_telefono": e.cliente_telefono,
         "origen_municipio": e.origen_municipio, "destino_municipio": e.destino_municipio,
         "origen": e.origen, "origen_lat": e.origen_lat, "origen_lon": e.origen_lon,
@@ -3793,7 +3794,7 @@ def _conductores_expreso(e: Expreso, db: Session):
             Usuario.activo != "no",
             Usuario.verificado == "si",
         ).all()
-        if suscripcion_al_dia(c, db)
+        if vehiculo_sirve_expreso(c, e) and suscripcion_al_dia(c, db)
     ]
 
 @nunca_falla
@@ -3820,7 +3821,11 @@ def avisar_expreso_nuevo(expreso_id: int):
         if not e or e.estado != "buscando":
             return
         cuando = "lo antes posible" if not e.salida else e.salida.strftime("%d/%m %I:%M %p")
-        cuerpo = f"{e.origen_municipio} → {e.destino_municipio} · {e.cupos} cupo(s) a ${e.precio_por_cupo:,}/cupo · {cuando}".replace(",", ".")
+        carga = (e.tipo or "pasajeros") == "carga"
+        if carga:
+            cuerpo = f"{e.origen_municipio} → {e.destino_municipio} · ofrece ${e.precio_por_cupo:,} · {cuando}".replace(",", ".")
+        else:
+            cuerpo = f"{e.origen_municipio} → {e.destino_municipio} · {e.cupos} cupo(s) a ${e.precio_por_cupo:,}/cupo · {cuando}".replace(",", ".")
         # como una carrera: push normal + push de datos (despierta la app y sale a pantalla completa)
         if _expreso_en_exclusiva(e):
             d = db.query(Usuario).filter(Usuario.id == e.exclusivo_dueno).first()
@@ -3828,7 +3833,7 @@ def avisar_expreso_nuevo(expreso_id: int):
         else:
             destinatarios = [c for c in _conductores_expreso(e, db) if c.id != e.exclusivo_dueno]
         mensajes = [m for c in destinatarios
-                    for m in push_conductor(c, "🚌 Viaje a otra ciudad", cuerpo,
+                    for m in push_conductor(c, "🚚 Acarreo a otra ciudad" if carga else "🚌 Viaje a otra ciudad", cuerpo,
                                             {"tipo": "expreso_nuevo", "expreso_id": e.id})]
     finally:
         db.close()
@@ -3847,7 +3852,8 @@ def avisar_expreso_contraoferta(expreso_id: int, conductor_id: int, monto: int):
         if not cliente or not cliente.push_token or not conductor:
             return
         mensajes = push_conductor(cliente, "💬 Te proponen un precio (otra ciudad)",
-                                  f"{conductor.nombre}: ${monto:,}/cupo · {e.origen_municipio} → {e.destino_municipio}".replace(",", "."),
+                                  (f"{conductor.nombre}: ${monto:,} · {e.origen_municipio} → {e.destino_municipio}" if (e.tipo == "carga")
+                                   else f"{conductor.nombre}: ${monto:,}/cupo · {e.origen_municipio} → {e.destino_municipio}").replace(",", "."),
                                   {"tipo": "expreso_contraoferta", "expreso_id": e.id})
     finally:
         db.close()
@@ -3921,8 +3927,17 @@ def _es_dueno(u):
 def _expreso_en_exclusiva(e):
     return bool(e.exclusivo_hasta) and e.exclusivo_hasta > datetime.now()
 
+def vehiculo_sirve_expreso(c, e):
+    """Pasajeros -> carro/moto. Acarreo -> vehiculo de carga (el pedido, si lo hay)."""
+    tv = c.tipo_vehiculo or ""
+    if (e.tipo or "pasajeros") == "carga":
+        return tv in VEHICULOS_CARGA and (not e.vehiculo or tv == e.vehiculo)
+    return tv not in VEHICULOS_CARGA
+
 def puede_ver_expreso(c, e, db):
     """¿Este conductor puede ver/tomar/ofertar este viaje a otra ciudad?"""
+    if not vehiculo_sirve_expreso(c, e):
+        return False
     if _es_dueno(c):
         if e.origen_municipio == c.municipio:
             return True
@@ -3950,6 +3965,7 @@ def liberar_expreso(expreso_id: int):
 def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
                   cupos: int, precio_por_cupo: int, tareas: BackgroundTasks,
                   origen_lat: float = None, origen_lon: float = None, origen_municipio: str = None,
+                  tipo: str = "pasajeros", vehiculo: str = None,
                   destino_detalle: str = None, destino_lat: float = None, destino_lon: float = None,
                   salida: str = None, notas: str = None,
                   db: Session = Depends(get_db), actual: Usuario = Depends(usuario_actual)):
@@ -3969,6 +3985,13 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         raise HTTPException(status_code=400, detail="Elige la ciudad de destino")
     if _sin_tildes(destino_municipio).lower() == _sin_tildes(origen_mun).lower():
         raise HTTPException(status_code=400, detail=f"La recogida y el destino quedaron en la misma ciudad ({origen_mun}). Para viajes dentro de la ciudad usa 'En la ciudad'.")
+    tipo = "carga" if tipo == "carga" else "pasajeros"
+    if tipo == "carga":
+        if vehiculo not in VEHICULOS_CARGA:
+            raise HTTPException(status_code=400, detail="Elige el vehículo de carga")
+        cupos = 1     # en un acarreo el precio es TOTAL (no por cupo)
+    else:
+        vehiculo = None
     if cupos <= 0 or cupos > 20:
         raise HTTPException(status_code=400, detail="Número de cupos inválido")
     if precio_por_cupo <= 0:
@@ -3984,10 +4007,12 @@ def crear_expreso(cliente_id: int, destino_municipio: str, origen: str,
         origen_municipio=origen_mun, destino_municipio=destino_municipio, origen=origen,
         origen_lat=origen_lat, origen_lon=origen_lon, destino_detalle=destino_detalle,
         destino_lat=destino_lat, destino_lon=destino_lon,
-        cupos=cupos, precio_por_cupo=precio_por_cupo, salida=salida_dt, notas=notas)
+        cupos=cupos, precio_por_cupo=precio_por_cupo, salida=salida_dt, notas=notas,
+        tipo=tipo, vehiculo=vehiculo)
     dueno = _dueno_exclusivo(db)
     minutos = 0
-    if (dueno and dueno.id != cliente.id and (dueno.verificado or "no") == "si" and dueno.activo != "no"
+    if (dueno and dueno.id != cliente.id and vehiculo_sirve_expreso(dueno, e)
+            and (dueno.verificado or "no") == "si" and dueno.activo != "no"
             and dueno.disponible == "si" and dueno.push_token
             and (origen_mun == dueno.municipio
                  or _depto_actual(dueno, db) == _depto_de_municipio(origen_mun, db))):
@@ -4049,9 +4074,13 @@ def expresos_disponibles(conductor_id: int = None, db: Session = Depends(get_db)
     return [expreso_dict(e) for e in q.all()]
 
 @app.get("/expresos/cliente/{cliente_id}")
-def expresos_del_cliente(cliente_id: int, db: Session = Depends(get_db)):
+def expresos_del_cliente(cliente_id: int, tipo: str = None, db: Session = Depends(get_db)):
     # los ACTIVOS siempre (aunque sean muchos) + el historial reciente (finalizados/cancelados)
     base = db.query(Expreso).filter(Expreso.cliente_id == cliente_id)
+    if tipo == "carga":
+        base = base.filter(Expreso.tipo == "carga")
+    elif tipo == "pasajeros":
+        base = base.filter((Expreso.tipo.is_(None)) | (Expreso.tipo != "carga"))
     activos = base.filter(Expreso.estado.in_(["buscando", "aceptado", "en_camino"])).order_by(Expreso.fecha.desc()).all()
     historial = base.filter(~Expreso.estado.in_(["buscando", "aceptado", "en_camino"])).order_by(Expreso.fecha.desc()).limit(60).all()
     expresos = activos + historial

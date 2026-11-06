@@ -446,6 +446,11 @@ function qs(obj) {
 // catalogo de vehiculos: "personas" = carreras normales; "carga" = trasteos y
 // acarreos (mudanzas, mercancia). Todos se piden y negocian igual. Fuente unica
 // para etiquetas e iconos en toda la app.
+// viaje a otra ciudad: de PASAJEROS (por cupos) o ACARREO (precio total, vehiculo de carga)
+const esExpCarga = (e) => !!e && e.tipo === "carga";
+const porCupo = (e) => (esExpCarga(e) ? "" : "/cupo");
+const cuposDe = (e) => (esExpCarga(e) ? `🚚 ${vehLabel(e.vehiculo)}` : `${e.cupos} cupo(s)`);
+
 const VEHICULOS = {
   moto:         { label: "Moto",         icono: "🏍️", grupo: "personas" },
   carro:        { label: "Carro",        icono: "🚗", grupo: "personas" },
@@ -3748,7 +3753,9 @@ function Estrellas({ valor, size = 13, color = "#B8860B" }) {
 // CLIENTE · viajes a OTRA ciudad (expresos por cupos). Se muestra dentro de Pedir
 // carrera cuando el cliente toca "A otra ciudad". Publica un viaje (destino, cupos,
 // $/cupo, punto de recogida, opcional agendado) y ve las contraofertas para elegir.
-function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) {
+function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, carga }) {
+  const [vehCarga, setVehCarga] = useState(null);   // acarreo: vehiculo de carga
+  const vehsCarga = Object.keys(VEHICULOS).filter(esCarga);
   // dos pestañas: PEDIR (solo el formulario) y MIS VIAJES (activos / finalizados / cancelados)
   const [vista, setVista] = useState(irMios ? "mios" : "pedir");
   const [filtro, setFiltro] = useState("activos");
@@ -3799,7 +3806,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
   // la recogida NO se marca sola: el pasajero la marca (igual que el destino)
 
   const cargarMios = () => {
-    fetch(`${API}/expresos/cliente/${usuario.id}`).then(r => r.json())
+    fetch(`${API}/expresos/cliente/${usuario.id}?tipo=${carga ? "carga" : "pasajeros"}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setMios(d); }).catch(() => {});
   };
   useEffect(() => { cargarMios(); const t = setInterval(cargarMios, 5000); return () => clearInterval(t); }, []);
@@ -3841,14 +3848,17 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
     const sinT = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
     if (origenCiudad && sinT(origenCiudad) === sinT(destino))
       return avisar("Misma ciudad", `La recogida y el destino están en ${origenCiudad}. Para un viaje dentro de la ciudad usa "En la ciudad".`);
-    if (c <= 0) return avisar("Falta", "¿Cuántos cupos?");
-    if (p <= 0) return avisar("Falta", "¿Cuánto pagas por cupo?");
+    if (carga && !vehCarga) return avisar("Falta el vehículo", "Elige el vehículo de carga que necesitas.");
+    if (carga && !notas.trim()) return avisar("Falta", "Cuéntanos qué vas a llevar.");
+    if (!carga && c <= 0) return avisar("Falta", "¿Cuántos cupos?");
+    if (p <= 0) return avisar("Falta", carga ? "¿Cuánto ofreces por el acarreo?" : "¿Cuánto pagas por cupo?");
     if (programar && (!dia || hSel == null || mSel == null)) return avisar("Falta la fecha", "Elige el día, la hora y los minutos de salida, o cambia a 'Lo antes posible'.");
     const salidaISO = (programar && dia && hSel != null && mSel != null) ? isoLocal(dia, hSel, mSel) : null;
     setCargando(true);
     const params = qs({
       cliente_id: usuario.id, destino_municipio: destino, origen: origenTxt || "Punto marcado",
-      cupos: c, precio_por_cupo: p, origen_lat: pin.lat, origen_lon: pin.lon, origen_municipio: origenCiudad,
+      cupos: carga ? 1 : c, precio_por_cupo: p, origen_lat: pin.lat,
+      ...(carga ? { tipo: "carga", vehiculo: vehCarga } : {}), origen_lon: pin.lon, origen_municipio: origenCiudad,
       destino_detalle: destinoDet, notas, ...(salidaISO ? { salida: salidaISO } : {}),
       ...(pinDest ? { destino_lat: pinDest.lat, destino_lon: pinDest.lon } : {}),
     });
@@ -3856,13 +3866,13 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
       const d = await r.json().catch(() => null);
       if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
       setDestino(""); setPin(null); setPinDest(null); setOrigenTxt(""); setOrigenCiudad(""); setDestinoDet(""); setCupos("1"); setPrecio(""); setNotas(""); setProgramar(false); setDia(null); setHSel(null); setMSel(null);
-      avisar("✅ Viaje publicado", "Los conductores de tu ciudad lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
+      avisar(carga ? "✅ Acarreo publicado" : "✅ Viaje publicado", (carga ? "Los transportadores de carga" : "Los conductores") + " de la ciudad de salida lo verán. Te avisamos cuando alguien lo tome o te proponga precio.");
       cargarMios(); setVista("mios"); setFiltro("activos");
     }).catch(() => avisar("Error", "No hay conexión.")).finally(() => setCargando(false));
   };
 
   const aceptarOferta = (e, of) => {
-    confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}/cupo (total $${(of.monto * e.cupos).toLocaleString()})?`,
+    confirmar("Aceptar este precio", esExpCarga(e) ? `${of.conductor_nombre} por $${of.monto.toLocaleString()}?` : `${of.conductor_nombre} por $${of.monto.toLocaleString()}/cupo (total $${(of.monto * e.cupos).toLocaleString()})?`,
       () => userFetch(`${API}/expresos/${e.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" }).then(async r => {
         const d = await r.json().catch(() => null);
         if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); return; }
@@ -3919,8 +3929,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
   return (
     <>
       <View style={{ flexDirection: "row", backgroundColor: "#fff", borderRadius: 12, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: "#E9EBE5" }}>
-        {pestana("pedir", "✍️ Pedir viaje", 0)}
-        {pestana("mios", "🧾 Mis viajes", activos.length)}
+        {pestana("pedir", carga ? "✍️ Pedir acarreo" : "✍️ Pedir viaje", 0)}
+        {pestana("mios", carga ? "🧾 Mis acarreos" : "🧾 Mis viajes", activos.length)}
       </View>
 
       {vista === "pedir" && activos.length > 0 && (
@@ -3966,9 +3976,26 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
             </TouchableOpacity>
           ) : null}
         </View>
-        <TextInput value={notas} onChangeText={setNotas} placeholder="Indicaciones para el conductor (opcional)" style={[styles.input, { marginTop: 12, marginBottom: 0 }]} />
+        {!carga ? <TextInput value={notas} onChangeText={setNotas} placeholder="Indicaciones para el conductor (opcional)" style={[styles.input, { marginTop: 12, marginBottom: 0 }]} /> : null}
       </View>
 
+      {carga ? (
+        <View style={styles.card}>
+          <Text style={styles.etiqueta}>🚚 ¿QUÉ VEHÍCULO NECESITAS?</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            {vehsCarga.map(v => (
+              <TouchableOpacity key={v} onPress={() => setVehCarga(v)} style={[styles.chip, vehCarga === v && styles.chipOn]}>
+                <Text style={[styles.chipTxt, vehCarga === v && styles.chipTxtOn]}>{vehIcono(v)} {vehLabel(v)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={styles.etiqueta}>¿QUÉ VAS A LLEVAR?</Text>
+          <TextInput value={notas} onChangeText={setNotas} multiline placeholder="Ej: trasteo de apartamento, 1 nevera, 1 cama, 10 cajas" style={[styles.input, { minHeight: 70, textAlignVertical: "top" }]} />
+          <Text style={styles.etiqueta}>OFRECES $ (PRECIO TOTAL)</Text>
+          <TextInput value={precio} onChangeText={t => setPrecio(t.replace(/\D/g, ""))} keyboardType="number-pad" placeholder="0" style={[styles.input, { marginBottom: 0 }]} />
+          {(parseInt(precio || "0", 10) || 0) > 0 ? <Text style={{ fontSize: 13.5, color: "#187830", fontWeight: "700", marginTop: 8 }}>Ofreces ${(parseInt(precio, 10)).toLocaleString()} · el transportador puede proponerte otro</Text> : null}
+        </View>
+      ) : (
       <View style={styles.card}>
         <View style={{ flexDirection: "row", gap: 10 }}>
           <View style={{ flex: 1 }}>
@@ -3984,6 +4011,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
           <Text style={{ fontSize: 13.5, color: "#187830", fontWeight: "700", marginTop: 8 }}>Total: ${totalCalc.toLocaleString()} ({cupos} cupo{cupos === "1" ? "" : "s"})</Text>
         ) : null}
       </View>
+      )}
 
       <View style={styles.card}>
         <Text style={styles.etiqueta}>¿PARA CUÁNDO?</Text>
@@ -4019,7 +4047,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
       </View>
 
       <TouchableOpacity style={[styles.button, { backgroundColor: "#F06000", marginTop: 4 }]} onPress={publicar} disabled={cargando}>
-        {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Publicar viaje</Text>}
+        {cargando ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{carga ? "Publicar acarreo" : "Publicar viaje"}</Text>}
       </TouchableOpacity>
       </>)}
 
@@ -4053,7 +4081,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
                   <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
                   <Text style={{ fontSize: 11, color: "#888" }}>{estadoExpreso(e.estado)}</Text>
                 </View>
-                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+                <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · ${e.precio_por_cupo.toLocaleString()}{porCupo(e)}</Text>
                 <Text style={{ fontSize: 12.5, fontWeight: "700", marginTop: 2, color: e.salida ? "#B85C00" : "#187830" }}>
                   {e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}
                 </Text>
@@ -4072,7 +4100,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
                         <Text style={{ fontSize: 12.5, color: "#444", marginTop: 1 }} numberOfLines={1}>
                           {[e.conductor_vehiculo, e.conductor_veh_color].filter(Boolean).join(" · ") || "Vehículo"}{e.conductor_placa ? `  ·  ${e.conductor_placa}` : ""}
                         </Text>
-                        <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", marginTop: 1 }}>${(e.tarifa_cupo || 0).toLocaleString()}/cupo · total ${((e.tarifa_cupo || 0) * e.cupos).toLocaleString()}</Text>
+                        <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", marginTop: 1 }}>{esExpCarga(e) ? `$${(e.tarifa_cupo || 0).toLocaleString()} acordado` : `$${(e.tarifa_cupo || 0).toLocaleString()}/cupo · total $${((e.tarifa_cupo || 0) * e.cupos).toLocaleString()}`}</Text>
                       </View>
                     </View>
                     {e.conductor_telefono ? (
@@ -4123,7 +4151,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
                     <Text style={{ fontSize: 12, color: "#666", fontWeight: "700", marginBottom: 4 }}>Precios que te proponen:</Text>
                     {ofs.map(of => (
                       <View key={of.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 5 }}>
-                        <Text style={{ fontSize: 13, color: "#333" }}>{of.conductor_nombre} · ${of.monto.toLocaleString()}/cupo</Text>
+                        <Text style={{ fontSize: 13, color: "#333" }}>{of.conductor_nombre} · ${of.monto.toLocaleString()}{porCupo(e)}</Text>
                         <TouchableOpacity style={[styles.button, { backgroundColor: "#187830", paddingVertical: 6, paddingHorizontal: 12 }]} onPress={() => aceptarOferta(e, of)}>
                           <Text style={[styles.buttonText, { fontSize: 12 }]}>Aceptar</Text>
                         </TouchableOpacity>
@@ -4178,8 +4206,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios }) 
                   <Text style={{ fontSize: 14, color: "#444", marginTop: 6 }}>
                     {of.conductor_nombre}{of.conductor_calificacion ? `  ★ ${Number(of.conductor_calificacion).toFixed(1)}` : ""}{of.conductor_placa ? `  ·  ${of.conductor_placa}` : ""}
                   </Text>
-                  <Text style={{ fontSize: 26, fontWeight: "bold", color: "#187830", marginTop: 8 }}>${of.monto.toLocaleString()}<Text style={{ fontSize: 14, color: "#888" }}>/cupo</Text></Text>
-                  <Text style={{ fontSize: 13, color: "#666" }}>Total {e.cupos} cupo(s): ${(of.monto * e.cupos).toLocaleString()} · tú ofreciste ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+                  <Text style={{ fontSize: 26, fontWeight: "bold", color: "#187830", marginTop: 8 }}>${of.monto.toLocaleString()}<Text style={{ fontSize: 14, color: "#888" }}>{porCupo(e)}</Text></Text>
+                  <Text style={{ fontSize: 13, color: "#666" }}>{esExpCarga(e) ? `Tú ofreciste $${e.precio_por_cupo.toLocaleString()}` : `Total ${e.cupos} cupo(s): $${(of.monto * e.cupos).toLocaleString()} · tú ofreciste $${e.precio_por_cupo.toLocaleString()}/cupo`}</Text>
                   {ofEntrante.mas > 0 ? <Text style={{ fontSize: 12.5, color: "#1A56B8", fontWeight: "700", marginTop: 6 }}>+{ofEntrante.mas} propuesta{ofEntrante.mas > 1 ? "s" : ""} más en tu viaje (de la más barata a la más cara)</Text> : null}
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
                     <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd" }]} onPress={() => setOfEntrante(null)}>
@@ -5288,7 +5316,7 @@ function PedirCarreraScreen({ navigation, route }) {
         </View>
 
         {modo === "expreso" ? (
-          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} irMios={route.params && route.params.vistaT} />
+          <ExpresoCliente usuario={usuario} municipios={municipios} muniActual={muni} gpsRapido={gpsRapido} irMios={route.params && route.params.vistaT} carga={modoServicio === "acarreo"} />
         ) : (<>
         {/* ===== TU VIAJE: recogida + destino en una sola tarjeta con riel ===== */}
         <View style={styles.card}>
@@ -6183,7 +6211,7 @@ function ConductorScreen({ navigation, route }) {
           <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
           <Text style={{ fontSize: 18, fontWeight: "bold", color: "#187830" }}>${e.precio_por_cupo.toLocaleString()}</Text>
         </View>
-        <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
+        <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · total ${(e.precio_por_cupo * e.cupos).toLocaleString()}</Text>
         <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
           <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
         </View>
@@ -6202,7 +6230,7 @@ function ConductorScreen({ navigation, route }) {
         {e.mi_oferta ? (
           <View style={{ marginTop: 10 }}>
             <View style={{ backgroundColor: "#EAF1FB", borderRadius: 8, padding: 10 }}>
-              <Text style={{ fontSize: 13, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${e.mi_oferta.toLocaleString()}/cupo</Text>
+              <Text style={{ fontSize: 13, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${e.mi_oferta.toLocaleString()}{porCupo(e)}</Text>
               <Text style={{ fontSize: 11.5, color: "#5a7a9a", marginTop: 2 }}>Esperando que el cliente responda.</Text>
             </View>
             <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 10, marginTop: 8 }]} onPress={() => { setMontoExp(String(e.mi_oferta)); setOfExpreso(e); }}>
@@ -6212,7 +6240,7 @@ function ConductorScreen({ navigation, route }) {
         ) : (
           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
             <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 11 }]} onPress={() => aceptarExpreso(e)}>
-              <Text style={[styles.buttonText, { fontSize: 13 }]}>Tomar ${e.precio_por_cupo.toLocaleString()}/cupo</Text>
+              <Text style={[styles.buttonText, { fontSize: 13 }]}>Tomar ${e.precio_por_cupo.toLocaleString()}{porCupo(e)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11 }]} onPress={() => { setMontoExp(String(e.precio_por_cupo)); setOfExpreso(e); }}>
               <Text style={{ color: "#187830", fontWeight: "600", fontSize: 13 }}>Proponer otro</Text>
@@ -6294,7 +6322,7 @@ function ConductorScreen({ navigation, route }) {
   useEffect(() => { cargarExpresos(); const t = setInterval(cargarExpresos, 6000); return () => clearInterval(t); }, []);
 
   const aceptarExpreso = (e) => {
-    confirmar("Tomar este viaje", `${e.origen_municipio} → ${e.destino_municipio} · ${e.cupos} cupo(s) a $${e.precio_por_cupo.toLocaleString()}/cupo (total $${(e.precio_por_cupo * e.cupos).toLocaleString()}). ¿Lo tomas a ese precio?`,
+    confirmar("Tomar este viaje", `${e.origen_municipio} → ${e.destino_municipio} · ${cuposDe(e)} a $${e.precio_por_cupo.toLocaleString()}${porCupo(e)} (total $${(e.precio_por_cupo * e.cupos).toLocaleString()}). ¿Lo tomas a ese precio?`,
       () => userFetch(`${API}/expresos/${e.id}/aceptar?conductor_id=${usuario.id}`, { method: "PUT" }).then(async r => {
         const d = await r.json().catch(() => null);
         if (!r.ok) { avisar("No se pudo", (d && d.detail) || `Error ${r.status}`); cargarExpresos(); return; }
@@ -7065,7 +7093,7 @@ function ConductorScreen({ navigation, route }) {
                 {misExpresos.map(e => (
                   <View key={e.id} style={[styles.card, { marginBottom: 10, borderLeftWidth: 3, borderLeftColor: "#187830" }]}>
                     <Text style={{ fontWeight: "700", fontSize: 15 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
-                    <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · ${(e.tarifa_cupo || e.precio_por_cupo).toLocaleString()}/cupo · total ${((e.tarifa_cupo || e.precio_por_cupo) * e.cupos).toLocaleString()}</Text>
+                    <Text style={{ fontSize: 12.5, color: "#555", marginTop: 2 }}>{cuposDe(e)} · ${(e.tarifa_cupo || e.precio_por_cupo).toLocaleString()}{porCupo(e)} · total ${((e.tarifa_cupo || e.precio_por_cupo) * e.cupos).toLocaleString()}</Text>
                     <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 4 }}>
                       <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
                     </View>
@@ -7364,15 +7392,15 @@ function ConductorScreen({ navigation, route }) {
           <View style={styles.ventanaModal}>
             {porConfirmar && (
               <>
-                <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#187830" }}>✅ EL PASAJERO ACEPTÓ TU PRECIO</Text>
+                <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#187830" }}>{esExpCarga(porConfirmar) ? "✅ EL CLIENTE ACEPTÓ TU PRECIO" : "✅ EL PASAJERO ACEPTÓ TU PRECIO"}</Text>
                 <Text style={{ fontSize: 18, fontWeight: "800", color: "#1C2B22", marginTop: 8 }}>{porConfirmar.origen_municipio} → {porConfirmar.destino_municipio}</Text>
-                <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830", marginTop: 6 }}>${(porConfirmar.tarifa_cupo || 0).toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>/cupo · total ${((porConfirmar.tarifa_cupo || 0) * porConfirmar.cupos).toLocaleString()}</Text></Text>
+                <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830", marginTop: 6 }}>${(porConfirmar.tarifa_cupo || 0).toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>{porCupo(porConfirmar)} · total ${((porConfirmar.tarifa_cupo || 0) * porConfirmar.cupos).toLocaleString()}</Text></Text>
                 <View style={{ backgroundColor: porConfirmar.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 8 }}>
                   <Text style={{ fontSize: 13, fontWeight: "700", color: porConfirmar.salida ? "#B85C00" : "#187830" }}>{porConfirmar.salida ? `🗓️ Sale: ${fmtRecogida(porConfirmar.salida)}` : "🟢 Lo antes posible"}</Text>
                 </View>
                 <Text style={{ fontSize: 14, color: "#333", marginTop: 8 }} numberOfLines={2}>🟢 Recoge: {limpiaDir(porConfirmar.origen)}</Text>
                 {porConfirmar.destino_detalle ? <Text style={{ fontSize: 14, color: "#333", marginTop: 2 }} numberOfLines={2}>🏁 Deja: {limpiaDir(porConfirmar.destino_detalle)}</Text> : null}
-                <Text style={{ fontSize: 13, color: "#666", marginTop: 6 }}>👤 {porConfirmar.cliente_nombre} · {porConfirmar.cupos} cupo(s)</Text>
+                <Text style={{ fontSize: 13, color: "#666", marginTop: 6 }}>👤 {porConfirmar.cliente_nombre} · {cuposDe(porConfirmar)}</Text>
                 <TouchableOpacity disabled={confirmando} style={[styles.button, { backgroundColor: "#187830", marginTop: 16, padding: 14, opacity: confirmando ? 0.6 : 1 }]} onPress={() => darRecibido(porConfirmar)}>
                   <Text style={styles.buttonText}>{confirmando ? "Confirmando…" : "👍 Recibido"}</Text>
                 </TouchableOpacity>
@@ -7395,11 +7423,11 @@ function ConductorScreen({ navigation, route }) {
               return (
                 <View style={{ padding: 18 }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                    <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>🚌 VIAJE A OTRA CIUDAD</Text>
-                    <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>${(e.precio_por_cupo || 0).toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>/cupo</Text></Text>
+                    <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 1, color: "#F06000" }}>{esExpCarga(e) ? "🚚 ACARREO A OTRA CIUDAD" : "🚌 VIAJE A OTRA CIUDAD"}</Text>
+                    <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>${(e.precio_por_cupo || 0).toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>{porCupo(e)}</Text></Text>
                   </View>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: "#1C2B22", marginTop: 8 }}>{e.origen_municipio} → {e.destino_municipio}</Text>
-                  <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>{e.cupos} cupo(s) · total ${((e.precio_por_cupo || 0) * e.cupos).toLocaleString()}</Text>
+                  <Text style={{ fontSize: 13, color: "#555", marginTop: 2 }}>{cuposDe(e)} · total ${((e.precio_por_cupo || 0) * e.cupos).toLocaleString()}</Text>
                   <View style={{ backgroundColor: e.salida ? "#FFF3E6" : "#EAF6EC", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 9, alignSelf: "flex-start", marginTop: 8 }}>
                     <Text style={{ fontSize: 13, fontWeight: "700", color: e.salida ? "#B85C00" : "#187830" }}>{e.salida ? `🗓️ Sale: ${fmtRecogida(e.salida)}` : "🟢 Lo antes posible"}</Text>
                   </View>
@@ -7512,15 +7540,15 @@ function ConductorScreen({ navigation, route }) {
       <Modal visible={!!ofExpreso} transparent animationType="fade" onRequestClose={() => setOfExpreso(null)}>
         <KeyboardAvoidingView style={styles.fondoModal} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View style={styles.ventanaModal}>
-            <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>Tu precio por cupo</Text>
+            <Text style={{ fontSize: 17, fontWeight: "bold", color: "#333" }}>{esExpCarga(ofExpreso) ? "Tu precio por el acarreo" : "Tu precio por cupo"}</Text>
             <Text style={{ fontSize: 13, color: "#888", marginTop: 4, marginBottom: 14 }}>
-              {ofExpreso ? `${ofExpreso.origen_municipio} → ${ofExpreso.destino_municipio} · ${ofExpreso.cupos} cupo(s). El cliente ofrece $${ofExpreso.precio_por_cupo.toLocaleString()}/cupo.` : ""}
+              {ofExpreso ? `${ofExpreso.origen_municipio} → ${ofExpreso.destino_municipio} · ${cuposDe(ofExpreso)}. El cliente ofrece $${ofExpreso.precio_por_cupo.toLocaleString()}${porCupo(ofExpreso)}.` : ""}
             </Text>
             <View style={styles.ofertaFila}>
               <Text style={{ fontSize: 22, fontWeight: "bold", color: "#187830" }}>$</Text>
               <TextInput value={montoExp} onChangeText={(t) => setMontoExp(t.replace(/\D/g, ""))}
                 placeholder="0" keyboardType="number-pad" style={styles.ofertaInput} autoFocus />
-              <Text style={{ fontSize: 14, color: "#888" }}>/cupo</Text>
+              <Text style={{ fontSize: 14, color: "#888" }}>{porCupo(ofExpreso)}</Text>
             </View>
             {ofExpreso && parseInt(montoExp || "0", 10) > 0 ? (
               <Text style={{ fontSize: 12.5, color: "#187830", fontWeight: "700", marginTop: 6 }}>Total: ${(parseInt(montoExp, 10) * ofExpreso.cupos).toLocaleString()}</Text>
@@ -7594,10 +7622,10 @@ function ConductorScreen({ navigation, route }) {
                 <View style={[styles.card, { marginBottom: 12 }]}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                     <Text style={{ fontSize: 14, color: "#555" }}>Precio del cliente</Text>
-                    <Text style={{ fontSize: 20, fontWeight: "800", color: "#187830" }}>${verExp.precio_por_cupo.toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>/cupo</Text></Text>
+                    <Text style={{ fontSize: 20, fontWeight: "800", color: "#187830" }}>${verExp.precio_por_cupo.toLocaleString()}<Text style={{ fontSize: 13, color: "#888" }}>{porCupo(verExp)}</Text></Text>
                   </View>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-                    <Text style={{ fontSize: 14, color: "#555" }}>{verExp.cupos} cupo(s) · total</Text>
+                    <Text style={{ fontSize: 14, color: "#555" }}>{cuposDe(verExp)} · total</Text>
                     <Text style={{ fontSize: 16, fontWeight: "700", color: "#333" }}>${total.toLocaleString()}</Text>
                   </View>
                   {verExp.notas ? <Text style={{ fontSize: 13, color: "#666", marginTop: 8 }}>📝 {verExp.notas}</Text> : null}
@@ -7606,7 +7634,7 @@ function ConductorScreen({ navigation, route }) {
 
                 {verExp.mi_oferta ? (
                   <View style={{ backgroundColor: "#EAF1FB", borderRadius: 10, padding: 12 }}>
-                    <Text style={{ fontSize: 14, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${verExp.mi_oferta.toLocaleString()}/cupo</Text>
+                    <Text style={{ fontSize: 14, color: "#1A56B8", fontWeight: "700" }}>🕒 Ya ofertaste ${verExp.mi_oferta.toLocaleString()}{porCupo(verExp)}</Text>
                     <TouchableOpacity style={[styles.button, { backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 11, marginTop: 10 }]} onPress={() => { const e = verExp; setVerExp(null); setMontoExp(String(e.mi_oferta)); setOfExpreso(e); }}>
                       <Text style={{ color: "#187830", fontWeight: "700" }}>Cambiar mi oferta</Text>
                     </TouchableOpacity>
@@ -7614,7 +7642,7 @@ function ConductorScreen({ navigation, route }) {
                 ) : (
                   <View style={{ flexDirection: "row", gap: 10 }}>
                     <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#187830", padding: 13 }]} onPress={() => { const e = verExp; setVerExp(null); aceptarExpreso(e); }}>
-                      <Text style={styles.buttonText}>Tomar ${verExp.precio_por_cupo.toLocaleString()}/cupo</Text>
+                      <Text style={styles.buttonText}>Tomar ${verExp.precio_por_cupo.toLocaleString()}{porCupo(verExp)}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#187830", padding: 13 }]} onPress={() => { const e = verExp; setVerExp(null); setMontoExp(String(e.precio_por_cupo)); setOfExpreso(e); }}>
                       <Text style={{ color: "#187830", fontWeight: "700" }}>Proponer otro</Text>
