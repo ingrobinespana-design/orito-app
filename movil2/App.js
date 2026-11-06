@@ -702,6 +702,16 @@ function LoginScreen({ navigation }) {
   // comoMe: el vehiculo exacto (o "cliente"). Se elige en 2 pasos.
   const [form, setForm] = useState({ nombre: "", telefono: "", password: "", municipio: "", categoria: "cliente", comoMe: "cliente", placa: "" });
   const [zonaAbierta, setZonaAbierta] = useState(false);
+  const [zonaGps, setZonaGps] = useState(null);   // ciudad detectada por GPS (solo se le pregunta si falla)
+  useEffect(() => {
+    if (modo !== "registro" || zonaGps) return;
+    ciudadPorGps(true).then((c) => {
+      if (!c) { setZonaGps("fallo"); return; }
+      setZonaGps(c);
+      setForm((f) => (f.municipio ? f : { ...f, municipio: c }));
+    });
+  }, [modo]);
+  const zonaAuto = form.categoria === "cliente" && zonaGps && zonaGps !== "fallo" && form.municipio === zonaGps;
   // al escribir telefono/contraseña la pantalla baja para que el teclado no los tape
   const scrollLogin = useRef(null);
   const verCampos = () => setTimeout(() => { try { scrollLogin.current && scrollLogin.current.scrollToEnd({ animated: true }); } catch (e) {} }, 300);
@@ -820,9 +830,19 @@ function LoginScreen({ navigation }) {
               <Text style={estEtiqueta}>Tu nombre</Text>
               <TextInput placeholder="Escribe aquí tu nombre y apellido" value={form.nombre} onChangeText={(t) => setForm({ ...form, nombre: t })} style={styles.input} autoCapitalize="words" />
 
-              {/* ZONA: lista desplegable por departamento */}
-              <Text style={{ fontSize: 17, fontWeight: "800", color: "#187830", marginTop: 6, marginBottom: 2 }}>📍 Escoge tu zona</Text>
-              <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 8 }}>La ciudad donde vas a usar Tukán.</Text>
+              {/* ZONA: el pasajero no la escoge (la detecta el GPS); el conductor si (ciudad donde trabaja) */}
+              {zonaAuto ? (
+                <TouchableOpacity onPress={() => setZonaAbierta(true)} activeOpacity={0.7}
+                  style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#EAF6EC", borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 4, marginBottom: 14 }}>
+                  <Text style={{ flex: 1, color: "#187830", fontWeight: "700" }}>📍 Te ubicamos en {nombreCiudad(form.municipio)}</Text>
+                  <Text style={{ color: "#7A7A7A", fontSize: 13 }}>cambiar</Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 17, fontWeight: "800", color: "#187830", marginTop: 6, marginBottom: 2 }}>📍 {form.categoria === "cliente" ? "¿En qué ciudad estás?" : "Escoge tu zona de trabajo"}</Text>
+                  <Text style={{ fontSize: 12.5, color: "#7A7A7A", marginBottom: 8 }}>{form.categoria === "cliente" ? "No pudimos ubicarte por GPS." : "La ciudad donde vas a hacer carreras."}</Text>
+                </>
+              )}
               {cargandoMun ? (
                 <View style={{ paddingVertical: 12 }}><ActivityIndicator color="#187830" /></View>
               ) : municipios.length === 0 ? (
@@ -831,7 +851,7 @@ function LoginScreen({ navigation }) {
                 </TouchableOpacity>
               ) : (
                 <>
-                  <TouchableOpacity activeOpacity={0.85} onPress={() => setZonaAbierta(true)}
+                  {!zonaAuto && <TouchableOpacity activeOpacity={0.85} onPress={() => setZonaAbierta(true)}
                     style={{ flexDirection: "row", alignItems: "center", borderWidth: 1.5, borderColor: form.municipio ? "#187830" : "#D3D8CE", backgroundColor: form.municipio ? "#EAF6EC" : "#F1F4EE", borderRadius: 12, paddingVertical: 14, paddingHorizontal: 14, marginBottom: 14 }}>
                     <View style={{ flex: 1 }}>
                       {form.municipio ? (
@@ -844,7 +864,7 @@ function LoginScreen({ navigation }) {
                       )}
                     </View>
                     <Text style={{ fontSize: 18, color: "#187830", fontWeight: "800" }}>▾</Text>
-                  </TouchableOpacity>
+                  </TouchableOpacity>}
                   <Modal visible={zonaAbierta} transparent animationType="slide" onRequestClose={() => setZonaAbierta(false)}>
                     <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
                       <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", paddingBottom: 18 }}>
@@ -2141,6 +2161,20 @@ function CompletarRegistro({ usuario }) {
   );
 }
 
+/** Ciudad de Tukan donde esta la persona (por GPS). null si no hay permiso o no opera ahi. */
+async function ciudadPorGps(pedirPermiso) {
+  try {
+    if (Platform.OS === "web") return null;
+    const p = pedirPermiso ? await Location.requestForegroundPermissionsAsync() : await Location.getForegroundPermissionsAsync();
+    if (p.status !== "granted") return null;
+    const pos = await Location.getLastKnownPositionAsync() || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    if (!pos) return null;
+    const r = await fetch(`${API}/ubicacion/municipio?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
+    const d = await r.json();
+    return d && d.nombre ? d.nombre : null;
+  } catch (e) { return null; }
+}
+
 const MOSTRAR_COMIDA = false;   // domicilios de comida: apagado hasta que el modulo este listo
 
 /* ======================= EVENTOS DE CADA CIUDAD ======================= */
@@ -2508,17 +2542,39 @@ function AnuncioPromo({ promo, nombre, onPedir }) {
   );
 }
 
+const preguntoCiudad = {};   // no repetir la pregunta en la misma sesion
+
 function ElegirServicioScreen({ navigation, route }) {
   const { usuario } = route.params;
   const insets = useSafeAreaInsets();
   // promo de lanzamiento de su ciudad (si hay), para mostrarla en el inicio
   const [promo, setPromo] = useState(null);
+  const [ciudad, setCiudad] = useState(usuario.municipio);
   useEffect(() => {
     fetch(`${API}/municipios`).then(r => r.json()).then(d => {
       if (!Array.isArray(d)) return;
-      const m = d.find(x => x.nombre === usuario.municipio) || null;
-      if (m && m.promo && m.promo.activa) setPromo(m.promo);
+      const m = d.find(x => x.nombre === ciudad) || null;
+      setPromo(m && m.promo && m.promo.activa ? m.promo : null);
     }).catch(() => {});
+  }, [ciudad]);
+  // si el GPS lo ubica en OTRA ciudad, se le pregunta si cambio (como las otras apps)
+  useEffect(() => {
+    let vivo = true;
+    ciudadPorGps(false).then((c) => {
+      if (!vivo || !c || c === ciudad || preguntoCiudad[c]) return;
+      preguntoCiudad[c] = true;
+      confirmar("¿Cambiaste de ciudad? 📍", `Te ubicamos en ${nombreCiudad(c)}. ¿Quieres usar Tukán en ${nombreCiudad(c)}?`, () => {
+        userFetch(`${API}/usuarios/${usuario.id}/municipio?municipio=${encodeURIComponent(c)}`, { method: "PUT" })
+          .then(async (r) => {
+            if (!r.ok) return;
+            usuario.municipio = c;
+            const s2 = await leerSesion();
+            if (s2) await guardarSesion({ ...s2, municipio: c });
+            setCiudad(c);
+          }).catch(() => {});
+      }, "Sí, cambiar");
+    });
+    return () => { vivo = false; };
   }, []);
   const nombre = (usuario.nombre || "").trim().split(" ")[0];
   const ir = (modo) => navigation.navigate("PedirCarrera", { usuario, modo });
@@ -2598,7 +2654,7 @@ function ElegirServicioScreen({ navigation, route }) {
             </View>
           ))}
         </View>
-        <EventosCiudad municipio={usuario.municipio}
+        <EventosCiudad municipio={ciudad}
           onIr={(e) => navigation.navigate("PedirCarrera", { usuario, modo: "carrera", destinoEvento: { nombre: e.lugar, lat: e.lat, lon: e.lon } })} />
       </ScrollView>
       <TouchableOpacity style={{ padding: 14, paddingBottom: 14 + insets.bottom, alignItems: "center" }} onPress={() => navigation.replace("Login")}>

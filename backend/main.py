@@ -800,6 +800,19 @@ def _registro_incompleto(u: Usuario) -> bool:
     return (sum(1 for ch in n if ch.isalpha()) < 3 or "@" in n or any(ch.isdigit() for ch in n)
             or len(t) != 10 or not t.startswith("3") or (u.telefono or "").startswith("ELIMINADO-"))
 
+@app.put("/usuarios/{usuario_id}/municipio")
+def cambiar_mi_ciudad(usuario_id: int, municipio: str, db: Session = Depends(get_db),
+                      actual: Usuario = Depends(usuario_actual)):
+    """El pasajero confirma que cambio de ciudad (la app lo detecta por GPS)."""
+    exigir_dueño(actual, usuario_id)
+    m = db.query(Municipio).filter(Municipio.nombre == municipio, Municipio.activo == "si").first()
+    if not m:
+        raise HTTPException(status_code=400, detail="Tukán todavía no opera en esa ciudad")
+    u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    u.municipio = m.nombre
+    db.commit()
+    return {"ok": True, "municipio": u.municipio}
+
 @app.put("/usuarios/{usuario_id}/completar")
 def completar_registro(usuario_id: int, nombre: str, telefono: str = None, db: Session = Depends(get_db),
                        actual: Usuario = Depends(usuario_actual)):
