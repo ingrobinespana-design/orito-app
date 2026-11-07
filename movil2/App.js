@@ -3234,13 +3234,13 @@ function mapaSeguimientoHTML() {
   function dibujarContexto(){
     if(recLat==null||destLat==null||!map.getSource('ctx')) return;
     // ya en viaje al destino: la ruta verde (que se va consumiendo) es la unica que se ve
-    if(metaRuta==='destino'){ map.getSource('ctx').setData(line([])); return; }
+    if(metaRuta==='destino'||soloTramo){ map.getSource('ctx').setData(line([])); return; }
     // yendo a recoger: el viaje completo se ve mas SUAVE (linea continua); lo principal es la ruta verde a la recogida
     map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',4); map.setPaintProperty('ctx','line-opacity',0.5);
     try{ map.setPaintProperty('ctx','line-dasharray',[1,0]); }catch(e){}
     fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
-      if(metaRuta==='destino') return;   // llego tarde: el viaje ya arranco, no se repinta
+      if(metaRuta==='destino'||soloTramo) return;   // llego tarde / solo el tramo actual: no se repinta
       map.getSource('ctx').setData(line(d.routes[0].geometry.coordinates));
     }).catch(function(){ if(metaRuta!=='destino'&&map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
   }
@@ -3345,10 +3345,13 @@ function mapaSeguimientoHTML() {
   function destino(la,lo){ ultimos.dest=[la,lo]; enListo(function(){_destino(la,lo);}); }
   function conductor(la,lo){ ultimos.cond=[la,lo]; enListo(function(){_conductor(la,lo);}); }
   function rutaA(cual){ enListo(function(){_rutaA(cual);}); }
+  // carrera EN CURSO: solo el tramo actual (a la recogida, y luego al destino); sin el viaje completo
+  var soloTramo=false;
+  function setSoloTramo(v){ soloTramo=!!v; enListo(function(){ if(soloTramo&&map.getSource('ctx')) map.getSource('ctx').setData(line([])); }); }
 </script></body></html>`;
 }
 
-function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno, preview, vehiculo, navegacion }) {
+function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, lleno, preview, vehiculo, navegacion, soloTramo }) {
   const webRef = useRef(null);
   const [listo, setListo] = useState(false);
   // el HTML es FIJO (sin coordenadas) y se genera una sola vez por montaje: si
@@ -3359,6 +3362,11 @@ function MapaSeguimiento({ punto, recogida, destino, conductor, rutaA, onInfo, l
   const html = useMemo(() => mapaSeguimientoHTML(), []);
   // "punto" queda como alias de recogida para no romper llamados viejos
   const rec = recogida || punto || null;
+  // carrera en curso: solo el tramo actual (va antes que recogida/destino)
+  useEffect(() => {
+    if (!listo || !webRef.current) return;
+    webRef.current.injectJavaScript(`setSoloTramo(${soloTramo ? "true" : "false"}); true;`);
+  }, [listo, soloTramo]);
   // cada vez que llega posicion nueva (o el mapa termina de cargar), se inyecta
   useEffect(() => {
     if (!listo || !webRef.current) return;
@@ -4225,7 +4233,7 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
                 {e.estado === "en_camino" && e.conductor_lat != null && (
                   <>
                     <View style={{ height: 220, borderRadius: 12, overflow: "hidden", marginTop: 8 }}>
-                      <MapaSeguimiento key={"exp-" + e.id}
+                      <MapaSeguimiento key={"exp-" + e.id} soloTramo
                         conductor={{ lat: e.conductor_lat, lon: e.conductor_lon }}
                         recogida={e.origen_lat != null ? { lat: e.origen_lat, lon: e.origen_lon } : null}
                         destino={e.destino_lat != null ? { lat: e.destino_lat, lon: e.destino_lon } : null}
@@ -5075,7 +5083,7 @@ function PedirCarreraScreen({ navigation, route }) {
 
         {hayMapa && (
           <View style={{ height: 300, backgroundColor: "#e8e8e8" }}>
-            <MapaSeguimiento key={carrera.estado}
+            <MapaSeguimiento key={carrera.estado} soloTramo
               conductor={cond}
               vehiculo={carrera.vehiculo_pedido}
               recogida={carrera.origen_lat != null ? { lat: carrera.origen_lat, lon: carrera.origen_lon } : null}
@@ -7047,7 +7055,7 @@ function ConductorScreen({ navigation, route }) {
                         </View>
                       )}
                       <View style={{ height: altoMapa, borderRadius: 14, overflow: "hidden", marginBottom: 10 }}>
-                        <MapaSeguimiento key={"cond-" + c.estado}
+                        <MapaSeguimiento key={"cond-" + c.estado} soloTramo
                           conductor={miUbic}
                           vehiculo={c.vehiculo_pedido}
                           navegacion
