@@ -280,7 +280,9 @@ try {
           return;
         }
         const nueva = alertables.find((c) => idsVistosFondo.indexOf(c.id) === -1 && !carrerasRespondidas.has(c.id) && c.mi_oferta == null);
-        idsVistosFondo = [...new Set([...idsVistosFondo, ...ids])].slice(-300);
+        // lo ya sonado se recuerda mientras siga publicado; si sale y vuelve a publicarse, suena de nuevo
+        const enLista = new Set(d.map((c) => c.id));
+        idsVistosFondo = [...new Set([...idsVistosFondo.filter((id) => enLista.has(id)), ...ids])];
         AsyncStorage.setItem("tukan_rastreo_vistos", JSON.stringify(idsVistosFondo)).catch(() => {});
         if (nueva) { diagFondo("rastreo_nueva", { id: nueva.id, frente: alFrente() }); sonarCarreraFondo(nueva); }
       })
@@ -617,7 +619,8 @@ function haceCuantoServidor(f) { return f ? haceCuanto(new Date(msServidor(f)).t
 
 function haceCuanto(fechaISO) {
   if (!fechaISO) return "";
-  const min = Math.max(0, Math.floor((Date.now() - new Date(fechaISO).getTime()) / 60000));
+  // las fechas del servidor vienen en UTC sin zona: se leen como UTC (antes salia siempre "ahora")
+  const min = Math.max(0, Math.floor((Date.now() - msServidor(fechaISO)) / 60000));
   if (min < 1) return "ahora";
   if (min < 60) return `hace ${min} min`;
   const h = Math.floor(min / 60);
@@ -5037,7 +5040,8 @@ function PedirCarreraScreen({ navigation, route }) {
   }, [contraofertas, ahoraOf]);
   // pasados los 10 s sin aceptar: se rechaza (desaparece aqui y el conductor se entera)
   useEffect(() => {
-    const vencidas = contraofertas.filter(of => (Date.now() - (ofRecibidas.current[claveOf(of)] || Date.now())) >= VENTANA_OF);
+    const vencidas = contraofertas.filter(of => !ofVencidas.current.has(claveOf(of))
+      && (Date.now() - (ofRecibidas.current[claveOf(of)] || Date.now())) >= VENTANA_OF);
     if (!vencidas.length || !carrera) return;
     vencidas.forEach(of => {
       ofVencidas.current.add(claveOf(of));
@@ -5046,13 +5050,13 @@ function PedirCarreraScreen({ navigation, route }) {
     setContraofertas(cs => cs.filter(of => !ofVencidas.current.has(claveOf(of))));
   }, [ahoraOf, contraofertas]);
 
+  // acepta DE UNA (el boton ya dice el precio): con 10 s para decidir, un dialogo extra la hacia vencer
   const aceptarContraoferta = (of) => {
-    confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}?`,
-      () => userFetch(`${API}/carreras/${carrera.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" })
-        .then(r => r.json())
-        .then(d => { if (d.detail) { avisar("No se pudo", d.detail); } else { setCarrera(d); setContraofertas([]); } })
-        .catch(() => avisar("Error", "No hay conexion")),
-      "Aceptar");
+    ofVencidas.current.add(claveOf(of));   // ya se esta aceptando: que el reloj no la rechace
+    userFetch(`${API}/carreras/${carrera.id}/aceptar-oferta?oferta_id=${of.id}`, { method: "PUT" })
+      .then(r => r.json())
+      .then(d => { if (d.detail) { avisar("No se pudo", d.detail); } else { setCarrera(d); setContraofertas([]); } })
+      .catch(() => avisar("Error", "No hay conexion"));
   };
 
   const modalCalif = (
@@ -6185,7 +6189,8 @@ function ConductorScreen({ navigation, route }) {
             mostrarEntrante(porAlertar[0]);
           }
           // se ACUMULA: una carrera que ya sono no vuelve a sonar (p. ej. tras contraofertar)
-          idsAlertados.current = new Set([...idsAlertados.current, ...alertablesAhora].slice(-300));
+          // no vuelve a sonar MIENTRAS siga en la lista; si sale y vuelve (otro la solto), suena de nuevo
+          idsAlertados.current = new Set([...[...idsAlertados.current].filter(id => idsAhora.has(id)), ...alertablesAhora]);
         }
         animar(); setDisponibles(d);
         // abrio Tukan desde el aviso a pantalla completa: se le muestra esa solicitud de una
