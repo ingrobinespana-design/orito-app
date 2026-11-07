@@ -3234,13 +3234,14 @@ function mapaSeguimientoHTML() {
   function dibujarContexto(){
     if(recLat==null||destLat==null||!map.getSource('ctx')) return;
     // ya en viaje al destino: la ruta verde (que se va consumiendo) es la unica que se ve
-    if(metaRuta==='destino'||soloTramo){ map.getSource('ctx').setData(line([])); return; }
-    // yendo a recoger: el viaje completo se ve mas SUAVE (linea continua); lo principal es la ruta verde a la recogida
-    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',4); map.setPaintProperty('ctx','line-opacity',0.5);
+    if(metaRuta==='destino'){ map.getSource('ctx').setData(line([])); return; }
+    // yendo a recoger: el viaje completo (A -> B) se ve SUTIL (linea continua delgada y clara);
+    // en carrera en curso (soloTramo) todavia mas suave. Lo principal es la ruta verde a la recogida.
+    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',soloTramo?3:4); map.setPaintProperty('ctx','line-opacity',soloTramo?0.28:0.5);
     try{ map.setPaintProperty('ctx','line-dasharray',[1,0]); }catch(e){}
     fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
-      if(metaRuta==='destino'||soloTramo) return;   // llego tarde / solo el tramo actual: no se repinta
+      if(metaRuta==='destino') return;   // llego tarde: el viaje ya arranco, no se repinta
       map.getSource('ctx').setData(line(d.routes[0].geometry.coordinates));
     }).catch(function(){ if(metaRuta!=='destino'&&map.getSource('ctx')) map.getSource('ctx').setData(line([[recLon,recLat],[destLon,destLat]])); });
   }
@@ -3347,7 +3348,7 @@ function mapaSeguimientoHTML() {
   function rutaA(cual){ enListo(function(){_rutaA(cual);}); }
   // carrera EN CURSO: solo el tramo actual (a la recogida, y luego al destino); sin el viaje completo
   var soloTramo=false;
-  function setSoloTramo(v){ soloTramo=!!v; enListo(function(){ if(soloTramo&&map.getSource('ctx')) map.getSource('ctx').setData(line([])); }); }
+  function setSoloTramo(v){ soloTramo=!!v; enListo(function(){ if(soloTramo&&map.getSource('ctx')){ map.setPaintProperty('ctx','line-width',3); map.setPaintProperty('ctx','line-opacity',0.28); } }); }
 </script></body></html>`;
 }
 
