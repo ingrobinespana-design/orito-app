@@ -205,6 +205,22 @@ def diagnostico_push(clave: str, tel: str, probar: str = "no", db: Session = Dep
         info["envio"] = push.enviar(msgs)
     return info
 
+@app.get("/diag/carrera/{carrera_id}")
+def diag_carrera(carrera_id: int, clave: str, db: Session = Depends(get_db)):
+    """Linea de tiempo de una carrera (clave RESPALDO_CLAVE): creada, cada contraoferta
+    (cuando LLEGO al servidor), aceptada... para ver donde se demora algo."""
+    esperada = os.environ.get("RESPALDO_CLAVE")
+    if not esperada or not (clave and secrets.compare_digest(clave, esperada)):
+        raise HTTPException(status_code=403, detail="Clave invalida")
+    c = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="No existe")
+    ofs = db.query(Oferta).filter(Oferta.carrera_id == carrera_id).order_by(Oferta.fecha).all()
+    seg = lambda f: round((f - c.fecha).total_seconds(), 1) if f and c.fecha else None
+    return {"id": c.id, "estado": c.estado, "creada": c.fecha, "aceptada_en": c.aceptada_en, "seg_aceptada": seg(c.aceptada_en),
+            "llego_recogida": c.llego_recogida, "ofertas": [{"conductor_id": o.conductor_id, "monto": o.monto, "estado": o.estado,
+                                                              "fecha": o.fecha, "seg_desde_creada": seg(o.fecha)} for o in ofs]}
+
 _DIAG_EVENTOS = []   # ultimos reportes de la app (en memoria, se borran al reiniciar)
 
 @app.post("/diag/evento")
