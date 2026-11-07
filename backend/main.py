@@ -1201,7 +1201,8 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
         etiqueta = ", ".join(partes[:2]).strip()
         ciudad = ciudad_tukan or a.get("city") or a.get("town") or a.get("municipality") or a.get("village") or a.get("county")
         if ciudad:
-            ciudad = re.sub(r"^(per[ií]metro urbano|zona urbana( de)?|cabecera( municipal)?( de)?)\s+", "", ciudad, flags=re.I).strip()
+            import re as _re_ciudad
+            ciudad = _re_ciudad.sub(r"^(per[ií]metro urbano|zona urbana( de)?|cabecera( municipal)?( de)?)\s+", "", ciudad, flags=_re_ciudad.I).strip()
         if etiqueta:
             return {"nombre": etiqueta, "fuente": "direccion", "ciudad": ciudad, "departamento": a.get("state")}
         if ciudad:
