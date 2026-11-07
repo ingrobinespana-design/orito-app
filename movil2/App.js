@@ -3235,9 +3235,9 @@ function mapaSeguimientoHTML() {
     if(recLat==null||destLat==null||!map.getSource('ctx')) return;
     // ya en viaje al destino: la ruta verde (que se va consumiendo) es la unica que se ve
     if(metaRuta==='destino'){ map.getSource('ctx').setData(line([])); return; }
-    // yendo a recoger: el viaje completo se ve TENUE y punteado (lo principal es la ruta verde a la recogida)
-    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',3); map.setPaintProperty('ctx','line-opacity',0.45);
-    try{ map.setPaintProperty('ctx','line-dasharray',[1.5,2]); }catch(e){}
+    // yendo a recoger: el viaje completo se ve mas SUAVE (linea continua); lo principal es la ruta verde a la recogida
+    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',4); map.setPaintProperty('ctx','line-opacity',0.5);
+    try{ map.setPaintProperty('ctx','line-dasharray',[1,0]); }catch(e){}
     fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
       if(metaRuta==='destino') return;   // llego tarde: el viaje ya arranco, no se repinta
