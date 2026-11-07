@@ -3957,6 +3957,7 @@ def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: Backgr
         Oferta.estado == "pendiente").first()
     if oferta:
         oferta.monto = monto
+        oferta.fecha = datetime.now()     # precio nuevo = vuelve a correr su tiempo
     else:
         oferta = Oferta(carrera_id=carrera_id, conductor_id=conductor_id, monto=monto)
         db.add(oferta)
@@ -3965,9 +3966,35 @@ def contraofertar(carrera_id: int, conductor_id: int, monto: int, tareas: Backgr
     tareas.add_task(avisar_contraoferta, carrera_id, conductor_id, monto)
     return oferta_dict(oferta, conductor)
 
+OFERTA_VIGENCIA_SEG = 60   # respaldo del servidor: una contraoferta sin respuesta en 1 min se vence
+
+@app.put("/carreras/{carrera_id}/ofertas/{oferta_id}/rechazar")
+def rechazar_oferta(carrera_id: int, oferta_id: int, tareas: BackgroundTasks, db: Session = Depends(get_db),
+                    actual: Usuario = Depends(usuario_actual)):
+    """El pasajero no la acepto a tiempo (10 s) o la rechazo: el conductor se entera."""
+    c = db.query(Carrera).filter(Carrera.id == carrera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Carrera no encontrada")
+    exigir_dueño(actual, c.cliente_id)
+    o = db.query(Oferta).filter(Oferta.id == oferta_id, Oferta.carrera_id == carrera_id).first()
+    if not o or o.estado != "pendiente":
+        return {"ok": True}
+    o.estado = "rechazada"
+    db.commit()
+    cond = db.query(Usuario).filter(Usuario.id == o.conductor_id).first()
+    if cond and cond.push_token:
+        tareas.add_task(lambda tok=cond.push_token, m=o.monto: limpiar_tokens_muertos(push.enviar([push.mensaje(
+            tok, "😕 El pasajero no tomó tu precio", f"No aceptó ${m:,}. Si la carrera sigue libre, puedes proponer otro.".replace(",", "."),
+            {"tipo": "oferta_rechazada", "carrera_id": carrera_id})])))
+    return {"ok": True}
+
 @app.get("/carreras/{carrera_id}/ofertas")
 def ofertas_de_carrera(carrera_id: int, db: Session = Depends(get_db)):
     """Lo que ve el cliente: las contraofertas pendientes, mas barata primero."""
+    limite = datetime.now() - timedelta(seconds=OFERTA_VIGENCIA_SEG)
+    db.query(Oferta).filter(Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente",
+                            Oferta.fecha < limite).update({"estado": "vencida"}, synchronize_session=False)
+    db.commit()
     ofertas = db.query(Oferta).filter(
         Oferta.carrera_id == carrera_id, Oferta.estado == "pendiente").order_by(Oferta.monto).all()
     ids = {o.conductor_id for o in ofertas}

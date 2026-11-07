@@ -4662,8 +4662,10 @@ function PedirCarreraScreen({ navigation, route }) {
   const [contraofertas, setContraofertas] = useState([]);
   // cuenta regresiva de 6s por contraoferta nueva: cuando el cliente la vio por
   // primera vez. Mientras < 6s se resalta con la cuenta; luego sigue en la lista.
-  const VENTANA_OF = 6000;
+  const VENTANA_OF = 10000;   // 10 s para aceptar una contraoferta; luego se entiende como rechazo
   const ofRecibidas = useRef({});
+  const ofVencidas = useRef(new Set());
+  const claveOf = (of) => `${of.id}-${of.monto}`;   // si el conductor cambia el precio, cuenta como nueva
   const [ahoraOf, setAhoraOf] = useState(Date.now());
   const [rutaInfo, setRutaInfo] = useState(null);    // {km, min} reales por calle (OSRM)
   const [cargando, setCargando] = useState(false);
@@ -5013,8 +5015,14 @@ function PedirCarreraScreen({ navigation, route }) {
       .then(d => {
         if (!Array.isArray(d)) return;
         const t = Date.now();
-        d.forEach(of => { if (!ofRecibidas.current[of.id]) ofRecibidas.current[of.id] = t; });
-        setContraofertas(d);
+        const vivas = d.filter(of => !ofVencidas.current.has(claveOf(of)));
+        vivas.forEach(of => {
+          if (!ofRecibidas.current[claveOf(of)]) {
+            ofRecibidas.current[claveOf(of)] = t;
+            diagFondo("oferta_vista", { carrera: carrera.id, oferta: of.id, monto: of.monto, llego_servidor: of.fecha });
+          }
+        });
+        setContraofertas(vivas);
       }).catch(() => {});
     traer();
     const t = setInterval(traer, 3000);   // 3s: para que la contraoferta llegue rapido
@@ -5023,11 +5031,21 @@ function PedirCarreraScreen({ navigation, route }) {
 
   // reloj de la cuenta regresiva de las contraofertas (solo si hay alguna fresca)
   useEffect(() => {
-    const hayFrescas = contraofertas.some(of => (Date.now() - (ofRecibidas.current[of.id] || 0)) < VENTANA_OF);
-    if (!hayFrescas) return;
+    // mientras haya alguna propuesta en pantalla, el reloj corre (para la barra y para vencerla)
+    if (!contraofertas.length) return;
     const t = setInterval(() => setAhoraOf(Date.now()), 300);
     return () => clearInterval(t);
   }, [contraofertas, ahoraOf]);
+  // pasados los 10 s sin aceptar: se rechaza (desaparece aqui y el conductor se entera)
+  useEffect(() => {
+    const vencidas = contraofertas.filter(of => (Date.now() - (ofRecibidas.current[claveOf(of)] || Date.now())) >= VENTANA_OF);
+    if (!vencidas.length || !carrera) return;
+    vencidas.forEach(of => {
+      ofVencidas.current.add(claveOf(of));
+      userFetch(`${API}/carreras/${carrera.id}/ofertas/${of.id}/rechazar`, { method: "PUT" }).catch(() => {});
+    });
+    setContraofertas(cs => cs.filter(of => !ofVencidas.current.has(claveOf(of))));
+  }, [ahoraOf, contraofertas]);
 
   const aceptarContraoferta = (of) => {
     confirmar("Aceptar este precio", `${of.conductor_nombre} por $${of.monto.toLocaleString()}?`,
@@ -5208,8 +5226,8 @@ function PedirCarreraScreen({ navigation, route }) {
                     {contraofertas.length === 1 ? "1 conductor te propone" : `${contraofertas.length} conductores te proponen`}
                   </Text>
                   {contraofertas.map((of) => {
-                    // fresca (< 6s): resaltada con su barra de tiempo; luego sigue en la lista
-                    const restante = VENTANA_OF - (ahoraOf - (ofRecibidas.current[of.id] || 0));
+                    // 10 s para aceptarla (barra de tiempo); al vencerse desaparece y se le avisa al conductor
+                    const restante = VENTANA_OF - (ahoraOf - (ofRecibidas.current[claveOf(of)] || ahoraOf));
                     const fresca = restante > 0;
                     const pct = Math.max(0, Math.min(100, (restante / VENTANA_OF) * 100));
                     const nom = (of.conductor_nombre || "Conductor").trim();
@@ -6556,9 +6574,13 @@ function ConductorScreen({ navigation, route }) {
   // envia una contraoferta al servidor (usada por el teclado y por los botones
   // rapidos de un toque)
   const enviarOferta = (id, monto, silencioso) => {
+    // medicion: cuanto paso desde que llego la solicitud hasta que se envio, y cuanto tardo el servidor
+    const t0 = Date.now();
+    const desdeQueLlego = recibidas.current[id] ? Math.round((t0 - recibidas.current[id]) / 1000) : null;
     userFetch(`${API}/carreras/${id}/ofertas?conductor_id=${usuario.id}&monto=${monto}`, { method: "POST" })
       .then(async (r) => {
         const d = await r.json();
+        diagFondo("oferta_enviada", { carrera: id, monto, status: r.status, seg_desde_que_llego: desdeQueLlego, ms_servidor: Date.now() - t0 });
         if (r.status === 409) { avisar("Muy tarde", "Esa carrera ya no esta disponible."); cargar(); return; }
         if (r.status === 402) { avisar("Suscripcion vencida", d.detail); return; }
         if (d.detail) { avisar("No se pudo", d.detail); return; }
@@ -6566,7 +6588,7 @@ function ConductorScreen({ navigation, route }) {
         if (!silencioso) avisar("Oferta enviada", "El cliente vera tu precio y decide.");
         cargar();
       })
-      .catch(() => avisar("Error", "No hay conexion."));
+      .catch(() => { diagFondo("oferta_fallo", { carrera: id, ms: Date.now() - t0 }); avisar("Error", "No hay conexion."); });
   };
 
   const contraofertar = () => {
