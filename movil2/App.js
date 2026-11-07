@@ -248,7 +248,11 @@ try {
         try { const ses = await leerSesion(); if (ses && ses.rol === "conductor" && ses.id) conductorRastreado = Number(ses.id); } catch (e) {}
       }
       diagFondo("rastreo_reinicio", { recuperado: conductorRastreado || null });
-      if (!conductorRastreado) return;
+      if (!conductorRastreado) {
+        // celular SIN conductor (p. ej. ahora entra un pasajero): el rastreo no tiene nada que hacer -> se apaga
+        Location.stopLocationUpdatesAsync(TAREA_UBICACION).catch(() => {});
+        return;
+      }
     }
     // senal de vida (1 por minuto) para depurar si Android lo deja correr bloqueado
     if (Date.now() - ultimoVivo > 60000) { ultimoVivo = Date.now(); diagFondo("rastreo_vivo", { c: conductorRastreado }); }
@@ -284,7 +288,9 @@ try {
         const enLista = new Set(d.map((c) => c.id));
         idsVistosFondo = [...new Set([...idsVistosFondo.filter((id) => enLista.has(id)), ...ids])];
         AsyncStorage.setItem("tukan_rastreo_vistos", JSON.stringify(idsVistosFondo)).catch(() => {});
-        if (nueva) { diagFondo("rastreo_nueva", { id: nueva.id, frente: alFrente() }); sonarCarreraFondo(nueva); }
+        // con una carrera EN CURSO no se interrumpe (no se le salta encima de Google Maps)
+        const ocupado = await AsyncStorage.getItem("tukan_conductor_ocupado").catch(() => null);
+        if (nueva && ocupado !== "si") { diagFondo("rastreo_nueva", { id: nueva.id, frente: alFrente() }); sonarCarreraFondo(nueva); }
       })
       .catch(() => {});
     // 2b) viajes a otra ciudad nuevos (salen de su ciudad): mismo aviso fuerte
@@ -300,7 +306,8 @@ try {
         const nuevo = d.find((e) => expVistosFondo.indexOf(e.id) === -1 && e.mi_oferta == null);
         expVistosFondo = [...new Set([...expVistosFondo, ...ids])].slice(-200);
         AsyncStorage.setItem("tukan_rastreo_exp_vistos", JSON.stringify(expVistosFondo)).catch(() => {});
-        if (nuevo && !alFrente()) sonarCarreraFondo({ ...nuevo, _expreso: true });
+        const ocupadoE = await AsyncStorage.getItem("tukan_conductor_ocupado").catch(() => null);
+        if (nuevo && !alFrente() && ocupadoE !== "si") sonarCarreraFondo({ ...nuevo, _expreso: true });
       })
       .catch(() => {});
     // 3) si el pasajero le cancela una carrera en curso y la app no esta al frente,
@@ -351,6 +358,27 @@ function diagFondo(paso, extra) {
       body: JSON.stringify({ paso, app: AppState.currentState, vis: pantallaVisible, notifee: !!notifee, sobre: puedeSobreponer(), ...(extra || {}) }).slice(0, 1900) }).catch(() => {});
   } catch (e) {}
 }
+
+// si la app se cae por un error de JavaScript, se guarda el motivo y se reporta al volver a abrir
+try {
+  const EU = global.ErrorUtils;
+  if (EU && EU.getGlobalHandler) {
+    const anterior = EU.getGlobalHandler();
+    EU.setGlobalHandler((err, fatal) => {
+      try {
+        const info = { msg: String((err && err.message) || err).slice(0, 400), pila: String((err && err.stack) || "").slice(0, 900), fatal: !!fatal, t: new Date().toISOString() };
+        AsyncStorage.setItem("tukan_ultimo_error", JSON.stringify(info)).catch(() => {});
+        diagFondo("error_js", info);
+      } catch (e) {}
+      if (anterior) anterior(err, fatal);
+    });
+  }
+  setTimeout(() => {
+    AsyncStorage.getItem("tukan_ultimo_error").then((g) => {
+      if (g) { diagFondo("error_js_anterior", JSON.parse(g)); AsyncStorage.removeItem("tukan_ultimo_error").catch(() => {}); }
+    }).catch(() => {});
+  }, 4000);
+} catch (e) {}
 async function manejarPushFondo(d) {
   if (!d || !d.tipo) { diagFondo("sin_tipo"); return; }
   if (d.tipo === "carrera_nueva") solicitudDesdeFondo = Number(d.carrera_id) || solicitudDesdeFondo;
@@ -396,8 +424,11 @@ async function iniciarRastreoFondo(conductorId) {
     if (Platform.OS === "web") return false;
     const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
     // si ya esta corriendo NO se toca (apagarlo para reiniciarlo podia dejarlo apagado
-    // y el pasajero veia el carro quieto). Los nuevos arranques ya salen con GPS preciso.
+    // y el pasajero veia el carro quieto).
     if (ya) return true;
+    // Android 12+ NO deja encender el servicio de ubicacion con la app atras (cierre forzoso):
+    // solo se enciende con Tukan en pantalla
+    if (AppState.currentState !== "active") { diagFondo("rastreo_no_iniciado_fondo", { c: conductorId }); return false; }
     // el permiso "todo el tiempo" es lo ideal; si no lo dan, el servicio en
     // primer plano igual funciona en la mayoria de Androids modernos
     // aviso destacado ANTES de pedir "todo el tiempo" (requisito de Google Play)
@@ -411,8 +442,10 @@ async function iniciarRastreoFondo(conductorId) {
       if (acepta) await Location.requestBackgroundPermissionsAsync().catch(() => {});
     }
     await Location.startLocationUpdatesAsync(TAREA_UBICACION, {
-      accuracy: Location.Accuracy.High,   // GPS de verdad: el pasajero ve el carro donde va
-      timeInterval: 6000,          // cada ~6s revisa carreras y reporta ubicacion
+      // configuracion probada (con "High" cada 6 s, Android dejaba de entregar la ubicacion en
+      // segundo plano mientras el conductor usaba Google Maps y el pasajero lo veia congelado)
+      accuracy: Location.Accuracy.Balanced,
+      timeInterval: 9000,          // cada ~9s revisa carreras y reporta ubicacion
       distanceInterval: 0,         // por tiempo, no por distancia (para oir aunque este quieto)
       foregroundService: {
         notificationTitle: "🚕 Tukán activo — buscando carreras",
@@ -3219,10 +3252,15 @@ function mapaSeguimientoHTML() {
 
   function aplicarMeta(){ if(metaRuta==='destino'&&destLat!=null){ dLat=destLat; dLon=destLon; } else if(recLat!=null){ dLat=recLat; dLon=recLon; } else if(destLat!=null){ dLat=destLat; dLon=destLon; } else { dLat=null; dLon=null; } }
 
+  var pedidoN=0;
   function pedirRuta(la,lo){
     if(dLat==null) return;
     ultimoPedido=Date.now();
+    var mio=++pedidoN, haciaLat=dLat, haciaLon=dLon;
     fetch(rutaURL(lo,la,dLon,dLat)).then(function(r){return r.json();}).then(function(d){
+      // solo vale la ULTIMA ruta pedida y si la meta no cambio (antes una ruta vieja a la
+      // recogida podia llegar de ultimas y el mapa del viaje volvia a "desde donde salio")
+      if(mio!==pedidoN||haciaLat!==dLat||haciaLon!==dLon) return;
       if(!d.routes||!d.routes[0]) throw 0;
       var r=d.routes[0]; var pts=r.geometry.coordinates;
       rutaPts=pts; carIdx=0; carT=0;
@@ -6228,6 +6266,8 @@ function ConductorScreen({ navigation, route }) {
         }
         setMias(activas);
         tieneActivaRef.current = activas.length > 0;
+        // el servicio en segundo plano lo lee: con carrera en curso no salta encima de Google Maps
+        AsyncStorage.setItem("tukan_conductor_ocupado", activas.length > 0 ? "si" : "no").catch(() => {});
         setHistorial(d.filter(c => ["finalizada", "cancelada"].includes(c.estado)));
       })
       .catch(() => {});
