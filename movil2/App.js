@@ -5113,15 +5113,6 @@ function PedirCarreraScreen({ navigation, route }) {
         )}
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }}>
-          {/* la ubicacion del conductor no llega hace rato (celular dormido o sin señal): se dice, no se ve "congelado" */}
-          {hayMapa && carrera.conductor_ubic_fecha && ["aceptada", "en_sitio", "en_camino"].includes(carrera.estado)
-            && (Date.now() - msServidor(carrera.conductor_ubic_fecha)) > 60000 ? (
-            <View style={{ backgroundColor: "#FFF6E5", borderRadius: 10, padding: 10, marginBottom: 12 }}>
-              <Text style={{ fontSize: 12.5, color: "#8A5A00", fontWeight: "700" }}>
-                📶 La ubicación del conductor es de {haceCuantoServidor(carrera.conductor_ubic_fecha)}. Puede estar sin señal; se actualiza sola apenas vuelva.
-              </Text>
-            </View>
-          ) : null}
           {/* si tiene varias solicitudes abiertas, puede saltar entre ellas */}
           {activas.length > 1 && (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
@@ -5168,9 +5159,6 @@ function PedirCarreraScreen({ navigation, route }) {
                   ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
                   : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
               </Text>
-              {carrera.conductor_ubic_fecha && (Date.now() - msServidor(carrera.conductor_ubic_fecha)) > 90000 && (
-                <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicación de {haceCuantoServidor(carrera.conductor_ubic_fecha)}</Text>
-              )}
             </View>
           )}
           {/* RESUMEN DEL VIAJE: recorrido y tarifa, lo importante para el trato
