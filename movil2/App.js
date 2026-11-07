@@ -393,7 +393,13 @@ async function iniciarRastreoFondo(conductorId) {
     idsVistosFondo = null;   // arranca fresco: memoriza y luego suena solo con las NUEVAS
     if (Platform.OS === "web") return false;
     const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
-    if (ya) return true;
+    if (ya) {
+      // v2: GPS preciso y mas seguido (antes "Balanced" daba saltos y con el celular
+      // bloqueado el pasajero veia el carro quieto). Se reinicia UNA vez con lo nuevo.
+      const v = await AsyncStorage.getItem("tukan_rastreo_v").catch(() => null);
+      if (v === "2") return true;
+      await Location.stopLocationUpdatesAsync(TAREA_UBICACION).catch(() => {});
+    }
     // el permiso "todo el tiempo" es lo ideal; si no lo dan, el servicio en
     // primer plano igual funciona en la mayoria de Androids modernos
     // aviso destacado ANTES de pedir "todo el tiempo" (requisito de Google Play)
@@ -407,8 +413,8 @@ async function iniciarRastreoFondo(conductorId) {
       if (acepta) await Location.requestBackgroundPermissionsAsync().catch(() => {});
     }
     await Location.startLocationUpdatesAsync(TAREA_UBICACION, {
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: 9000,          // cada ~9s revisa carreras y reporta ubicacion
+      accuracy: Location.Accuracy.High,   // GPS de verdad: el pasajero ve el carro donde va
+      timeInterval: 6000,          // cada ~6s revisa carreras y reporta ubicacion
       distanceInterval: 0,         // por tiempo, no por distancia (para oir aunque este quieto)
       foregroundService: {
         notificationTitle: "🚕 Tukán activo — buscando carreras",
@@ -416,6 +422,7 @@ async function iniciarRastreoFondo(conductorId) {
         notificationColor: "#187830",
       },
     });
+    AsyncStorage.setItem("tukan_rastreo_v", "2").catch(() => {});
     return true;
   } catch (e) { return false; }   // sin permiso: sigue el reporte con app abierta
 }
@@ -601,6 +608,14 @@ function kmEntre(a, b) {
 }
 
 /** "hace 3 min" a partir de una fecha ISO */
+// fechas que el SERVIDOR pone con su reloj (UTC, sin zona): se leen como UTC
+function msServidor(f) {
+  if (!f) return 0;
+  const s = String(f);
+  return new Date(/Z$|[+-]\d\d:?\d\d$/.test(s) ? s : s + "Z").getTime();
+}
+function haceCuantoServidor(f) { return f ? haceCuanto(new Date(msServidor(f)).toISOString()) : ""; }
+
 function haceCuanto(fechaISO) {
   if (!fechaISO) return "";
   const min = Math.max(0, Math.floor((Date.now() - new Date(fechaISO).getTime()) / 60000));
@@ -3220,7 +3235,9 @@ function mapaSeguimientoHTML() {
     if(recLat==null||destLat==null||!map.getSource('ctx')) return;
     // ya en viaje al destino: la ruta verde (que se va consumiendo) es la unica que se ve
     if(metaRuta==='destino'){ map.getSource('ctx').setData(line([])); return; }
-    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',5); map.setPaintProperty('ctx','line-opacity',0.9);
+    // yendo a recoger: el viaje completo se ve TENUE y punteado (lo principal es la ruta verde a la recogida)
+    map.setPaintProperty('ctx','line-color','#F06000'); map.setPaintProperty('ctx','line-width',3); map.setPaintProperty('ctx','line-opacity',0.45);
+    try{ map.setPaintProperty('ctx','line-dasharray',[1.5,2]); }catch(e){}
     fetch(rutaURL(recLon,recLat,destLon,destLat)).then(function(r){return r.json();}).then(function(d){
       if(!d.routes||!d.routes[0]) throw 0;
       if(metaRuta==='destino') return;   // llego tarde: el viaje ya arranco, no se repinta
@@ -4214,8 +4231,8 @@ function ExpresoCliente({ usuario, municipios, muniActual, gpsRapido, irMios, ca
                         destino={e.destino_lat != null ? { lat: e.destino_lat, lon: e.destino_lon } : null}
                         rutaA="destino" lleno />
                     </View>
-                    {e.conductor_ubic_fecha && (Date.now() - new Date(e.conductor_ubic_fecha).getTime()) > 90000 && (
-                      <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 4 }}>Última ubicación {haceCuanto(e.conductor_ubic_fecha)}</Text>
+                    {e.conductor_ubic_fecha && (Date.now() - msServidor(e.conductor_ubic_fecha)) > 90000 && (
+                      <Text style={{ fontSize: 11, color: "#8A5A00", marginTop: 4 }}>Última ubicación {haceCuantoServidor(e.conductor_ubic_fecha)}</Text>
                     )}
                   </>
                 )}
@@ -5069,6 +5086,15 @@ function PedirCarreraScreen({ navigation, route }) {
         )}
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }}>
+          {/* la ubicacion del conductor no llega hace rato (celular dormido o sin señal): se dice, no se ve "congelado" */}
+          {hayMapa && carrera.conductor_ubic_fecha && ["aceptada", "en_sitio", "en_camino"].includes(carrera.estado)
+            && (Date.now() - msServidor(carrera.conductor_ubic_fecha)) > 60000 ? (
+            <View style={{ backgroundColor: "#FFF6E5", borderRadius: 10, padding: 10, marginBottom: 12 }}>
+              <Text style={{ fontSize: 12.5, color: "#8A5A00", fontWeight: "700" }}>
+                📶 La ubicación del conductor es de {haceCuantoServidor(carrera.conductor_ubic_fecha)}. Puede estar sin señal; se actualiza sola apenas vuelva.
+              </Text>
+            </View>
+          ) : null}
           {/* si tiene varias solicitudes abiertas, puede saltar entre ellas */}
           {activas.length > 1 && (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
@@ -5115,8 +5141,8 @@ function PedirCarreraScreen({ navigation, route }) {
                   ? `${info.km < 1 ? `${Math.round(info.km * 1000)} m` : `${info.km.toFixed(1)} km`} · ~${Math.max(1, info.min)} min`
                   : `~${dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}`}
               </Text>
-              {carrera.conductor_ubic_fecha && (Date.now() - new Date(carrera.conductor_ubic_fecha).getTime()) > 90000 && (
-                <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicación de {haceCuanto(carrera.conductor_ubic_fecha)}</Text>
+              {carrera.conductor_ubic_fecha && (Date.now() - msServidor(carrera.conductor_ubic_fecha)) > 90000 && (
+                <Text style={{ fontSize: 11, color: "#8A5A00" }}>ubicación de {haceCuantoServidor(carrera.conductor_ubic_fecha)}</Text>
               )}
             </View>
           )}
@@ -6333,8 +6359,18 @@ function ConductorScreen({ navigation, route }) {
     const car = cobrando;
     setCobrando(null);
     userFetch(`${API}/carreras/${car.id}/estado?estado=finalizada${t ? `&tarifa=${t}` : ""}`, { method: "PUT" })
-      .then(() => { setCalificarCliente(car); cargar(); })
-      .catch(() => avisar("Error", "No hay conexion. Intenta de nuevo."));
+      .then(async (r) => {
+        if (!r.ok) {
+          // antes fallaba en silencio y parecia que "no dejaba terminar": ahora se dice por que
+          const d = await r.json().catch(() => null);
+          avisar("No se pudo finalizar", (d && d.detail) || `Error ${r.status}. Revisa tu conexión e intenta de nuevo.`);
+          setCobrando(car);
+          cargar();
+          return;
+        }
+        setCalificarCliente(car); cargar();
+      })
+      .catch(() => { avisar("Sin conexión", "No se pudo finalizar. Revisa tu internet e intenta de nuevo."); setCobrando(car); });
   };
 
   const cambiarEstado = (c, estado) => {
