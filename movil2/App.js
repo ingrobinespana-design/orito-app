@@ -3338,13 +3338,22 @@ function mapaSeguimientoHTML() {
   }
   function nearestIdx(lng,lat){ var p=proy(lng,lat,0,rutaPts?rutaPts.length:0); return p?p.i:0; }
   // devuelve false si el GPS quedo FUERA de la ruta (hay que recalcular)
+  var saltosRaros=0;
   function moverEnRuta(la,lo){
     var c=carro.getLngLat(); var a=[c.lng,c.lat];
-    if(!rutaPts||rutaPts.length<2){ animarSecuencia([a,[lo,la]],null); return false; }
+    // salto IMPOSIBLE de golpe (ubicacion vieja o mala al volver de segundo plano): se ignora,
+    // salvo que se repita 3 veces seguidas (ahi si es real). Antes el mapa volvia a "desde donde salio".
+    if(metros(a,[lo,la])>700){ saltosRaros++; if(saltosRaros<3) return true; }
+    if(!rutaPts||rutaPts.length<2){ saltosRaros=0; animarSecuencia([a,[lo,la]],null); return false; }
     var p=proyectar(lo,la);
-    if(!p||p.d>FUERA_M){ animarSecuencia([a,[lo,la]],null); return false; }
-    // GPS que "retrocede" un poco (semaforo, rebote): el carro no se devuelve
-    if(p.i<carIdx||(p.i===carIdx&&p.t<carT)){ if(carIdx-p.i<3) return true; }
+    if(!p||p.d>FUERA_M){ saltosRaros=0; animarSecuencia([a,[lo,la]],null); return false; }
+    // GPS que "retrocede" (semaforo, rebote o ubicacion vieja): el carro no se devuelve,
+    // salvo que siga atras 3 veces seguidas (de verdad se devolvio)
+    if(p.i<carIdx||(p.i===carIdx&&p.t<carT)){
+      if(carIdx-p.i<3) return true;
+      saltosRaros++; if(saltosRaros<3) return true;
+    }
+    saltosRaros=0;
     var seq=[a], segs=[carIdx];
     if(p.i>carIdx){ for(var k=carIdx+1;k<=p.i;k++){ seq.push(rutaPts[k]); segs.push(k); } }
     seq.push(p.pt); segs.push(p.i);
