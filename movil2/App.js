@@ -6747,12 +6747,23 @@ function ConductorScreen({ navigation, route }) {
       {/* fila de encabezado tipo log: tiempo — precio */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontSize: 12, color: "#999" }}>
-          {haceCuanto(c.fecha)}{c.zona === "rural" ? "  🌄 vereda" : ""}
+          {haceCuantoServidor(c.fecha)}{c.zona === "rural" ? "  🌄 vereda" : ""}
         </Text>
         {!propia && c.tarifa_ofrecida ? (
           <Text style={{ fontSize: 20, fontWeight: "bold", color: "#187830" }}>${c.tarifa_ofrecida.toLocaleString()}</Text>
         ) : null}
       </View>
+
+      {/* carrera PROPIA: el precio acordado, bien grande (para que no se olvide ni le paguen otra cosa) */}
+      {propia && (c.tarifa || c.tarifa_ofrecida) ? (
+        <View style={{ backgroundColor: "#EAF6EC", borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11.5, color: "#187830", fontWeight: "800", letterSpacing: 0.6 }}>💵 PRECIO ACORDADO</Text>
+            <Text style={{ fontSize: 12, color: "#5a7a60", marginTop: 1 }}>Es lo que te paga el pasajero{c.bono ? ` (incluye bono de bienvenida de $${c.bono.toLocaleString()})` : ""}</Text>
+          </View>
+          <Text style={{ fontSize: 28, fontWeight: "800", color: "#187830" }}>${(c.tarifa || c.tarifa_ofrecida).toLocaleString()}</Text>
+        </View>
+      ) : null}
 
       {/* tipo de vehiculo pedido (util sobre todo en trasteos) */}
       <Text style={{ fontSize: 14, fontWeight: "700", color: "#444", marginTop: 6 }}>
