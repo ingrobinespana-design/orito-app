@@ -393,13 +393,9 @@ async function iniciarRastreoFondo(conductorId) {
     idsVistosFondo = null;   // arranca fresco: memoriza y luego suena solo con las NUEVAS
     if (Platform.OS === "web") return false;
     const ya = await Location.hasStartedLocationUpdatesAsync(TAREA_UBICACION).catch(() => false);
-    if (ya) {
-      // v2: GPS preciso y mas seguido (antes "Balanced" daba saltos y con el celular
-      // bloqueado el pasajero veia el carro quieto). Se reinicia UNA vez con lo nuevo.
-      const v = await AsyncStorage.getItem("tukan_rastreo_v").catch(() => null);
-      if (v === "2") return true;
-      await Location.stopLocationUpdatesAsync(TAREA_UBICACION).catch(() => {});
-    }
+    // si ya esta corriendo NO se toca (apagarlo para reiniciarlo podia dejarlo apagado
+    // y el pasajero veia el carro quieto). Los nuevos arranques ya salen con GPS preciso.
+    if (ya) return true;
     // el permiso "todo el tiempo" es lo ideal; si no lo dan, el servicio en
     // primer plano igual funciona en la mayoria de Androids modernos
     // aviso destacado ANTES de pedir "todo el tiempo" (requisito de Google Play)
@@ -422,9 +418,12 @@ async function iniciarRastreoFondo(conductorId) {
         notificationColor: "#187830",
       },
     });
-    AsyncStorage.setItem("tukan_rastreo_v", "2").catch(() => {});
+    diagFondo("rastreo_iniciado", { c: conductorId });
     return true;
-  } catch (e) { return false; }   // sin permiso: sigue el reporte con app abierta
+  } catch (e) {
+    diagFondo("rastreo_error", { c: conductorId, msg: String((e && e.message) || e).slice(0, 300) });
+    return false;   // sin permiso: sigue el reporte con app abierta
+  }
 }
 
 async function detenerRastreoFondo() {
@@ -6287,7 +6286,10 @@ function ConductorScreen({ navigation, route }) {
   useEffect(() => {
     if (!debeCorrerFondo) { detenerRastreoFondo(); return; }
     iniciarRastreoFondo(usuario.id);
-  }, [debeCorrerFondo]);
+    // si Android lo apago (bateria, memoria), se vuelve a encender al volver a Tukan
+    const sub = AppState.addEventListener("change", (st) => { if (st === "active") iniciarRastreoFondo(usuario.id); });
+    return () => sub.remove();
+  }, [debeCorrerFondo, tieneCarreraActiva]);
 
   useEffect(() => {
     // corre con carrera activa (el cliente te ve venir) Y TAMBIEN cuando estas solo
