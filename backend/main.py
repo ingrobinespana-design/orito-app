@@ -1166,6 +1166,11 @@ def municipio_por_ubicacion(lat: float, lon: float, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="No pudimos ubicar tu municipio. Selecciónalo manualmente.")
     return municipio_dict(mejor, db)
 
+def _es_nombre_generico(n):
+    t = (n or "").lower()
+    return (not t.strip()) or any(x in t for x in ("punto marcado", "mi ubicacion", "mi ubicación", "ubicacion actual",
+                                                   "ubicación actual", "punto en el mapa"))
+
 @app.get("/ubicacion/direccion")
 def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Session = Depends(get_db)):
     """Nombre legible para un pin del mapa: primero un sitio conocido de nuestra
@@ -1176,6 +1181,9 @@ def direccion_de_punto(lat: float, lon: float, municipio: str = None, db: Sessio
         q = q.filter(Lugar.municipio == municipio)
     mejor, mejor_km = None, None
     for l in q.all():
+        # los guardados con nombre generico ("Punto marcado en el mapa", "Mi ubicacion") no sirven de nombre
+        if _es_nombre_generico(l.nombre):
+            continue
         km = tarifas.distancia_km(lat, lon, l.lat, l.lon)
         if km is not None and (mejor_km is None or km < mejor_km):
             mejor, mejor_km = l, km
